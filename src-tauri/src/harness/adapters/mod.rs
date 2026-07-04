@@ -1,0 +1,1 @@
+// adapters registered here; claude added in Task 6

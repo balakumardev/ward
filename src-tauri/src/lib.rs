@@ -1,5 +1,6 @@
 mod error;
 mod fs_utils;
+mod harness;
 mod model;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
