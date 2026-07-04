@@ -128,3 +128,60 @@ test('contextBudget passes harness + scopeId', async () => {
   expect(r.used).toBe(18100);
   expect(r.contextLimit).toBe(200000);
 });
+
+// ── Plan 08: Backup Center ──
+
+test('backupStatus calls invoke with no args', async () => {
+  invoke.mockResolvedValue({
+    hasRepo: true, lastCommit: 'abc', lastCommitAt: null,
+    schedulerInstalled: false, schedulerInterval: null, remoteUrl: null,
+  });
+  await api.backupStatus();
+  expect(invoke).toHaveBeenCalledWith('backup_status');
+});
+
+test('backupRun passes scan + optional remoteUrl', async () => {
+  const scan = { harnessId: 'claude', categories: [], scopes: [], items: [], capabilities: {} } as never;
+  invoke.mockResolvedValue({ filesCopied: 3, bytesCopied: 100, skipped: [] });
+  const r = await api.backupRun(scan, 'git@github.com:me/ward.git');
+  expect(invoke).toHaveBeenCalledWith('backup_run', {
+    scan, remoteUrl: 'git@github.com:me/ward.git',
+  });
+  expect(r.filesCopied).toBe(3);
+
+  // Second call without remoteUrl should pass null.
+  invoke.mockReset();
+  invoke.mockResolvedValue({ filesCopied: 0, bytesCopied: 0, skipped: [] });
+  await api.backupRun(scan);
+  expect(invoke).toHaveBeenCalledWith('backup_run', { scan, remoteUrl: null });
+});
+
+test('backupSync passes no args', async () => {
+  invoke.mockResolvedValue({ committed: true, sha: 'deadbeef', message: 'm', committedAt: null });
+  await api.backupSync();
+  expect(invoke).toHaveBeenCalledWith('backup_sync');
+});
+
+test('backupPush passes no args', async () => {
+  invoke.mockResolvedValue({ pushed: false, reason: 'no remote configured', remoteUrl: null });
+  await api.backupPush();
+  expect(invoke).toHaveBeenCalledWith('backup_push');
+});
+
+test('backupSchedulerInstall passes intervalSeconds', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.backupSchedulerInstall(900);
+  expect(invoke).toHaveBeenCalledWith('backup_scheduler_install', { intervalSeconds: 900 });
+});
+
+test('backupSchedulerRemove passes no args', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.backupSchedulerRemove();
+  expect(invoke).toHaveBeenCalledWith('backup_scheduler_remove');
+});
+
+test('backupSetRemote passes url', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.backupSetRemote('git@github.com:me/ward.git');
+  expect(invoke).toHaveBeenCalledWith('backup_set_remote', { url: 'git@github.com:me/ward.git' });
+});

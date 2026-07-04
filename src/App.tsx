@@ -5,6 +5,7 @@ import { McpPolicy } from './modes/McpPolicy';
 import { Security } from './modes/Security';
 import { BudgetWithPicker } from './modes/Budget';
 import { Sessions } from './modes/Sessions';
+import { Backups } from './modes/Backups';
 import { api } from './api';
 import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -70,6 +71,16 @@ export default function App() {
     sessionDistill: (path: string) => api.sessionDistill(path),
     sessionTrim: (path: string) => api.sessionTrim(path),
     // `restore` already wired above.
+
+    // Plan 08 — Backup Center.
+    backupStatus: () => api.backupStatus(),
+    backupRun: (scan: Parameters<typeof api.backupRun>[0], remoteUrl?: string | null) =>
+      api.backupRun(scan, remoteUrl),
+    backupSync: () => api.backupSync(),
+    backupPush: () => api.backupPush(),
+    backupSchedulerInstall: (secs: number) => api.backupSchedulerInstall(secs),
+    backupSchedulerRemove: () => api.backupSchedulerRemove(),
+    backupSetRemote: (url: string) => api.backupSetRemote(url),
   };
 
   return (
@@ -80,7 +91,17 @@ export default function App() {
             <Show when={mode() === 'security'} fallback={
               <Show when={mode() === 'budget'} fallback={
                 <Show when={mode() === 'sessions'} fallback={
-                  <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                  <Show when={mode() === 'backups'} fallback={
+                    <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                  }>
+                    <Show when={result().capabilities.backup} fallback={
+                      <div data-testid="backups-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>
+                        Backups mode is not supported by this harness.
+                      </div>
+                    }>
+                      <Backups scan={result()} api={organizerApi as never} />
+                    </Show>
+                  </Show>
                 }>
                   <Show when={result().capabilities.sessions} fallback={
                     <div data-testid="sessions-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>

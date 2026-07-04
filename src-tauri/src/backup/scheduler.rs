@@ -242,7 +242,13 @@ fn write_and_load(
 /// Unload the agent and delete the plist file. Tolerates an
 /// already-uninstalled state.
 pub fn remove() -> Result<(), WardError> {
-    remove_at(&plist_path())
+    let path = plist_path();
+    let _ = Command::new("launchctl").arg("unload").arg(&path).output();
+    match std::fs::remove_file(&path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Test-only remove at an arbitrary root.
@@ -261,7 +267,21 @@ pub fn remove_at(path: &Path) -> Result<(), WardError> {
 /// `NotInstalled` whenever either signal says no — the goal is to
 /// never report `Installed` falsely.
 pub fn status() -> SchedulerStatus {
-    status_at(&plist_path(), None)
+    let path = plist_path();
+    let (on_disk, in_launchd) = (path.exists(), launchctl_has_label());
+    match (on_disk, in_launchd) {
+        (true, true) => {
+            let interval = read_start_interval(&path).unwrap_or(MIN_INTERVAL_SECONDS);
+            SchedulerStatus::Installed { interval_seconds: interval }
+        }
+        (false, false) => SchedulerStatus::NotInstalled,
+        (true, false) => SchedulerStatus::Error(
+            "plist present but launchd does not know about the agent".into(),
+        ),
+        (false, true) => SchedulerStatus::Error(
+            "launchd knows about the agent but plist is missing".into(),
+        ),
+    }
 }
 
 /// Test-only status: caller supplies the plist path to check + an
@@ -276,8 +296,6 @@ pub fn status_at(path: &Path, launchctl_override: Option<bool>) -> SchedulerStat
     };
     match (on_disk, in_launchd) {
         (true, true) => {
-            // Pull the interval out of the plist so we can echo it
-            // back to the UI in a single round-trip.
             let interval = read_start_interval(path).unwrap_or(MIN_INTERVAL_SECONDS);
             SchedulerStatus::Installed { interval_seconds: interval }
         }

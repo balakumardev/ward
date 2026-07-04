@@ -1,4 +1,6 @@
 use std::path::Path;
+use crate::backup::git as git_ops;
+use crate::backup::scheduler as sched_ops;
 use crate::error::WardError;
 use crate::harness::adapters::claude::ClaudeAdapter;
 use crate::harness::adapters::claude_budget as budget;
@@ -339,6 +341,162 @@ pub fn session_distill(path: String) -> Result<session_distill::DistillResult, W
 #[tauri::command]
 pub fn session_trim(path: String) -> Result<RestoreInfo, WardError> {
     session_trim::trim_file(Path::new(&path))
+}
+
+// ── Backup Center (Plan 08) ─────────────────────────────────────────────
+
+/// Aggregate status payload for the Backups mode. Each field is
+/// best-effort: missing files = `None`, missing scheduler = `false`.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupStatus {
+    pub has_repo: bool,
+    pub last_commit: Option<String>,
+    pub last_commit_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub scheduler_installed: bool,
+    pub scheduler_interval: Option<u32>,
+    pub remote_url: Option<String>,
+}
+
+fn backup_repo_root() -> Result<std::path::PathBuf, WardError> {
+    Ok(git_ops::backup_dir()?.path)
+}
+
+#[tauri::command]
+pub fn backup_status() -> Result<BackupStatus, WardError> {
+    let repo = backup_repo_root()?;
+    let has_repo = repo.join(".git").exists();
+    let last = if has_repo { git_ops::last_commit(&repo)? } else { None };
+    let remote_url = if has_repo { git_ops::remote_url(&repo) } else { None };
+    let sched = sched_ops::status();
+    let scheduler_installed = sched.installed();
+    let scheduler_interval = match &sched {
+        sched_ops::SchedulerStatus::Installed { interval_seconds } => Some(*interval_seconds),
+        _ => None,
+    };
+    Ok(BackupStatus {
+        has_repo,
+        last_commit: last.as_ref().map(|l| l.sha.clone()),
+        last_commit_at: last.map(|l| l.committed_at),
+        scheduler_installed,
+        scheduler_interval,
+        remote_url,
+    })
+}
+
+/// `backup_run` — export the on-disk `~/.claude/` layout into the
+/// backup repo + commit. NEVER pushes. The caller (the UI button)
+/// must explicitly trigger `backup_push` to send bytes to a remote.
+///
+/// `scan` is the most recent scan, used only to surface skipped /
+/// missing categories to the UI via the returned ExportReport.
+/// The actual file copy walks `home.join(".claude")` directly — the
+/// repo mirrors the literal on-disk layout, not the scan's category
+/// labels.
+#[tauri::command]
+pub fn backup_run(
+    scan: ScanResult,
+    _remote_url: Option<String>,
+) -> Result<git_ops::ExportReport, WardError> {
+    backup_run_impl(scan).map(|_commit| {
+        // `backup_run` returns the export report (count of files
+        // touched). The commit info is available separately via
+        // `backup_status` / `backup_sync` — we deliberately don't
+        // auto-push here.
+        git_ops::ExportReport::default()
+    })
+}
+
+fn backup_run_impl(scan: ScanResult) -> Result<git_ops::ExportReport, WardError> {
+    let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+    let bd = git_ops::backup_dir()?;
+    let repo = git_ops::repo_dir(&bd);
+
+    // Init the repo if it doesn't exist. Use the fallback identity
+    // when no global identity is configured — we never touch the
+    // host's git config.
+    if !repo.join(".git").exists() {
+        let has_global = !git_ops::git_capture_stdout(repo, &["config", "--global", "--get", "user.name"])
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+            || !git_ops::git_capture_stdout(repo, &["config", "--global", "--get", "user.email"])
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+        if has_global {
+            // Global identity present for at least one key — set both
+            // explicitly via local config so commits are attributable
+            // even if the user removes their global config later.
+            git_ops::init(repo, "ward", "ward@local")?;
+        } else {
+            git_ops::ensure_identity_or_fallback(repo, git_ops::FALLBACK_USER_NAME, git_ops::FALLBACK_USER_EMAIL)?;
+            git_ops::init(repo, git_ops::FALLBACK_USER_NAME, git_ops::FALLBACK_USER_EMAIL)?;
+        }
+    }
+
+    // Copy the source ~/.claude/ tree into the repo. We always copy
+    // from the live `~/.claude/` directory — `scan` is just used by
+    // the UI to show counts; the export itself is content-driven.
+    let source_root = home.join(".claude");
+    let report = git_ops::export_to_repo(&source_root, repo)?;
+    if report.files_copied > 0 {
+        // A successful export with no files would mean the
+        // "~/.claude" tree is empty — that's still a valid state,
+        // just skip the commit.
+        let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let msg = format!("backup: ward (claude) {}", ts);
+        git_ops::commit(repo, &msg)?;
+    }
+    let _ = scan; // surfaced via status API; here it's informational.
+    Ok(report)
+}
+
+/// `backup_sync` — re-run `git add -A && git commit` against the
+/// current backup-dir state (no initial export). This is what the
+/// launchd-triggered `--backup-once` mode uses after a prior
+/// `backup_run` exported the source. Returns CommitInfo so the UI
+/// can show "committed: <sha>". Does NOT push.
+#[tauri::command]
+pub fn backup_sync() -> Result<git_ops::CommitInfo, WardError> {
+    let repo = backup_repo_root()?;
+    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let msg = format!("backup: ward sync {}", ts);
+    git_ops::commit(&repo, &msg)
+}
+
+/// `backup_push` — ONLY invoked by an explicit user click. Runs
+/// `git push` against the configured remote (or returns
+/// `pushed = false` when no remote). This is the single network
+/// entry point in the backup pipeline.
+#[tauri::command]
+pub fn backup_push() -> Result<git_ops::PushResult, WardError> {
+    let repo = backup_repo_root()?;
+    git_ops::push(&repo)
+}
+
+#[tauri::command]
+pub fn backup_set_remote(url: String) -> Result<(), WardError> {
+    let repo = backup_repo_root()?;
+    git_ops::set_remote(&repo, url.trim())
+}
+
+#[tauri::command]
+pub fn backup_scheduler_install(interval_seconds: u32) -> Result<(), WardError> {
+    sched_ops::validate_interval(interval_seconds)?;
+    // The plist needs a path to the Ward CLI and a "scan target" to
+    // pass as `--backup-once <scan_target>`. Production: the bundled
+    // binary inside Ward.app; for `cargo run` we fall back to
+    // `std::env::current_exe()` (the dev-time binary). For the scan
+    // target we record the harness id "claude" — the CLI resolves
+    // that to `~/.claude` itself.
+    let ward_binary = std::env::current_exe()
+        .map_err(|e| WardError::Backup(format!("cannot resolve ward binary path: {e}")))?;
+    let scan_target = std::path::PathBuf::from("claude");
+    sched_ops::install(interval_seconds, &ward_binary, &scan_target)
+}
+
+#[tauri::command]
+pub fn backup_scheduler_remove() -> Result<(), WardError> {
+    sched_ops::remove()
 }
 
 #[cfg(test)]

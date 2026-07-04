@@ -459,7 +459,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(), WardError> {
     Ok(())
 }
 
-fn git_capture_stdout(dir: &Path, args: &[&str]) -> Result<String, WardError> {
+pub(crate) fn git_capture_stdout(dir: &Path, args: &[&str]) -> Result<String, WardError> {
     let output = run_git(dir, args)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

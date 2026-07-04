@@ -176,6 +176,55 @@ export interface DistillResult {
   indexMd: string;
 }
 
+// ── Plan 08 — Backup Center ────────────────────────────────────────────
+
+/** Aggregate snapshot returned by `backup_status`. */
+export interface BackupStatus {
+  hasRepo: boolean;
+  lastCommit: string | null;
+  lastCommitAt: string | null;
+  schedulerInstalled: boolean;
+  schedulerInterval: number | null;
+  remoteUrl: string | null;
+}
+
+/** Output of `backup_run` — what got mirrored into ~/.ward-backups/. */
+export interface ExportReport {
+  filesCopied: number;
+  bytesCopied: number;
+  skipped: string[];
+}
+
+/** Result of `backup_sync` — was a commit produced? */
+export interface CommitInfo {
+  committed: boolean;
+  sha: string | null;
+  message: string;
+  committedAt: string | null;
+}
+
+/** Result of `backup_push` — did we actually push? */
+export interface PushResult {
+  pushed: boolean;
+  reason: string;
+  remoteUrl: string | null;
+}
+
+/** One entry from `git log`. */
+export interface GitLogEntry {
+  sha: string;
+  subject: string;
+  author: string;
+  committedAt: string;
+}
+
+/** `git status --porcelain` rolled into counts. */
+export interface GitStatus {
+  modified: number;
+  untracked: number;
+  clean: boolean;
+}
+
 export const api = {
   scan: (harness: string) => invoke<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invoke<string>('read_file_content', { path }),
@@ -222,4 +271,15 @@ export const api = {
   sessionCost: (path: string) => invoke<CostBreakdown>('session_cost', { path }),
   sessionDistill: (path: string) => invoke<DistillResult>('session_distill', { path }),
   sessionTrim: (path: string) => invoke<RestoreInfo>('session_trim', { path }),
+
+  // Plan 08 — Backup Center.
+  backupStatus: () => invoke<BackupStatus>('backup_status'),
+  backupRun: (scan: ScanResult, remoteUrl?: string | null) =>
+    invoke<ExportReport>('backup_run', { scan, remoteUrl: remoteUrl ?? null }),
+  backupSync: () => invoke<CommitInfo>('backup_sync'),
+  backupPush: () => invoke<PushResult>('backup_push'),
+  backupSchedulerInstall: (intervalSeconds: number) =>
+    invoke<void>('backup_scheduler_install', { intervalSeconds }),
+  backupSchedulerRemove: () => invoke<void>('backup_scheduler_remove'),
+  backupSetRemote: (url: string) => invoke<void>('backup_set_remote', { url }),
 };
