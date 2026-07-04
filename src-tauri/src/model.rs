@@ -114,6 +114,49 @@ pub struct RestoreInfo {
     pub mcp_scope: Option<String>,
 }
 
+// ── MCP policy (Plan 04) ───────────────────────────────────────────────
+
+/// One allowlist / denylist entry. CCO / Claude Code accept three
+/// match shapes (the JS objects use the camelCase keys verbatim):
+///   - `{serverName: "foo"}` — match by registered name.
+///   - `{serverCommand: ["python", "evil.py"]}` — match stdio servers by
+///     command + leading args (exact array equality after `command, args`
+///     flattening).
+///   - `{serverUrl: "https://*.evil.com/*"}` — glob pattern, `*` matches
+///     any run of chars, the rest is a literal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_url: Option<String>,
+}
+
+/// User-scope allowlist / denylist stored in `~/.claude/settings.json`
+/// under `allowedMcpServers` / `deniedMcpServers`. Empty lists mean
+/// "no policy" (denylist empty AND allowlist empty → NoPolicy).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpPolicy {
+    #[serde(default)]
+    pub allowlist: Vec<PolicyEntry>,
+    #[serde(default)]
+    pub denylist: Vec<PolicyEntry>,
+}
+
+/// Outcome of `check_policy`. Wire form is camelCase, mirrors CCO's
+/// `'allowed' | 'denied' | 'no-policy'` JS strings.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PolicyVerdict {
+    Allowed,
+    Denied,
+    NoPolicy,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +218,59 @@ mod tests {
         assert!(json.contains("\"mcpParentKey\""));
         assert!(json.contains("\"mcpScope\""));
         assert!(json.contains("\"mcpEntry\""));
+    }
+
+    // ── Policy model tests ──
+
+    #[test]
+    fn policy_entry_round_trips_name() {
+        let e = PolicyEntry { server_name: Some("foo".into()), ..Default::default() };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: PolicyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+        assert!(json.contains("\"serverName\":\"foo\""));
+        // Other fields omitted when None.
+        assert!(!json.contains("serverCommand"));
+        assert!(!json.contains("serverUrl"));
+    }
+
+    #[test]
+    fn policy_entry_round_trips_command() {
+        let e = PolicyEntry {
+            server_command: Some(vec!["python".into(), "evil.py".into()]),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: PolicyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+        assert!(json.contains("\"serverCommand\":[\"python\",\"evil.py\"]"));
+    }
+
+    #[test]
+    fn policy_entry_round_trips_url() {
+        let e = PolicyEntry {
+            server_url: Some("https://*.evil.com/*".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: PolicyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn mcp_policy_default_is_empty() {
+        let p = McpPolicy::default();
+        assert!(p.allowlist.is_empty());
+        assert!(p.denylist.is_empty());
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"allowlist\":[]"));
+        assert!(json.contains("\"denylist\":[]"));
+    }
+
+    #[test]
+    fn policy_verdict_serializes_camel_case() {
+        assert_eq!(serde_json::to_string(&PolicyVerdict::Allowed).unwrap(), "\"allowed\"");
+        assert_eq!(serde_json::to_string(&PolicyVerdict::Denied).unwrap(), "\"denied\"");
+        assert_eq!(serde_json::to_string(&PolicyVerdict::NoPolicy).unwrap(), "\"noPolicy\"");
     }
 }
