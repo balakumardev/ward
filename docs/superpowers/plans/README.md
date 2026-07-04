@@ -19,4 +19,9 @@ independently testable software and builds on the previous one. Execute in order
 | 11 | Ward-as-MCP-server | Expose scan/move/delete/audit as MCP tools (stdio). |
 | 12 | Packaging | `.dmg`, Developer ID signing + notarization, WebDriver E2E, polish. |
 
-**Status:** Plan 01 written. Plans 02–12 will be authored just-in-time as each prior plan lands (learnings from earlier plans sharpen later ones — YAGNI on writing them all upfront).
+**Status:**
+- **Plan 01 — implemented** ✅ (full bite-sized TDD detail, `2026-07-04-plan-01-foundation.md`).
+- **Plans 02–12 — high-level plans written** (one file each, `2026-07-04-plan-0N-*.md`). Each gives goal, files, task checklist, the **exact CCO source file to port for parity**, tests, and gotchas — enough for an implementer (or a cheaper model) to execute. They intentionally omit full line-by-line code; the implementer should read the referenced CCO source, work TDD, and commit per task. Any plan can be expanded to Plan-01-style full detail on request.
+
+**Plan files:**
+`2026-07-04-plan-02-claude-categories-effective.md` · `-03-mutations.md` · `-04-mcp-controls.md` · `-05-security-scanner.md` · `-06-context-budget.md` · `-07-sessions.md` · `-08-backups.md` · `-09-codex-adapter.md` · `-10-native-shell.md` · `-11-ward-as-mcp-server.md` · `-12-packaging.md`
