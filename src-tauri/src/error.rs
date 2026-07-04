@@ -6,6 +6,8 @@ pub enum WardError {
     PathEscaped(String),
     #[error("harness unavailable: {0}")]
     HarnessUnavailable(String),
+    #[error("mcp introspection failed: {0}")]
+    McpIntrospectFailed(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -17,6 +19,7 @@ enum ErrorKind {
     NotFound(String),
     PathEscaped(String),
     HarnessUnavailable(String),
+    McpIntrospectFailed(String),
     Io(String),
 }
 
@@ -30,6 +33,7 @@ impl serde::Serialize for WardError {
             WardError::NotFound(_) => ErrorKind::NotFound(message),
             WardError::PathEscaped(_) => ErrorKind::PathEscaped(message),
             WardError::HarnessUnavailable(_) => ErrorKind::HarnessUnavailable(message),
+            WardError::McpIntrospectFailed(_) => ErrorKind::McpIntrospectFailed(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)
