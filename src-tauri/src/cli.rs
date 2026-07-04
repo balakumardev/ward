@@ -107,10 +107,7 @@ pub fn dispatch(args: &CliArgs) -> i32 {
         return run_backup_once_shim(target);
     }
     if args.mcp {
-        // Plan 11 stub — keep the flag reserved. We print a tiny JSON
-        // marker so callers can detect the binary responded.
-        println!("{{\"mcp\":\"unimplemented\"}}");
-        return 0;
+        return run_mcp_server();
     }
     // No headless flag → caller is responsible for launching the GUI.
     // Returning 0 here would mask a programmer error; main.rs only
@@ -184,6 +181,19 @@ fn run_backup_once_shim(scan_target: &str) -> i32 {
         scan_target.to_string(),
     ];
     crate::run_backup_once(&argv)
+}
+
+/// Bridge into the Plan 11 MCP server. The stdio loop runs until EOF
+/// (or an unrecoverable IO error); its return type maps cleanly to a
+/// process exit code (0 success, non-zero on error).
+fn run_mcp_server() -> i32 {
+    match crate::mcp::server::run_stdio_server() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("ward: --mcp failed: {e}");
+            6
+        }
+    }
 }
 
 /// Test-only re-export so tests can construct the ScanResult shape

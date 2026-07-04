@@ -1037,4 +1037,197 @@ mod tests {
             assert!(Handler::is_known_category(c), "missing category: {c}");
         }
     }
+
+    /// End-to-end smoke: spin up the real handler against a tempdir
+    /// with a populated scan, then dispatch the same JSON-RPC calls
+    /// an MCP client would (initialize → tools/list → tools/call
+    /// scan_inventory → tools/call audit_security). Asserts the
+    /// responses are well-formed and the tool calls succeed.
+    #[test]
+    fn end_to_end_handler_dispatch_against_temp_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        // Populate a single skill so scan_inventory has something to return.
+        let skill_dir = home.join(".claude/skills/a");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "x").unwrap();
+
+        let handler = Handler::new(home.clone()).expect("handler init");
+        assert!(!handler.scopes.is_empty(), "scope discovery must work");
+
+        // initialize
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(1),
+            method: "initialize".into(),
+            params: json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "0" },
+            }),
+        });
+        assert_eq!(resp.result.unwrap()["serverInfo"]["name"], "ward");
+
+        // tools/list — 5 tools, correct names.
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(2),
+            method: "tools/list".into(),
+            params: json!({}),
+        });
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        assert_eq!(tools.len(), 5);
+
+        // tools/call scan_inventory — must succeed, scan result is real.
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(3),
+            method: "tools/call".into(),
+            params: json!({ "name": "scan_inventory", "arguments": {} }),
+        });
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], json!(false));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["harnessId"], "claude");
+        assert!(parsed["items"].as_array().unwrap().iter()
+            .any(|i| i["category"] == "skill" && i["name"] == "a"));
+
+        // tools/call audit_security — must succeed, returns findings array.
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(4),
+            method: "tools/call".into(),
+            params: json!({ "name": "audit_security", "arguments": {} }),
+        });
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], json!(false));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        // Always has `findings` + `severityCounts` keys (matches scan::ScanResult).
+        assert!(parsed["findings"].is_array());
+        assert!(parsed["severityCounts"].is_object());
+
+        // tools/call list_destinations for a skill item found above.
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(5),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "list_destinations",
+                "arguments": { "category": "skill", "name": "a", "scopeId": "global" },
+            }),
+        });
+        // Only the "global" scope exists in this tempdir; destinations
+        // for a skill in "global" must be empty (no other scopes).
+        let result = resp.result.unwrap();
+        assert_eq!(result["isError"], json!(false));
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        let dests = parsed["destinations"].as_array().unwrap();
+        assert!(dests.is_empty(), "no other scopes → no destinations");
+
+        // Negative path: list_destinations with a non-existent item
+        // returns an `ok: false` payload, NOT a JSON-RPC error.
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(6),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "list_destinations",
+                "arguments": { "category": "skill", "name": "nope", "scopeId": "global" },
+            }),
+        });
+        assert!(resp.error.is_none(), "tool error must NOT be a JSON-RPC error");
+        let result = resp.result.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["ok"], json!(false));
+        assert!(parsed["error"].as_str().unwrap().contains("nope"));
+    }
+
+    /// End-to-end smoke for move_item + delete_item: build the handler,
+    /// dispatch the calls, and verify the file actually moves / is
+    /// captured for restoration. This is the load-bearing test for
+    /// Plan 11's "delegate to existing core impl" promise.
+    #[test]
+    fn end_to_end_move_and_delete_item_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        // Set up a project scope plus a memory item at the global scope.
+        let project_repo = home.join("proj");
+        std::fs::create_dir_all(&project_repo).unwrap();
+        let mem = home.join(".claude/memory/note.md");
+        std::fs::create_dir_all(mem.parent().unwrap()).unwrap();
+        std::fs::write(&mem, "remember this").unwrap();
+        // The project scope's memory dir is `~/.claude/projects/<encoded>/memory`
+        // for unresolved project dirs.
+        std::fs::create_dir_all(home.join(".claude/projects/-proj/memory")).unwrap();
+        // Also create a skill item to test delete.
+        let skill = home.join(".claude/skills/foo/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "body").unwrap();
+
+        let handler = Handler::new(home.clone()).expect("handler init");
+
+        // Move the memory item from global to the project scope (encoded "-proj").
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(1),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "move_item",
+                "arguments": {
+                    "category": "memory",
+                    "name": "note",
+                    "fromScopeId": "global",
+                    "toScopeId": "-proj",
+                },
+            }),
+        });
+        let result = resp.result.unwrap();
+        if result["isError"] == json!(true) {
+            panic!("move_item failed: {}", result["content"][0]["text"]);
+        }
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["ok"], json!(true));
+        assert_eq!(
+            parsed["restoreInfo"]["kind"], "file",
+            "memory move uses the file RestoreInfo variant"
+        );
+        assert!(!mem.exists(), "source file removed after move");
+        let dst = home.join(".claude/projects/-proj/memory/note.md");
+        assert!(dst.exists(), "destination file written");
+        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "remember this");
+
+        // Delete the skill item — captures it for restoration.
+        let skill_dir = skill.parent().unwrap();
+        let resp = handler.handle(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: json!(2),
+            method: "tools/call".into(),
+            params: json!({
+                "name": "delete_item",
+                "arguments": {
+                    "category": "skill",
+                    "name": "foo",
+                    "scopeId": "global",
+                },
+            }),
+        });
+        let result = resp.result.unwrap();
+        if result["isError"] == json!(true) {
+            panic!("delete_item failed: {}", result["content"][0]["text"]);
+        }
+        assert!(!skill.exists(), "skill file deleted");
+        assert!(!skill_dir.exists(), "skill dir removed");
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["ok"], json!(true));
+        assert_eq!(parsed["restoreInfo"]["kind"], "file");
+        assert!(parsed["restoreInfo"]["backupBytes"].is_array(),
+            "delete captures backup bytes so restore works (serde_json serializes Vec<u8> as array of bytes)");
+    }
 }
+
