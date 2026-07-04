@@ -7,7 +7,7 @@ export interface Capabilities {
 export interface Category { id: string; label: string; count: number; }
 export interface Scope { id: string; kind: string; label: string; root: string; }
 export interface HarnessItem {
-  category: string; scopeId: string; name: string; path: string;
+  category: string; scopeId: string; name: string; description?: string; path: string;
   movable: boolean; deletable: boolean; locked: boolean;
 }
 export interface ScanResult {

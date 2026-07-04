@@ -35,6 +35,8 @@ pub struct HarnessItem {
     pub category: String,
     pub scope_id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     pub path: String,
     pub movable: bool,
     pub deletable: bool,
@@ -61,6 +63,7 @@ mod tests {
             category: "skill".into(),
             scope_id: "global".into(),
             name: "brainstorming".into(),
+            description: String::new(),
             path: "/Users/x/.claude/skills/brainstorming".into(),
             movable: true,
             deletable: true,
@@ -69,5 +72,6 @@ mod tests {
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"scopeId\":\"global\""));
         assert!(json.contains("\"category\":\"skill\""));
+        assert!(!json.contains("\"description\""), "empty description must be omitted");
     }
 }
