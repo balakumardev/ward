@@ -25,11 +25,15 @@ pub fn scan(harness: String) -> Result<ScanResult, WardError> {
     scan_impl(&registry, &home, &harness)
 }
 
-// Placeholder so the handler list compiles before Task 10 lands.
-// Task 10 will replace this body with the real implementation.
+pub fn read_file_impl(path: &Path, home: &Path) -> Result<String, WardError> {
+    let abs = crate::fs_utils::ensure_under_home(path, home)?;
+    Ok(std::fs::read_to_string(abs)?)
+}
+
 #[tauri::command]
-pub fn read_file_content() -> Result<String, WardError> {
-    Err(WardError::NotFound("not implemented yet".into()))
+pub fn read_file_content(path: String) -> Result<String, WardError> {
+    let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+    read_file_impl(Path::new(&path), &home)
 }
 
 #[cfg(test)]
@@ -57,5 +61,21 @@ mod tests {
             scan_impl(&registry, dir.path(), "nope"),
             Err(WardError::HarnessUnavailable(_))
         ));
+    }
+
+    #[test]
+    fn reads_allowed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join(".claude/x.md");
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(&f, "hello").unwrap();
+        assert_eq!(read_file_impl(&f, dir.path()).unwrap(), "hello");
+    }
+
+    #[test]
+    fn rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("../etc/passwd");
+        assert!(matches!(read_file_impl(&bad, dir.path()), Err(WardError::PathEscaped(_))));
     }
 }
