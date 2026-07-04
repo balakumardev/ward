@@ -1,0 +1,86 @@
+<h2>The home base: Organizer mode</h2>
+<p class="subtitle">This is what opens by default — a full config organizer across Claude Code <em>and</em> Codex. Security is just one mode in the sidebar (note the ⛨ badge). Does this capture the breadth you want? Click to confirm, or tell me what's missing.</p>
+
+<style>
+  .app{background:#0e1420;color:#dfe7f2;border-radius:10px;overflow:hidden;font-family:-apple-system,system-ui,sans-serif;font-size:10px;line-height:1.3}
+  .app .bar{height:22px;display:flex;align-items:center;gap:6px;padding:0 9px;background:#111a29;border-bottom:1px solid rgba(120,160,220,.12)}
+  .app .dot{width:8px;height:8px;border-radius:50%}
+  .app .title{margin-left:6px;font-size:9px;opacity:.7}
+  .app .harness{margin-left:auto;font-size:8.5px;background:#17223a;border:1px solid rgba(120,160,220,.2);border-radius:6px;padding:2px 8px}
+  .app .body{display:flex;min-height:184px}
+  .app .lead{font-size:7.5px;text-transform:uppercase;letter-spacing:.05em;opacity:.55;margin:0 0 5px}
+  .app .modes{flex:0 0 19%;padding:8px 7px;background:#0c121d;border-right:1px solid rgba(120,160,220,.12)}
+  .app .cats{flex:0 0 22%;padding:8px 7px;border-right:1px solid rgba(120,160,220,.1)}
+  .app .items{flex:0 0 29%;padding:8px 7px;border-right:1px solid rgba(120,160,220,.1)}
+  .app .detail{flex:1;padding:8px 9px}
+  .app .m{padding:3px 6px;margin:2.5px 0;border-radius:5px;display:flex;justify-content:space-between;align-items:center}
+  .app .m.sel{background:rgba(48,209,88,.14);color:#8ff0a8}
+  .app .m .n{font-size:7px;opacity:.55}
+  .app .m.badge .n{background:#ff453a;color:#fff;border-radius:8px;padding:0 5px;opacity:1}
+  .app .swap{margin-top:8px;font-size:8px;opacity:.6;border-top:1px solid rgba(120,160,220,.12);padding-top:6px}
+  .app .scope{font-size:7px;text-transform:uppercase;letter-spacing:.04em;opacity:.5;margin:6px 0 3px}
+  .app .it{padding:3px 6px;margin:2.5px 0;border-radius:5px;background:#131c2b}
+  .app .it.sel{background:#182338;outline:1px solid rgba(48,209,88,.4)}
+  .app .it.lock::after{content:"🔒";float:right;font-size:8px}
+  .app .it.crit::after{content:"⛨";float:right;color:#ff6a5c;font-size:8px}
+  .app .code{font-family:ui-monospace,Menlo,monospace;font-size:8px;background:#0a0f18;border:1px solid rgba(120,160,220,.14);border-radius:5px;padding:5px 6px;margin:4px 0}
+  .app .acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+  .app .a{font-size:8px;padding:3px 7px;border-radius:5px;background:#1a2334;border:1px solid rgba(120,160,220,.2)}
+  .app .eff{font-size:8px;margin-top:5px;opacity:.65}
+  .app .meter{margin-top:7px;height:6px;border-radius:4px;background:#0a0f18;overflow:hidden}
+  .app .meter i{display:block;height:100%;width:24%;background:linear-gradient(90deg,#30d158,#ffcf4a)}
+  .card-image{padding:14px !important}
+</style>
+
+<div class="cards" style="grid-template-columns:1fr">
+  <div class="card" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="app">
+        <div class="bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="title">Cross-Code Organizer</span><span class="harness">◆ Claude Code ▾</span></div>
+        <div class="body">
+          <div class="modes">
+            <div class="lead">Modes</div>
+            <div class="m sel">⌘ Organizer</div>
+            <div class="m badge">⛨ Security <span class="n">2</span></div>
+            <div class="m">▣ Context Budget</div>
+            <div class="m">⧉ Sessions</div>
+            <div class="m">↺ Backups</div>
+            <div class="swap">⇄ Switch harness<br><span style="opacity:.8">Claude Code · Codex CLI</span></div>
+          </div>
+          <div class="cats">
+            <div class="lead">Categories · Claude</div>
+            <div class="m sel">Skills <span class="n">24</span></div>
+            <div class="m">Memories <span class="n">8</span></div>
+            <div class="m">MCP <span class="n">14</span></div>
+            <div class="m">Commands <span class="n">12</span></div>
+            <div class="m">Agents <span class="n">6</span></div>
+            <div class="m">Hooks <span class="n">3</span></div>
+            <div class="m">Plans · Rules <span class="n">6</span></div>
+            <div class="m">Settings <span class="n">5</span></div>
+          </div>
+          <div class="items">
+            <div class="lead">Skills — by scope</div>
+            <div class="scope">Global · ~/.claude/skills</div>
+            <div class="it">using-superpowers</div>
+            <div class="it sel">brainstorming</div>
+            <div class="it">deep-research</div>
+            <div class="scope">Project · cco/.claude/skills</div>
+            <div class="it lock">cco</div>
+            <div class="it">organize</div>
+            <div class="eff" style="opacity:.5;margin-top:6px">drag to move · ⌫ delete · ⌘Z undo · ⇧-click = bulk</div>
+          </div>
+          <div class="detail">
+            <div class="lead">brainstorming · SKILL.md</div>
+            <div class="code">name: brainstorming<br>description: turn ideas into designs…</div>
+            <div class="eff">◧ Show Effective — <span style="color:#8ff0a8">active</span> · not shadowed</div>
+            <div class="acts"><span class="a">Move scope ▾</span><span class="a">Edit frontmatter</span><span class="a">Delete</span><span class="a">Open</span></div>
+            <div class="lead" style="margin-top:8px">This scope's context</div>
+            <div class="meter"><i></i></div>
+            <div class="eff">47K / 200K — skills 11K · memories 6K · MCP 22K</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>Organizer = the product. Security is one mode.</h3><p>Sidebar modes: <b>Organizer · Security · Context Budget · Sessions · Backups</b>. Harness switcher (Claude Code ⇄ Codex) top-right. Full category list with counts, scope-grouped items with lock/badge/bulk, a detail inspector with <b>Show Effective</b> + frontmatter editing, and a live context meter. The dark "console" skin is just the paint — it carries a general organizer fine.</p></div>
+  </div>
+</div>

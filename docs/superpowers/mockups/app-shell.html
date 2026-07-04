@@ -1,0 +1,106 @@
+<h2>How should the native window be structured?</h2>
+<p class="subtitle">All three keep full feature parity — this is only about the primary navigation idiom for the Mac app. Click the one that feels most like a Mac app you'd trust.</p>
+
+<style>
+  .wf { display:flex; height:158px; border:1px solid rgba(128,128,128,.35); border-radius:8px; overflow:hidden; font-size:10px; line-height:1.25; }
+  .wf .col { padding:7px 8px; border-right:1px solid rgba(128,128,128,.25); }
+  .wf .col:last-child { border-right:0; }
+  .wf .lbl { text-transform:uppercase; letter-spacing:.04em; opacity:.55; font-size:8px; margin-bottom:5px; }
+  .wf .row { padding:3px 5px; margin:3px 0; border-radius:4px; background:rgba(128,128,128,.14); }
+  .wf .row.sel { background:rgba(90,130,255,.30); }
+  .wf .row.badge::after { content:"●"; color:#e5533c; float:right; font-size:8px; }
+  .wf .tab { display:inline-block; padding:3px 7px; margin-right:4px; border-radius:5px 5px 0 0; background:rgba(128,128,128,.14); }
+  .wf .tab.sel { background:rgba(90,130,255,.30); }
+  .wf .pane { margin-top:6px; padding:7px; border:1px dashed rgba(128,128,128,.35); border-radius:6px; height:78px; }
+  .wf .chip { display:inline-block; padding:2px 6px; margin:2px 3px 2px 0; border-radius:10px; background:rgba(128,128,128,.16); font-size:8px; }
+  .card-image { padding:12px !important; }
+</style>
+
+<div class="cards" style="grid-template-columns:1fr; gap:16px">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="wf">
+        <div class="col" style="flex:0 0 26%">
+          <div class="lbl">◆ Claude ▾</div>
+          <div class="row sel">Skills</div>
+          <div class="row">Memories</div>
+          <div class="row">MCP</div>
+          <div class="row">Agents · Hooks</div>
+          <div class="lbl" style="margin-top:8px">Views</div>
+          <div class="row">Security</div>
+          <div class="row">Budget · Backups</div>
+        </div>
+        <div class="col" style="flex:0 0 37%">
+          <div class="lbl">Skills — 24 items</div>
+          <div class="row">global · using-superpowers</div>
+          <div class="row sel">global · brainstorming</div>
+          <div class="row badge">project · deploy</div>
+          <div class="row">project · cco</div>
+        </div>
+        <div class="col" style="flex:1">
+          <div class="lbl">Inspector</div>
+          <div class="pane">frontmatter · content preview · Move ▾ · Delete · Undo</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Three-column source list <span style="opacity:.6;font-weight:400">— Mail / Finder idiom</span></h3>
+      <p>Sidebar (harness switcher + categories + special views) → item list with security badges, grouped by scope → detail inspector/editor. The canonical macOS structure: dense, instantly familiar, best for browsing lots of config fast.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="wf">
+        <div class="col" style="flex:0 0 26%">
+          <div class="lbl">◆ Claude ▾</div>
+          <div class="lbl" style="margin-top:4px">Scopes</div>
+          <div class="row sel">Global (~/.claude)</div>
+          <div class="row">project: cco</div>
+          <div class="row">project: api</div>
+        </div>
+        <div class="col" style="flex:1">
+          <div style="margin-bottom:4px">
+            <span class="tab sel">Organize</span><span class="tab">Security</span><span class="tab">Budget</span><span class="tab">Sessions</span><span class="tab">Backups</span>
+          </div>
+          <div class="pane" style="height:104px">Full-width workspace for the active tab — e.g. Organize shows the item grid; Security shows the scan report; Budget shows the token breakdown. Detail opens as a right drawer.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Sidebar + tabbed workspace <span style="opacity:.6;font-weight:400">— task-mode idiom</span></h3>
+      <p>Left sidebar picks harness + scope; the main area is a set of top tabs (Organize / Security / Budget / Sessions / Backups), each getting the full width. Best when the security scan and budget views want room to breathe; detail slides in as a drawer.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="wf">
+        <div class="col" style="flex:0 0 24%">
+          <div class="lbl">◆ Claude ▾</div>
+          <div class="row sel">⌘ Organizer</div>
+          <div class="row badge">⛨ Security</div>
+          <div class="row">▣ Budget</div>
+          <div class="row">⧉ Sessions</div>
+          <div class="row">↺ Backups</div>
+        </div>
+        <div class="col" style="flex:0 0 30%">
+          <div class="lbl">Categories</div>
+          <div class="row sel">Skills</div>
+          <div class="row">Memories · MCP</div>
+          <div class="row">Agents · Hooks</div>
+        </div>
+        <div class="col" style="flex:1">
+          <div class="lbl">Items → Detail</div>
+          <div class="pane">3-column browsing when in Organizer; the whole right area becomes a dedicated full-width view for Security / Budget / Backups.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Hybrid — modes in the sidebar <span style="opacity:.6;font-weight:400">— recommended</span></h3>
+      <p>Top-level <em>modes</em> live in the sidebar (Organizer, Security, Budget, Sessions, Backups). Organizer gives you A's 3-column browsing; the heavier views (Security, Budget, Backups) take over the full width. Combines dense config browsing with room for the differentiating pillars.</p>
+    </div>
+  </div>
+
+</div>
