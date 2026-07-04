@@ -6,6 +6,7 @@ use crate::harness::adapters::claude::ClaudeAdapter;
 use crate::harness::adapters::claude_budget as budget;
 use crate::harness::adapters::claude_mcp as mcp;
 use crate::harness::adapters::claude_ops::ClaudeOps;
+use crate::harness::adapters::codex::CodexAdapter;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
 use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
 use crate::sessions::{cost as session_cost, distill as session_distill, parse as session_parse, trim as session_trim};
@@ -13,6 +14,7 @@ use crate::sessions::{cost as session_cost, distill as session_distill, parse as
 pub fn build_registry() -> Registry {
     let mut r = Registry::new();
     r.register(Box::new(ClaudeAdapter));
+    r.register(Box::new(CodexAdapter));
     r
 }
 
