@@ -19,5 +19,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
+    // Plan 12 — exclude the WebDriver E2E specs from vitest. They have
+    // their own runner (webdriverio + tauri-driver) and rely on
+    // @wdio/globals which isn't installed at the root.
+    exclude: ['**/node_modules/**', 'tests/e2e/**'],
   },
 });
