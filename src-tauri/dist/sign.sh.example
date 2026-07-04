@@ -1,0 +1,17 @@
+# sign.sh.example — placeholder for src-tauri/dist/sign.sh
+#
+# Ward's build wrapper for Apple code signing + notarization.
+# See BUILD.md at the repo root for full instructions and the
+# complete list of environment variables used by Tauri.
+#
+# To enable signing locally:
+#   cp src-tauri/dist/sign.sh.example src-tauri/dist/sign.sh
+#   chmod +x src-tauri/dist/sign.sh
+#   export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAM1234)"
+#   export APPLE_ID="you@example.com"
+#   export APPLE_PASSWORD="abcd-efgh-ijkl-mnop"     # app-specific password
+#   export APPLE_TEAM_ID="TEAM1234"
+#   src-tauri/dist/sign.sh universal
+#
+# DO NOT commit the populated sign.sh with real values.
+# DO commit this example + the canonical sign.sh from the repo.

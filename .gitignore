@@ -4,7 +4,7 @@
 
 # Node / frontend
 node_modules/
-dist/
+/dist/
 .vite/
 
 # macOS
@@ -13,6 +13,8 @@ dist/
 # Build artifacts
 /src-tauri/gen/
 *.dmg
+# src-tauri/dist/ contains the sign.sh wrapper — intentionally tracked.
+# The root /dist/ is the frontend Vite output and remains ignored.
 
 # Brainstorming companion (if ever run from here)
 .superpowers/
