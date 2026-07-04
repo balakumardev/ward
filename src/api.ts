@@ -116,6 +116,66 @@ export interface BudgetItem {
   measured: boolean;
 }
 
+// ── Plan 07 — Sessions mode ─────────────────────────────────────────────
+
+/** Per-message usage block. Tokens from `message.usage`. */
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** A single classified JSONL line. The `kind` discriminator mirrors
+ *  the Rust `SessionRecord` enum (camelCase). */
+export type SessionRecord =
+  | { kind: 'user'; content: string; ts?: string }
+  | { kind: 'assistant'; content: string; model?: string; ts?: string; usage?: Usage }
+  | { kind: 'system'; subtype: string; summary?: string }
+  | { kind: 'aiTitle'; title: string }
+  | { kind: 'queueOperation'; enqueue: boolean }
+  | { kind: 'other'; recordType: string };
+
+/** Parsed conversation returned by `session_preview`. */
+export interface Conversation {
+  sessionId: string;
+  records: SessionRecord[];
+}
+
+/** Per-model cost row. */
+export interface ModelCost {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+}
+
+/** Aggregate cost result returned by `session_cost`. */
+export interface CostBreakdown {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  perModel: ModelCost[];
+  estimatedCostUsd: number;
+  /** Number of assistant records whose model was unknown. The UI
+   *  surfaces this as a soft "estimated" badge. */
+  estimatedRecords: number;
+}
+
+/** Result of `session_distill`. */
+export interface DistillResult {
+  originalPath: string;
+  cleanedPath: string;
+  backupPath: string;
+  originalBytes: number;
+  cleanedBytes: number;
+  reductionPct: number;
+  indexMd: string;
+}
+
 export const api = {
   scan: (harness: string) => invoke<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invoke<string>('read_file_content', { path }),
@@ -156,4 +216,10 @@ export const api = {
   // Plan 06 — Context Budget.
   contextBudget: (harness: string, scopeId: string) =>
     invoke<BudgetBreakdown>('context_budget', { harness, scopeId }),
+
+  // Plan 07 — Sessions mode.
+  sessionPreview: (path: string) => invoke<Conversation>('session_preview', { path }),
+  sessionCost: (path: string) => invoke<CostBreakdown>('session_cost', { path }),
+  sessionDistill: (path: string) => invoke<DistillResult>('session_distill', { path }),
+  sessionTrim: (path: string) => invoke<RestoreInfo>('session_trim', { path }),
 };

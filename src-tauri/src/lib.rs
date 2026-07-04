@@ -31,7 +31,11 @@ pub fn run() {
             commands::security_scan,
             commands::security_baseline_check,
             commands::security_baseline_accept,
-            commands::context_budget
+            commands::context_budget,
+            commands::session_preview,
+            commands::session_cost,
+            commands::session_distill,
+            commands::session_trim
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,7 +2,7 @@
 //! JSONL session files. Built on top of the `session` category that
 //! Plan 02 already exposes via the scan result.
 //!
-//! Module layout (filled in across this plan's commits):
+//! Module layout:
 //!   - `parse`   — streaming JSONL → structured `Conversation`
 //!   - `cost`    — per-model token/cost breakdown
 //!   - `distill` — backup → clean → `index.md` writer
@@ -11,3 +11,4 @@
 pub mod cost;
 pub mod distill;
 pub mod parse;
+pub mod trim;

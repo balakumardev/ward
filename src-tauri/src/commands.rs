@@ -6,6 +6,7 @@ use crate::harness::adapters::claude_mcp as mcp;
 use crate::harness::adapters::claude_ops::ClaudeOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
 use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
+use crate::sessions::{cost as session_cost, distill as session_distill, parse as session_parse, trim as session_trim};
 
 pub fn build_registry() -> Registry {
     let mut r = Registry::new();
@@ -303,6 +304,41 @@ pub fn context_budget(
     }
     let servers_vec: Vec<String> = unique_servers.into_iter().collect();
     Ok(budget::compose(&scope_id, &result.items, &servers_vec, &home))
+}
+
+// ── Sessions mode (Plan 07) ─────────────────────────────────────────────
+
+/// Stream-parse a session `.jsonl` file into a structured
+/// `Conversation`. Returned to the UI so the conversation viewer can
+/// render user/assistant turns + metadata without touching the disk.
+#[tauri::command]
+pub fn session_preview(path: String) -> Result<session_parse::Conversation, WardError> {
+    session_parse::parse_file(Path::new(&path))
+}
+
+/// Aggregate per-model token usage + estimated USD cost for a session.
+/// The pricing table in `sessions::cost` is rough — the UI labels the
+/// total as an estimate.
+#[tauri::command]
+pub fn session_cost(path: String) -> Result<session_cost::CostBreakdown, WardError> {
+    let conv = session_parse::parse_file(Path::new(&path))?;
+    session_cost::compute(&conv)
+}
+
+/// Distill a session. Backs up the original first, writes the cleaned
+/// JSONL + `index.md` next to it, and returns the resulting paths +
+/// reduction stats.
+#[tauri::command]
+pub fn session_distill(path: String) -> Result<session_distill::DistillResult, WardError> {
+    session_distill::distill(Path::new(&path))
+}
+
+/// Replace base64 image blocks in the session file with
+/// `[image redacted]` text blocks. Returns a `RestoreInfo` capturing
+/// the prior file bytes so the Organizer's Undo flow can revert.
+#[tauri::command]
+pub fn session_trim(path: String) -> Result<RestoreInfo, WardError> {
+    session_trim::trim_file(Path::new(&path))
 }
 
 #[cfg(test)]

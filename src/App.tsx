@@ -4,6 +4,7 @@ import { Organizer } from './modes/Organizer';
 import { McpPolicy } from './modes/McpPolicy';
 import { Security } from './modes/Security';
 import { BudgetWithPicker } from './modes/Budget';
+import { Sessions } from './modes/Sessions';
 import { api } from './api';
 import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -62,6 +63,13 @@ export default function App() {
       return r;
     },
     mcpGetPolicy: () => api.mcpGetPolicy(),
+
+    // Plan 07 — Sessions mode.
+    sessionPreview: (path: string) => api.sessionPreview(path),
+    sessionCost: (path: string) => api.sessionCost(path),
+    sessionDistill: (path: string) => api.sessionDistill(path),
+    sessionTrim: (path: string) => api.sessionTrim(path),
+    // `restore` already wired above.
   };
 
   return (
@@ -70,7 +78,19 @@ export default function App() {
         {(result) => (
           <Show when={mode() === 'organizer'} fallback={
             <Show when={mode() === 'security'} fallback={
-              <Show when={mode() === 'budget'} fallback={<div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>}>
+              <Show when={mode() === 'budget'} fallback={
+                <Show when={mode() === 'sessions'} fallback={
+                  <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                }>
+                  <Show when={result().capabilities.sessions} fallback={
+                    <div data-testid="sessions-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>
+                      Sessions mode is not supported by this harness.
+                    </div>
+                  }>
+                    <Sessions scan={result()} api={organizerApi as never} />
+                  </Show>
+                </Show>
+              }>
                 <Show when={result().capabilities.contextBudget} fallback={
                   <div data-testid="budget-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>
                     Context Budget mode is not supported by this harness.
