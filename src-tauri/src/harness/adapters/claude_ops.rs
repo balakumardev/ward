@@ -353,31 +353,34 @@ fn move_single_md(item: &HarnessItem, dest_scope_id: &str, scopes: &[Scope], cat
 
 fn resolve_category_dir(scope_id: &str, category: &str, scopes: &[Scope]) -> Option<PathBuf> {
     match category {
-        "memory" => {
-            if scope_id == "global" {
-                Some(claude_root_for_scope_id(scope_id, scopes).join("memory"))
-            } else {
-                let scope = find_scope(scopes, scope_id)?;
-                if scope.kind == "project" {
-                    Some(PathBuf::from(&scope.root).join("memory"))
-                } else {
-                    Some(PathBuf::from(&scope.root).join("memory"))
-                }
-            }
-        }
-        "plan" => {
-            if scope_id == "global" {
-                Some(claude_root_for_scope_id(scope_id, scopes).join("plans"))
-            } else {
-                Some(claude_root_for_scope_id(scope_id, scopes).join("plans"))
-            }
-        }
-        "rule" => resolve_rule_dir(scope_id, scopes).map(|p| p),
+        "memory" => Some(resolve_memory_dir_path(scope_id, scopes)),
+        "plan" => Some(resolve_plan_dir_path(scope_id, scopes)),
+        "rule" => resolve_rule_dir(scope_id, scopes),
         "command" => resolve_command_dir(scope_id, scopes),
         "agent" => resolve_agent_dir(scope_id, scopes),
         "skill" => resolve_skill_dir(scope_id, scopes),
         _ => None,
     }
+}
+
+/// Resolve the on-disk directory a memory file/dir lives in for the
+/// given scope. For global → `<home>/.claude/memory`; for project
+/// (resolved or unresolved) → `<home>/.claude/projects/<id>/memory`.
+fn resolve_memory_dir_path(scope_id: &str, scopes: &[Scope]) -> PathBuf {
+    if scope_id == "global" {
+        return claude_root_for_scope_id(scope_id, scopes).join("memory");
+    }
+    // For project scopes (resolved or unresolved), memory files live
+    // in ~/.claude/projects/<encoded>/memory/.
+    claude_root_for_scope_id("global", scopes).join("projects").join(scope_id).join("memory")
+}
+
+/// Same as resolve_memory_dir_path but for plans.
+fn resolve_plan_dir_path(scope_id: &str, scopes: &[Scope]) -> PathBuf {
+    if scope_id == "global" {
+        return claude_root_for_scope_id(scope_id, scopes).join("plans");
+    }
+    claude_root_for_scope_id("global", scopes).join("projects").join(scope_id).join("plans")
 }
 
 /// Rename a skill directory. The on-disk layout is `<dir>/SKILL.md`,
@@ -436,10 +439,7 @@ fn move_mcp(_ctx: &Ctx, item: &HarnessItem, dest_scope_id: &str, scopes: &[Scope
     // Read destination (creating if missing).
     let mut to_root = read_json_or_empty(&to_json)?;
     ensure_mcp_parent(&mut to_root, &parent_key);
-    if to_root.get(parent_key.object_key())
-        .and_then(|v| v.get(parent_key.entry_key()))
-        .is_some()
-    {
+    if entry_exists(&to_root, &parent_key, &item.name) {
         return Err(WardError::NotFound(format!("Server {} already exists in destination", item.name)));
     }
     insert_mcp_entry(&mut to_root, &parent_key, &item.name, entry.clone());
@@ -771,6 +771,25 @@ fn extract_mcp_entry(root: &mut serde_json::Value, parent: &McpParentKey, key: &
     }
 }
 
+fn entry_exists(root: &serde_json::Value, parent: &McpParentKey, key: &str) -> bool {
+    if parent.object == "mcpServers" {
+        root.get("mcpServers")
+            .and_then(|v| v.as_object())
+            .map(|o| o.contains_key(key))
+            .unwrap_or(false)
+    } else if parent.object == "projects" {
+        root.get("projects")
+            .and_then(|v| v.as_object())
+            .and_then(|o| parent.project.as_ref().and_then(|k| o.get(k)))
+            .and_then(|p| p.get("mcpServers"))
+            .and_then(|v| v.as_object())
+            .map(|o| o.contains_key(key))
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
 // ── safeRename (CCO parity) ────────────────────────────────────────────
 
 fn safe_rename(from: &Path, to: &Path, is_dir: bool) -> Result<(), WardError> {
@@ -1047,5 +1066,240 @@ mod tests {
         let item = make_item("skill", "-proj-a");
         let scopes = test_scopes();
         assert!(validate_move(&item, "-proj-b", &scopes).is_ok());
+    }
+
+    // ── move_item per-category round-trip tests ──
+    //
+    // Each test builds a fake `home` + project repo, writes the source
+    // file (or .mcp.json) into the source scope's directory, calls
+    // `ClaudeOps.move_item`, then asserts the destination path exists
+    // and the source path is gone. Restore is exercised in the
+    // delete/restore tests below.
+
+    use std::fs;
+
+    fn make_home_with_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        let repo = home.join("work").join("project-a");
+        fs::create_dir_all(&repo).unwrap();
+        (dir, repo)
+    }
+
+    fn scopes_for(home: &Path, repo: &Path) -> Vec<Scope> {
+        vec![
+            Scope {
+                id: "global".into(),
+                kind: "global".into(),
+                label: "Global".into(),
+                root: home.join(".claude").display().to_string(),
+            },
+            Scope {
+                id: "-proj-a".into(),
+                kind: "project".into(),
+                label: "project-a".into(),
+                root: repo.display().to_string(),
+            },
+        ]
+    }
+
+    fn ctx_for(home: &Path) -> Ctx<'_> {
+        Ctx { home, cwd: None }
+    }
+
+    fn make_md_item(category: &str, scope_id: &str, path: &Path, name: &str) -> HarnessItem {
+        HarnessItem {
+            category: category.into(),
+            scope_id: scope_id.into(),
+            name: name.into(),
+            description: String::new(),
+            path: path.display().to_string(),
+            movable: true,
+            deletable: true,
+            locked: false,
+            effective: None,
+        }
+    }
+
+    #[test]
+    fn move_memory_from_global_to_project() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        // Write source: ~/.claude/memory/note.md
+        let from = home.join(".claude/memory/note.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "remember this").unwrap();
+        // CCO resolveMemoryDir("project") → ~/.claude/projects/<id>/memory
+        fs::create_dir_all(home.join(".claude/projects/-proj-a/memory")).unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("memory", "global", &from, "note");
+
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "-proj-a", &scopes).unwrap();
+
+        assert!(!from.exists(), "source must be removed");
+        let to = home.join(".claude/projects/-proj-a/memory/note.md");
+        assert!(to.exists(), "destination must exist");
+        assert_eq!(fs::read_to_string(&to).unwrap(), "remember this");
+        assert_eq!(info.kind, "file");
+        assert_eq!(info.original_path, from.display().to_string());
+        assert_eq!(info.current_path, Some(to.display().to_string()));
+        assert!(info.backup_bytes.is_none(), "move has no backup_bytes");
+    }
+
+    #[test]
+    fn move_skill_from_project_to_global() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        // Write source: <repo>/.claude/skills/foo/SKILL.md
+        let from = repo.join(".claude/skills/foo/SKILL.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "---\nname: foo\n---\nbody").unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("skill", "-proj-a", &from, "foo");
+
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "global", &scopes).unwrap();
+
+        assert!(!from.exists(), "source skill dir must be removed");
+        let to = home.join(".claude/skills/foo");
+        assert!(to.is_dir(), "destination skill dir must exist");
+        assert!(to.join("SKILL.md").is_file());
+        assert_eq!(info.kind, "file");
+        assert_eq!(info.original_path, from.parent().unwrap().display().to_string());
+        assert_eq!(info.current_path, Some(to.display().to_string()));
+    }
+
+    #[test]
+    fn move_command_round_trip() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = repo.join(".claude/commands/deploy.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "echo deploy").unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("command", "-proj-a", &from, "deploy");
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "global", &scopes).unwrap();
+        let to = home.join(".claude/commands/deploy.md");
+        assert!(to.exists());
+        assert_eq!(info.kind, "file");
+    }
+
+    #[test]
+    fn move_agent_round_trip() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = repo.join(".claude/agents/helper.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "echo help").unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("agent", "-proj-a", &from, "helper");
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "global", &scopes).unwrap();
+        let to = home.join(".claude/agents/helper.md");
+        assert!(to.exists());
+        assert_eq!(info.kind, "file");
+    }
+
+    #[test]
+    fn move_plan_round_trip() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = home.join(".claude/plans/q3.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "# plan").unwrap();
+        // build a project scope whose projects/<encoded>/plans dir exists
+        let project_dir = home.join(".claude/projects/-proj-a");
+        fs::create_dir_all(&project_dir).unwrap();
+        let scopes = vec![
+            Scope {
+                id: "global".into(),
+                kind: "global".into(),
+                label: "Global".into(),
+                root: home.join(".claude").display().to_string(),
+            },
+            Scope {
+                id: "-proj-a".into(),
+                kind: "project-unresolved".into(),
+                label: "project-a".into(),
+                root: project_dir.display().to_string(),
+            },
+        ];
+        let item = make_md_item("plan", "global", &from, "q3");
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "-proj-a", &scopes).unwrap();
+        let to = project_dir.join("plans/q3.md");
+        assert!(to.exists(), "plan destination must exist at {}", to.display());
+        assert_eq!(info.kind, "file");
+    }
+
+    #[test]
+    fn move_rule_round_trip() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = repo.join(".claude/rules/no-debug.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "no debug").unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("rule", "-proj-a", &from, "no-debug");
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "global", &scopes).unwrap();
+        let to = home.join(".claude/rules/no-debug.md");
+        assert!(to.exists());
+        assert_eq!(info.kind, "file");
+    }
+
+    #[test]
+    fn move_mcp_edits_json_not_file() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        // Source: ~/.claude/.mcp.json
+        let from_json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(from_json.parent().unwrap()).unwrap();
+        fs::write(&from_json, r#"{"mcpServers":{"github":{"command":"gh"}}}"#).unwrap();
+        // Pre-create dest: <repo>/.mcp.json with one other entry
+        let to_json = repo.join(".mcp.json");
+        fs::write(&to_json, r#"{"mcpServers":{"slack":{"command":"slack"}}}"#).unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("mcp", "global", &from_json, "github");
+        let ops = ClaudeOps;
+        let info = ops.move_item(&ctx_for(home), &item, "-proj-a", &scopes).unwrap();
+
+        // Source mcp.json: github entry gone, mcpServers intact.
+        let src: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&from_json).unwrap()).unwrap();
+        assert!(src["mcpServers"].get("github").is_none(), "github must be removed from source");
+        assert!(src["mcpServers"].as_object().unwrap().is_empty(), "mcpServers must be empty");
+        // Dest mcp.json: both entries now present.
+        let dst: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&to_json).unwrap()).unwrap();
+        assert_eq!(dst["mcpServers"]["github"]["command"], "gh");
+        assert_eq!(dst["mcpServers"]["slack"]["command"], "slack");
+        // RestoreInfo captures the moved entry.
+        assert_eq!(info.kind, "mcp-entry");
+        assert_eq!(info.mcp_key.as_deref(), Some("github"));
+        assert_eq!(info.mcp_parent_key.as_deref(), Some("mcpServers"));
+        assert_eq!(info.mcp_entry.as_ref().unwrap()["command"], "gh");
+    }
+
+    #[test]
+    fn move_mcp_fails_when_destination_already_has_same_name() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from_json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(from_json.parent().unwrap()).unwrap();
+        fs::write(&from_json, r#"{"mcpServers":{"github":{"command":"gh"}}}"#).unwrap();
+        let to_json = repo.join(".mcp.json");
+        fs::write(&to_json, r#"{"mcpServers":{"github":{"command":"different"}}}"#).unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("mcp", "global", &from_json, "github");
+        let ops = ClaudeOps;
+        let res = ops.move_item(&ctx_for(home), &item, "-proj-a", &scopes);
+        assert!(res.is_err(), "must reject when destination already has the same key");
+        // Source untouched
+        let src: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&from_json).unwrap()).unwrap();
+        assert_eq!(src["mcpServers"]["github"]["command"], "gh");
     }
 }
