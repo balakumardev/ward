@@ -11,7 +11,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::scan,
-            commands::read_file_content
+            commands::read_file_content,
+            commands::list_destinations,
+            commands::move_item,
+            commands::delete_item,
+            commands::restore,
+            commands::save_file,
+            commands::bulk,
+            commands::bulk_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

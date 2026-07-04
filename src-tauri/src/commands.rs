@@ -1,8 +1,9 @@
 use std::path::Path;
 use crate::error::WardError;
 use crate::harness::adapters::claude::ClaudeAdapter;
-use crate::harness::{framework, Ctx, Registry};
-use crate::model::ScanResult;
+use crate::harness::adapters::claude_ops::ClaudeOps;
+use crate::harness::{framework, Ctx, HarnessOps, Registry};
+use crate::model::{Destination, HarnessItem, RestoreInfo, ScanResult, Scope};
 
 pub fn build_registry() -> Registry {
     let mut r = Registry::new();
@@ -34,6 +35,116 @@ pub fn read_file_impl(path: &Path, home: &Path) -> Result<String, WardError> {
 pub fn read_file_content(path: String) -> Result<String, WardError> {
     let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
     read_file_impl(Path::new(&path), &home)
+}
+
+// ── Mutation surface (Plan 03) ─────────────────────────────────────────
+
+/// Pick the ops implementation that backs `harness_id`. Today we only
+/// ship the Claude adapter's ops; future adapters will plug in here.
+fn ops_for(harness_id: &str) -> Result<&'static dyn HarnessOps, WardError> {
+    match harness_id {
+        "claude" => Ok(&ClaudeOps),
+        other => Err(WardError::HarnessUnavailable(other.to_string())),
+    }
+}
+
+/// Re-discover scopes + the relevant `Ctx` for a harness. We rebuild
+/// the registry on every mutation command so the scope list reflects
+/// the latest on-disk state.
+fn harness_ctx(harness_id: &str) -> Result<(Ctx<'static>, Vec<Scope>), WardError> {
+    // We need a 'static home so Ctx can outlive this stack frame; use
+    // a leaked Box. This is the only Tauri command path; tests use
+    // the helpers above.
+    let home_static: &'static Path = Box::leak(
+        dirs::home_dir()
+            .ok_or_else(|| WardError::NotFound("home directory".into()))?
+            .into_boxed_path(),
+    );
+    let registry = build_registry();
+    let adapter = registry
+        .get(harness_id)
+        .ok_or_else(|| WardError::HarnessUnavailable(harness_id.to_string()))?;
+    let ctx = Ctx { home: home_static, cwd: None };
+    let scopes = adapter.discover_scopes(&ctx)?;
+    Ok((ctx, scopes))
+}
+
+#[tauri::command]
+pub fn list_destinations(harness: String, item: HarnessItem) -> Result<Vec<Destination>, WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    Ok(ops.get_valid_destinations(&ctx, &item, &scopes))
+}
+
+#[tauri::command]
+pub fn move_item(harness: String, item: HarnessItem, dest_scope_id: String) -> Result<RestoreInfo, WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    ops.move_item(&ctx, &item, &dest_scope_id, &scopes)
+}
+
+#[tauri::command]
+pub fn delete_item(harness: String, item: HarnessItem) -> Result<RestoreInfo, WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    ops.delete_item(&ctx, &item, &scopes)
+}
+
+#[tauri::command]
+pub fn restore(harness: String, info: RestoreInfo) -> Result<(), WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, _) = harness_ctx(&harness)?;
+    ops.restore(&ctx, &info)
+}
+
+#[tauri::command]
+pub fn save_file(path: String, content: String) -> Result<(), WardError> {
+    // save_file uses the global ClaudeOps so the same `ensure_under_home`
+    // and write semantics apply. We could route through `ops_for` if a
+    // future harness needs different validation.
+    let ops = ClaudeOps;
+    let (ctx, _) = harness_ctx("claude")?;
+    ops.save_file(&ctx, &path, &content)
+}
+
+/// Run a single `move_item` or `delete_item` for each input and
+/// accumulate every `RestoreInfo` so the UI can offer a single Undo.
+#[tauri::command]
+pub fn bulk(
+    harness: String,
+    items: Vec<HarnessItem>,
+    op: String,
+    dest_scope_id: Option<String>,
+) -> Result<Vec<RestoreInfo>, WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let info = match op.as_str() {
+            "move" => {
+                let dest = dest_scope_id.clone()
+                    .ok_or_else(|| WardError::NotFound("bulk move requires dest_scope_id".into()))?;
+                ops.move_item(&ctx, &item, &dest, &scopes)?
+            }
+            "delete" => ops.delete_item(&ctx, &item, &scopes)?,
+            other => return Err(WardError::NotFound(format!("Unknown bulk op: {other}"))),
+        };
+        out.push(info);
+    }
+    Ok(out)
+}
+
+/// Reverse a batch of `RestoreInfo`s. Apply them in reverse order so a
+/// later restore doesn't overwrite a file that an earlier restore will
+/// later recreate.
+#[tauri::command]
+pub fn bulk_restore(harness: String, infos: Vec<RestoreInfo>) -> Result<(), WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, _) = harness_ctx(&harness)?;
+    for info in infos.iter().rev() {
+        ops.restore(&ctx, info)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

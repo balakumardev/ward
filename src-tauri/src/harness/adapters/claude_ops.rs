@@ -1302,4 +1302,151 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&from_json).unwrap()).unwrap();
         assert_eq!(src["mcpServers"]["github"]["command"], "gh");
     }
+
+    // ── Delete + restore round-trip ──
+
+    fn lock_item(mut item: HarnessItem) -> HarnessItem {
+        item.locked = true;
+        item
+    }
+
+    #[test]
+    fn delete_then_restore_memory_round_trip() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = home.join(".claude/memory/note.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "remember this").unwrap();
+        let item = make_md_item("memory", "global", &from, "note");
+        let ops = ClaudeOps;
+
+        let info = ops.delete_item(&ctx_for(home), &item, &[]).unwrap();
+        assert!(!from.exists(), "file deleted");
+        assert_eq!(info.kind, "file");
+        assert_eq!(info.original_path, from.display().to_string());
+        assert_eq!(info.backup_bytes.as_deref(), Some(b"remember this".as_ref()));
+
+        ops.restore(&ctx_for(home), &info).unwrap();
+        assert!(from.exists(), "restored");
+        assert_eq!(fs::read_to_string(&from).unwrap(), "remember this");
+    }
+
+    #[test]
+    fn delete_then_restore_skill_dir_round_trip() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = repo.join(".claude/skills/foo/SKILL.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "skill body").unwrap();
+        fs::write(from.parent().unwrap().join("extra.txt"), "side file").unwrap();
+        let item = make_md_item("skill", "-proj-a", &from, "foo");
+        let ops = ClaudeOps;
+
+        let info = ops.delete_item(&ctx_for(home), &item, &[]).unwrap();
+        assert!(!from.exists(), "skill deleted");
+        assert!(!from.parent().unwrap().exists(), "skill dir removed");
+
+        ops.restore(&ctx_for(home), &info).unwrap();
+        assert!(from.exists(), "SKILL.md restored");
+        assert_eq!(fs::read_to_string(&from).unwrap(), "skill body");
+        assert_eq!(fs::read_to_string(from.parent().unwrap().join("extra.txt")).unwrap(), "side file");
+    }
+
+    #[test]
+    fn delete_then_restore_mcp_round_trip() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        fs::write(&json, r#"{"mcpServers":{"github":{"command":"gh"},"slack":{"command":"slk"}}}"#).unwrap();
+        let item = make_md_item("mcp", "global", &json, "github");
+        let ops = ClaudeOps;
+
+        let info = ops.delete_item(&ctx_for(home), &item, &[]).unwrap();
+        assert_eq!(info.kind, "mcp-entry");
+        assert_eq!(info.mcp_key.as_deref(), Some("github"));
+        let after_delete: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert!(after_delete["mcpServers"].get("github").is_none());
+        assert_eq!(after_delete["mcpServers"]["slack"]["command"], "slk");
+
+        ops.restore(&ctx_for(home), &info).unwrap();
+        let after_restore: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after_restore["mcpServers"]["github"]["command"], "gh");
+        assert_eq!(after_restore["mcpServers"]["slack"]["command"], "slk");
+    }
+
+    #[test]
+    fn delete_rejects_locked_item() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = home.join(".claude/memory/note.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "x").unwrap();
+        let item = lock_item(make_md_item("memory", "global", &from, "note"));
+        let ops = ClaudeOps;
+        assert!(ops.delete_item(&ctx_for(home), &item, &[]).is_err());
+        assert!(from.exists());
+    }
+
+    #[test]
+    fn move_then_restore_round_trip() {
+        let (dir, repo) = make_home_with_repo();
+        let home = dir.path();
+        let from = repo.join(".claude/skills/foo/SKILL.md");
+        fs::create_dir_all(from.parent().unwrap()).unwrap();
+        fs::write(&from, "skill body").unwrap();
+        let scopes = scopes_for(home, &repo);
+        let item = make_md_item("skill", "-proj-a", &from, "foo");
+        let ops = ClaudeOps;
+
+        let info = ops.move_item(&ctx_for(home), &item, "global", &scopes).unwrap();
+        assert!(!from.exists());
+        let dest = home.join(".claude/skills/foo/SKILL.md");
+        assert!(dest.exists());
+
+        ops.restore(&ctx_for(home), &info).unwrap();
+        assert!(from.exists(), "source restored");
+        assert!(!dest.exists(), "dest cleared");
+    }
+
+    #[test]
+    fn restore_preserves_unrelated_mcp_keys_on_round_trip() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        fs::write(&json,
+            r#"{"mcpServers":{"github":{"command":"gh","args":["api"]},"slack":{"command":"slk"}}}"#
+        ).unwrap();
+        let item = make_md_item("mcp", "global", &json, "github");
+        let ops = ClaudeOps;
+        let info = ops.delete_item(&ctx_for(home), &item, &[]).unwrap();
+        ops.restore(&ctx_for(home), &info).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["github"]["command"], "gh");
+        assert_eq!(after["mcpServers"]["github"]["args"][0], "api");
+        assert_eq!(after["mcpServers"]["slack"]["command"], "slk");
+    }
+
+    #[test]
+    fn save_file_writes_via_ensure_under_home() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let target = home.join(".claude/memory/note.md");
+        let ops = ClaudeOps;
+        ops.save_file(&ctx_for(home), &target.display().to_string(), "edited content").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "edited content");
+    }
+
+    #[test]
+    fn save_file_rejects_traversal() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let ops = ClaudeOps;
+        let bad = home.join("../etc/passwd");
+        assert!(ops.save_file(&ctx_for(home), &bad.display().to_string(), "x").is_err());
+    }
 }
