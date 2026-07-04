@@ -1,4 +1,5 @@
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
+import { listen } from '@tauri-apps/api/event';
 import type { Finding, Severity, HarnessItem, RestoreInfo } from '../api';
 import { api } from '../api';
 
@@ -27,6 +28,35 @@ export function Security(props: {
 }) {
   const [scan, { refetch }] = createResource(() => api.securityScan('claude', props.items));
   const [selected, setSelected] = createSignal<string | null>(null);
+
+  // Plan 10 — `config-changed` is emitted by the Rust fs watcher
+  // whenever `~/.claude` or `~/.codex` change on disk. Re-run the
+  // security scan on each emission so the findings list reflects the
+  // latest state without forcing the user to click "Scan now". The
+  // listener lives for the component lifetime and is cleaned up on
+  // unmount.
+  let unlisten: (() => void) | null = null;
+  listen<string[]>('config-changed', () => {
+    void refetch();
+  }).then((handle) => {
+    unlisten = handle;
+  });
+  onCleanup(() => {
+    if (unlisten) unlisten();
+  });
+
+  // Plan 10 — also listen for `scan-now` from the tray menu. Same
+  // re-run path so the user sees immediate feedback after clicking
+  // the tray's "Scan now" item.
+  let unlistenScan: (() => void) | null = null;
+  listen('scan-now', () => {
+    void refetch();
+  }).then((handle) => {
+    unlistenScan = handle;
+  });
+  onCleanup(() => {
+    if (unlistenScan) unlistenScan();
+  });
 
   const sortedFindings = createMemo(() => {
     const result = scan();

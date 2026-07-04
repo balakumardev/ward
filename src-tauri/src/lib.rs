@@ -12,9 +12,17 @@ pub mod security;
 pub mod sessions;
 pub mod tokenizer;
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use notify_debouncer_mini::Debouncer;
+use tauri::{Emitter, Listener, Manager};
+
 use crate::backup::git as git_ops;
 use crate::harness::adapters::claude::ClaudeAdapter;
 use crate::harness::{framework, Ctx, Registry};
+use crate::native::watch;
 
 /// Plan 08 — headless backup run triggered by the launchd agent.
 ///
@@ -106,10 +114,142 @@ pub fn run_backup_once(argv: &[String]) -> i32 {
     0
 }
 
+/// Plan 10 — keepalive handle for the fs watcher. We share the
+/// debouncer with the bridge thread via `Arc<Mutex<>>` so dropping
+/// the handle on either side cleanly stops the watch.
+pub struct WatcherHandle(pub Arc<Mutex<Option<Debouncer<notify::RecommendedWatcher>>>>);
+
+impl Drop for WatcherHandle {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.0.lock() {
+            // Dropping the debouncer here stops the OS-level watch.
+            *g = None;
+        }
+    }
+}
+
+/// Plan 10 — start the fs watcher on the harness directories. Spawns a
+/// background thread that drains the watcher's `mpsc::Receiver<PathBuf>`
+/// and emits a `config-changed` event on every flushed change (debounced
+/// to 1s windows on top of the watcher's own 500ms debounce, so editor
+/// save storms collapse into one event per second).
+///
+/// Returns `Some(WatcherHandle)` if any of the requested paths existed
+/// and a watcher was successfully set up; `None` if every path was
+/// missing — in which case the GUI still launches, just without
+/// live-refresh.
+pub fn start_watcher<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Option<WatcherHandle> {
+    let paths = watch::default_watch_paths();
+    if paths.is_empty() {
+        return None;
+    }
+    let WatcherSplit { debouncer, rx } = build_watcher_split(paths)?;
+
+    // Bridge the path receiver into a Tauri event. We throttle to 1Hz
+    // so a flurry of saves doesn't flood the frontend with
+    // `config-changed` events (the frontend re-runs a full scan on
+    // each one).
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        let min_gap = std::time::Duration::from_millis(1000);
+        let mut pending: Vec<PathBuf> = Vec::new();
+        loop {
+            let recv = rx.recv_timeout(std::time::Duration::from_millis(500));
+            match recv {
+                Ok(p) => pending.push(p),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if !pending.is_empty() && last_emit.elapsed() >= min_gap {
+                let _ = app_handle.emit("config-changed", &pending);
+                pending.clear();
+                last_emit = std::time::Instant::now();
+            }
+        }
+    });
+
+    Some(WatcherHandle(Arc::new(Mutex::new(Some(debouncer)))))
+}
+
+/// Internal helper: build the watcher, then split into debouncer +
+/// receiver so the debouncer can be shared via `Arc<Mutex<>>`. Used
+/// by `start_watcher` and the relevant test(s) if added later.
+struct WatcherSplit {
+    debouncer: Debouncer<notify::RecommendedWatcher>,
+    rx: std::sync::mpsc::Receiver<PathBuf>,
+}
+
+fn build_watcher_split(paths: Vec<PathBuf>) -> Option<WatcherSplit> {
+    let watcher = watch::watch_paths(paths).ok()?;
+    // `watch_paths` returns a Watcher we own. Destructure; the
+    // debouncer keeps the OS-level watch alive, the receiver pumps
+    // events into the bridge.
+    let watch::Watcher { _debouncer, rx } = watcher;
+    Some(WatcherSplit {
+        debouncer: _debouncer,
+        rx,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            // Menu-bar tray (Plan 10). Build it after the app is
+            // initialised so the window icon is available. We hold
+            // the TrayIcon in a keepalive box on the app's managed
+            // state so it lives as long as the app does.
+            match crate::native::tray::setup(app) {
+                Ok(tray) => {
+                    app.manage(Plan10Tray(Some(Box::new(tray))));
+                }
+                Err(e) => {
+                    eprintln!("ward: tray setup failed: {e}");
+                }
+            }
+
+            // Start the fs watcher (Plan 10). Stash the keepalive
+            // handle in app-managed state.
+            if let Some(handle) = start_watcher(app.handle().clone()) {
+                app.manage(Plan10Watcher(Some(handle)));
+            }
+
+            // Handle tray menu actions. We use a global event
+            // (`tray_action`) so the frontend can react.
+            let app_handle = app.handle().clone();
+            app.listen("tray_action", move |event| {
+                let id_str: String = match event.payload() {
+                    payload if payload.starts_with('"') && payload.ends_with('"') => {
+                        payload[1..payload.len() - 1].to_string()
+                    }
+                    _ => event.payload().to_string(),
+                };
+                match id_str.as_str() {
+                    "scan" => {
+                        // Re-emit a fresh `scan-now` for the frontend.
+                        let _ = app_handle.emit("scan-now", ());
+                    }
+                    "quit" => {
+                        app_handle.exit(0);
+                    }
+                    "open" | _ => {
+                        // Bring the main window forward.
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::scan,
             commands::read_file_content,
@@ -144,3 +284,11 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+/// Holds the tray icon alive for the lifetime of the app. We use a
+/// thin newtype rather than `Box<dyn Any>` so the type is searchable
+/// in managed state.
+struct Plan10Tray<R: tauri::Runtime>(Option<Box<tauri::tray::TrayIcon<R>>>);
+
+/// Holds the watcher keepalive alive for the lifetime of the app.
+struct Plan10Watcher(Option<WatcherHandle>);

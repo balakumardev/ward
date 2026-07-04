@@ -27,7 +27,7 @@ pub const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(500);
 /// `notify-debouncer-mini` types directly.
 pub struct Watcher {
     /// Held so the OS-level watch stays alive. Drop = stop.
-    _debouncer: Debouncer<notify::RecommendedWatcher>,
+    pub _debouncer: Debouncer<notify::RecommendedWatcher>,
     /// Receives the changed paths emitted by the debouncer.
     pub rx: Receiver<PathBuf>,
 }
