@@ -32,6 +32,8 @@ chrono = { version = "0.4", features = ["serde"] }
 which = "6"
 base64 = "0.22"
 unicode-normalization = "0.1"
+# Plan 09 — Codex adapter (parses ~/.codex/config.toml)
+toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"

@@ -17,6 +17,10 @@ pub fn category_label(id: &str) -> String {
         "plugin" => "Plugins",
         "session" => "Sessions",
         "setting" => "Settings",
+        "profile" => "Profiles",
+        "history" => "History",
+        "shell" => "Shell",
+        "runtime" => "Runtime",
         other => other,
     }
     .to_string()
