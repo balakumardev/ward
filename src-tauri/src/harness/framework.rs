@@ -1,3 +1,4 @@
+use crate::effective;
 use crate::error::WardError;
 use crate::harness::{Ctx, Harness};
 use crate::model::{Category, HarnessItem, ScanResult};
@@ -21,6 +22,15 @@ pub fn category_label(id: &str) -> String {
     .to_string()
 }
 
+/// Pick the most relevant project scope for effective resolution.
+/// Priority: first non-global project scope, else global.
+fn pick_effective_scope(scopes: &[crate::model::Scope]) -> &str {
+    scopes.iter()
+        .find(|s| s.kind == "project")
+        .map(|s| s.id.as_str())
+        .unwrap_or("global")
+}
+
 pub fn run_scan(adapter: &dyn Harness, ctx: &Ctx) -> Result<ScanResult, WardError> {
     let scopes = adapter.discover_scopes(ctx)?;
     let mut items: Vec<HarnessItem> = Vec::new();
@@ -29,6 +39,22 @@ pub fn run_scan(adapter: &dyn Harness, ctx: &Ctx) -> Result<ScanResult, WardErro
             items.extend(adapter.scan_category(ctx, cat, scope)?);
         }
     }
+
+    // Apply effective tags relative to the most-relevant project scope.
+    let effective_scope_id = pick_effective_scope(&scopes);
+    let (shadowed, conflict, ancestor) =
+        effective::compute_effective_sets(effective_scope_id, &items, &scopes);
+    for item in items.iter_mut() {
+        let key = effective::item_key(item);
+        if shadowed.contains(&key) {
+            item.effective = Some("shadowed".to_string());
+        } else if conflict.contains(&key) {
+            item.effective = Some("conflict".to_string());
+        } else if ancestor.contains(&key) {
+            item.effective = Some("ancestor".to_string());
+        }
+    }
+
     let categories = adapter
         .category_ids()
         .iter()

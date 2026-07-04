@@ -41,6 +41,11 @@ pub struct HarnessItem {
     pub movable: bool,
     pub deletable: bool,
     pub locked: bool,
+    /// Effective status — `None`, `Some("active")`, `Some("shadowed")`,
+    /// `Some("conflict")`, or `Some("ancestor")`. Active items are not
+    /// tagged (None). Shadowed/conflict/ancestor are computed per project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,10 +73,12 @@ mod tests {
             movable: true,
             deletable: true,
             locked: false,
+            effective: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"scopeId\":\"global\""));
         assert!(json.contains("\"category\":\"skill\""));
         assert!(!json.contains("\"description\""), "empty description must be omitted");
+        assert!(!json.contains("\"effective\""), "None effective must be omitted");
     }
 }

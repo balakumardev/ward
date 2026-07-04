@@ -243,6 +243,7 @@ fn scan_skills(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                     description: String::new(),
                     path: manifest.display().to_string(),
                     movable: true, deletable: true, locked: false,
+                    effective: None,
                 });
             }
         }
@@ -262,6 +263,7 @@ fn scan_memories(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                     name: "CLAUDE.md".into(), description: String::new(),
                     path: claude_md.display().to_string(),
                     movable: false, deletable: false, locked: true,
+                    effective: None,
                 });
             }
             let mem_dir = root.join("memory");
@@ -279,6 +281,7 @@ fn scan_memories(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                         name: name.into(), description: String::new(),
                         path: p.display().to_string(),
                         movable: false, deletable: false, locked: true,
+                        effective: None,
                     });
                 }
             }
@@ -290,6 +293,7 @@ fn scan_memories(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                         name: ".claude/CLAUDE.md".into(), description: String::new(),
                         path: p.display().to_string(),
                         movable: false, deletable: false, locked: true,
+                        effective: None,
                     });
                 }
             }
@@ -424,6 +428,7 @@ fn mcp_item(name: &str, source: &Path, scope: &Scope, server_config: &serde_json
         description: String::new(),
         path: source.display().to_string(),
         movable: true, deletable: true, locked: false,
+        effective: None,
     }.with_description(desc)
 }
 
@@ -513,6 +518,7 @@ fn scan_configs(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             description: String::new(),
             path: p.display().to_string(),
             movable: false, deletable: false, locked: true,
+            effective: None,
         });
     }
     items
@@ -553,6 +559,7 @@ fn scan_hooks(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                     description: format!("from {label}"),
                     path: p.display().to_string(),
                     movable: false, deletable: false, locked: true,
+                    effective: None,
                 });
             }
         }
@@ -586,6 +593,7 @@ fn scan_settings(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                     description: String::new(),
                     path: p.display().to_string(),
                     movable: false, deletable: false, locked: true,
+                    effective: None,
                 });
             }
         }
@@ -615,6 +623,7 @@ fn scan_plugins(home: &Path) -> Vec<HarnessItem> {
                 description: String::new(),
                 path: install_path.to_string(),
                 movable: false, deletable: false, locked: true,
+                effective: None,
             });
         }
     }
@@ -643,6 +652,7 @@ fn scan_sessions(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             description: String::new(),
             path: p.display().to_string(),
             movable: false, deletable: false, locked: true,
+            effective: None,
         });
     }
     items
@@ -678,6 +688,7 @@ fn scan_md_dir(
             movable,
             deletable,
             locked: false,
+            effective: None,
         }.with_description(fm.get("description").cloned().unwrap_or_default()));
     }
 }

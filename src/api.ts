@@ -9,6 +9,9 @@ export interface Scope { id: string; kind: string; label: string; root: string; 
 export interface HarnessItem {
   category: string; scopeId: string; name: string; description?: string; path: string;
   movable: boolean; deletable: boolean; locked: boolean;
+  /** "shadowed" | "conflict" | "ancestor" when an item is in the effective
+   *  resolution set but not the active winner. Omitted for active items. */
+  effective?: 'shadowed' | 'conflict' | 'ancestor';
 }
 export interface ScanResult {
   harnessId: string; categories: Category[]; scopes: Scope[];
