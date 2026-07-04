@@ -181,6 +181,7 @@ mod tests {
             deletable: true,
             locked: false,
             effective: None,
+            mcp_config: None,
         }
     }
 

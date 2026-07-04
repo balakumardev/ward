@@ -73,3 +73,42 @@ test('bulkRestore passes harness + infos', async () => {
   await api.bulkRestore('claude', infos);
   expect(invoke).toHaveBeenCalledWith('bulk_restore', { harness: 'claude', infos });
 });
+
+// ── Plan 04: MCP controls ──
+
+test('mcpGetDisabled passes projectPath', async () => {
+  invoke.mockResolvedValue([]);
+  await api.mcpGetDisabled('/work/repo');
+  expect(invoke).toHaveBeenCalledWith('mcp_get_disabled', { projectPath: '/work/repo' });
+});
+
+test('mcpSetDisabled passes projectPath + list', async () => {
+  invoke.mockResolvedValue({ kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' });
+  await api.mcpSetDisabled('/work/repo', ['github']);
+  expect(invoke).toHaveBeenCalledWith('mcp_set_disabled', { projectPath: '/work/repo', list: ['github'] });
+});
+
+test('mcpGetPolicy passes no args', async () => {
+  invoke.mockResolvedValue({ allowlist: [], denylist: [] });
+  await api.mcpGetPolicy();
+  // invoke is called with just the command name; no payload object.
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke.mock.calls[0][0]).toBe('mcp_get_policy');
+});
+
+test('mcpSetPolicy passes policy', async () => {
+  invoke.mockResolvedValue({ kind: 'mcp-policy', originalPath: '/Users/x/.claude/settings.json' });
+  const policy = { allowlist: [{ serverName: 'github' }], denylist: [] };
+  await api.mcpSetPolicy(policy);
+  expect(invoke).toHaveBeenCalledWith('mcp_set_policy', { policy });
+});
+
+test('mcpCheckPolicy passes name + config + policy', async () => {
+  invoke.mockResolvedValue('allowed');
+  await api.mcpCheckPolicy('github', { command: 'gh' }, { allowlist: [], denylist: [] });
+  expect(invoke).toHaveBeenCalledWith('mcp_check_policy', {
+    serverName: 'github',
+    serverConfig: { command: 'gh' },
+    policy: { allowlist: [], denylist: [] },
+  });
+});

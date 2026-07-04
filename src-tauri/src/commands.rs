@@ -1,9 +1,10 @@
 use std::path::Path;
 use crate::error::WardError;
 use crate::harness::adapters::claude::ClaudeAdapter;
+use crate::harness::adapters::claude_mcp as mcp;
 use crate::harness::adapters::claude_ops::ClaudeOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
-use crate::model::{Destination, HarnessItem, RestoreInfo, ScanResult, Scope};
+use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
 
 pub fn build_registry() -> Registry {
     let mut r = Registry::new();
@@ -147,6 +148,68 @@ pub fn bulk_restore(harness: String, infos: Vec<RestoreInfo>) -> Result<(), Ward
     Ok(())
 }
 
+// ── MCP controls (Plan 04) ─────────────────────────────────────────────
+
+/// Read `projects[<projectPath>].disabledMcpServers` from
+/// `~/.claude.json`. Returns empty Vec when the file or key is absent.
+#[tauri::command]
+pub fn mcp_get_disabled(project_path: String) -> Result<Vec<String>, WardError> {
+    let home = Box::leak(
+        dirs::home_dir()
+            .ok_or_else(|| WardError::NotFound("home directory".into()))?
+            .into_boxed_path(),
+    );
+    mcp::get_disabled_servers(home, Path::new(&project_path))
+}
+
+/// Write `projects[<projectPath>].disabledMcpServers` to `~/.claude.json`.
+/// Returns a `RestoreInfo` capturing the prior file bytes verbatim so
+/// the Organizer can offer Undo.
+#[tauri::command]
+pub fn mcp_set_disabled(project_path: String, list: Vec<String>) -> Result<RestoreInfo, WardError> {
+    let home = Box::leak(
+        dirs::home_dir()
+            .ok_or_else(|| WardError::NotFound("home directory".into()))?
+            .into_boxed_path(),
+    );
+    mcp::set_disabled_servers(home, Path::new(&project_path), &list)
+}
+
+/// Read the user-scope MCP policy (allowlist + denylist) from
+/// `~/.claude/settings.json`.
+#[tauri::command]
+pub fn mcp_get_policy() -> Result<McpPolicy, WardError> {
+    let home = Box::leak(
+        dirs::home_dir()
+            .ok_or_else(|| WardError::NotFound("home directory".into()))?
+            .into_boxed_path(),
+    );
+    mcp::get_policy(home)
+}
+
+/// Write the user-scope MCP policy. Returns a `RestoreInfo` capturing
+/// the prior file bytes verbatim for Undo.
+#[tauri::command]
+pub fn mcp_set_policy(policy: McpPolicy) -> Result<RestoreInfo, WardError> {
+    let home = Box::leak(
+        dirs::home_dir()
+            .ok_or_else(|| WardError::NotFound("home directory".into()))?
+            .into_boxed_path(),
+    );
+    mcp::set_policy(home, &policy)
+}
+
+/// Convenience for the UI: "is this server allowed by the current
+/// policy?" Used to render the per-item policy badge.
+#[tauri::command]
+pub fn mcp_check_policy(
+    server_name: String,
+    server_config: serde_json::Value,
+    policy: McpPolicy,
+) -> Result<PolicyVerdict, WardError> {
+    Ok(mcp::check_policy(&server_name, &server_config, &policy))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,12 +272,14 @@ mod tests {
             name: "a".into(), description: String::new(),
             path: p1.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
+            mcp_config: None,
         };
         let item2 = HarnessItem {
             category: "memory".into(), scope_id: "global".into(),
             name: "b".into(), description: String::new(),
             path: p2.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
+            mcp_config: None,
         };
         let info1 = ops.delete_item(&ctx, &item1, &[]).unwrap();
         let info2 = ops.delete_item(&ctx, &item2, &[]).unwrap();
@@ -249,12 +314,14 @@ mod tests {
             name: "a".into(), description: String::new(),
             path: p1.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
+            mcp_config: None,
         };
         let item2 = HarnessItem {
             category: "memory".into(), scope_id: "global".into(),
             name: "b".into(), description: String::new(),
             path: p2.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
+            mcp_config: None,
         };
         // Direct invocation of the impls (commands::bulk/bulk_restore
         // are pub functions, but they require `dirs::home_dir()` — for

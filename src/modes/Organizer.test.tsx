@@ -21,6 +21,9 @@ const noopApi: OrganizerApi = {
   bulkRestore: async () => undefined,
   saveFile: async () => undefined,
   bulk: async () => [],
+  mcpGetDisabled: async () => [],
+  mcpSetDisabled: async () => ({ kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' }),
+  mcpGetPolicy: async () => ({ allowlist: [], denylist: [] }),
 };
 
 const scan: ScanResult = {
@@ -268,4 +271,136 @@ test('bulk move calls api.bulk with dest and stores combined undo', async () => 
   expect(bulked[0].op).toBe('move');
   expect(bulked[0].count).toBe(2);
   expect(getByTestId('undo-btn')).toBeTruthy();
+});
+
+// ── Plan 04: MCP controls ──
+
+const mcpScan: ScanResult = {
+  harnessId: 'claude',
+  categories: [{ id: 'mcp', label: 'MCP', count: 2 }],
+  scopes: [
+    { id: 'global', kind: 'global', label: 'Global', root: '/Users/x/.claude' },
+    { id: 'repo-a', kind: 'project', label: 'repo-a', root: '/work/repo-a' },
+  ],
+  items: [
+    { category: 'mcp', scopeId: 'global', name: 'github', path: '/g/.mcp.json',
+      movable: true, deletable: true, locked: false,
+      mcpConfig: { command: 'gh', args: ['api'] } },
+    { category: 'mcp', scopeId: 'repo-a', name: 'evil', path: '/r/.mcp.json',
+      movable: true, deletable: true, locked: false,
+      mcpConfig: { command: 'python', args: ['evil.py'] } },
+    { category: 'mcp', scopeId: 'repo-a', name: 'good', path: '/r/.mcp.json',
+      movable: true, deletable: true, locked: false,
+      mcpConfig: { command: 'node', args: ['approved.js'] } },
+  ],
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+};
+
+test('disable toggle only appears for non-global MCP items', async () => {
+  const { getAllByTestId, queryByTestId } = render(() => (
+    <Organizer scan={mcpScan} loadFile={async () => '{}'} api={noopApi} />
+  ));
+  // Switch to MCP category (it's the default).
+  // 2 project-scoped MCP rows should have toggles, 1 global row should not.
+  const rows = getAllByTestId('item-row');
+  expect(rows.length).toBe(3);
+  const allToggles = document.querySelectorAll('[data-testid="mcp-disable-toggle"]');
+  expect(allToggles.length).toBe(2);
+  // Global row should NOT have a toggle.
+  void queryByTestId; // ensure no leftover usage
+});
+
+test('policy badge shows allowed when allowlist matches by command', async () => {
+  const fakeApi: OrganizerApi = {
+    ...noopApi,
+    mcpGetPolicy: async () => ({
+      allowlist: [{ serverCommand: ['node', 'approved.js'] }],
+      denylist: [],
+    }),
+  };
+  const { getAllByTestId } = render(() => (
+    <Organizer scan={mcpScan} loadFile={async () => '{}'} api={fakeApi} />
+  ));
+  await waitFor(() => {
+    const rows = getAllByTestId('item-row');
+    const goodRow = Array.from(rows).find((r) => r.getAttribute('data-item-name') === 'good')!;
+    expect(goodRow.textContent).toContain('✓ allowed');
+  });
+});
+
+test('policy badge shows denied when denylist matches by command', async () => {
+  const fakeApi: OrganizerApi = {
+    ...noopApi,
+    mcpGetPolicy: async () => ({
+      allowlist: [],
+      denylist: [{ serverCommand: ['python', 'evil.py'] }],
+    }),
+  };
+  const { getAllByTestId } = render(() => (
+    <Organizer scan={mcpScan} loadFile={async () => '{}'} api={fakeApi} />
+  ));
+  await waitFor(() => {
+    const rows = getAllByTestId('item-row');
+    const evilRow = Array.from(rows).find((r) => r.getAttribute('data-item-name') === 'evil')!;
+    expect(evilRow.textContent).toContain('🚫 denied');
+  });
+});
+
+test('clicking toggle calls mcpSetDisabled and updates label', async () => {
+  const setCalls: Array<{ projectPath: string; list: string[] }> = [];
+  const fakeApi: OrganizerApi = {
+    ...noopApi,
+    mcpGetDisabled: async () => ['evil'], // start disabled
+    mcpSetDisabled: async (projectPath, list) => {
+      setCalls.push({ projectPath, list });
+      return { kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' };
+    },
+  };
+  const { getAllByTestId } = render(() => (
+    <Organizer scan={mcpScan} loadFile={async () => '{}'} api={fakeApi} />
+  ));
+  // Click the row to trigger open() → mcpGetDisabled → toggle updates.
+  const evilRow = Array.from(getAllByTestId('item-row'))
+    .find((r) => r.getAttribute('data-item-name') === 'evil')!;
+  fireEvent.click(evilRow);
+  await waitFor(() => {
+    const rows = getAllByTestId('item-row');
+    const r = Array.from(rows).find((r) => r.getAttribute('data-item-name') === 'evil')!;
+    expect(r.textContent).toContain('✗ Disabled');
+  });
+  const toggle = document.querySelector('[data-testid="mcp-disable-toggle"][data-disabled="true"]') as HTMLButtonElement;
+  expect(toggle).toBeTruthy();
+  fireEvent.click(toggle);
+  await settle();
+  expect(setCalls.length).toBe(1);
+  expect(setCalls[0].projectPath).toBe('/work/repo-a');
+  expect(setCalls[0].list).toEqual([]); // 'evil' removed → enabled
+});
+
+test('undo captures the disabled toggle as a RestoreInfo', async () => {
+  const fakeApi: OrganizerApi = {
+    ...noopApi,
+    mcpGetDisabled: async () => [],
+    mcpSetDisabled: async (_p, list) => ({
+      kind: 'mcp-disabled',
+      originalPath: '/Users/x/.claude.json',
+      mcpKey: '/work/repo-a',
+      mcpParentKey: 'projects',
+    }),
+  };
+  const { getAllByTestId, queryAllByTestId } = render(() => (
+    <Organizer scan={mcpScan} loadFile={async () => '{}'} api={fakeApi} />
+  ));
+  // Click the row to trigger open() → mcpGetDisabled → toggle renders.
+  const evilRow = Array.from(getAllByTestId('item-row'))
+    .find((r) => r.getAttribute('data-item-name') === 'evil')!;
+  fireEvent.click(evilRow);
+  await waitFor(() => {
+    const rows = getAllByTestId('item-row');
+    const r = Array.from(rows).find((r) => r.getAttribute('data-item-name') === 'evil')!;
+    expect(r.textContent).toContain('✓ Enabled');
+  });
+  const toggle = document.querySelector('[data-testid="mcp-disable-toggle"][data-disabled="false"]') as HTMLButtonElement;
+  fireEvent.click(toggle);
+  await waitFor(() => expect(queryAllByTestId('undo-btn').length).toBeGreaterThan(0));
 });

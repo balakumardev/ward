@@ -46,6 +46,11 @@ pub struct HarnessItem {
     /// tagged (None). Shadowed/conflict/ancestor are computed per project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective: Option<String>,
+    /// Plan 04 — server config (command/args/url) for MCP items, used
+    /// by the Organizer to render the per-item policy badge and by the
+    /// frontend to call `mcp_check_policy`. `None` for non-MCP items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -173,6 +178,7 @@ mod tests {
             deletable: true,
             locked: false,
             effective: None,
+            mcp_config: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"scopeId\":\"global\""));

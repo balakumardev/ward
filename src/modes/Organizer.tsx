@@ -1,11 +1,17 @@
-import { createMemo, createSignal, For, Show } from 'solid-js';
-import type { Destination, HarnessItem, RestoreInfo, ScanResult } from '../api';
+import { createMemo, createResource, createSignal, createEffect, For, Show } from 'solid-js';
+import type { Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult } from '../api';
 
 function effectiveBadge(item: HarnessItem): string | null {
   if (!item.effective) return null;
   if (item.effective === 'shadowed') return '🌫 shadowed';
   if (item.effective === 'conflict') return '⚠ conflict';
   if (item.effective === 'ancestor') return '↑ ancestor';
+  return null;
+}
+
+function policyBadge(v: PolicyVerdict | undefined): { label: string; color: string } | null {
+  if (v === 'allowed') return { label: '✓ allowed', color: 'var(--accent)' };
+  if (v === 'denied') return { label: '🚫 denied', color: 'var(--danger)' };
   return null;
 }
 
@@ -27,6 +33,10 @@ export interface OrganizerApi {
   bulkRestore: (infos: RestoreInfo[]) => Promise<void>;
   saveFile: (path: string, content: string) => Promise<void>;
   bulk: (items: HarnessItem[], op: 'move' | 'delete', destScopeId?: string) => Promise<RestoreInfo[]>;
+  // Plan 04 — MCP controls.
+  mcpGetDisabled: (projectPath: string) => Promise<string[]>;
+  mcpSetDisabled: (projectPath: string, list: string[]) => Promise<RestoreInfo>;
+  mcpGetPolicy: () => Promise<McpPolicy>;
 }
 
 export function Organizer(props: {
@@ -47,9 +57,49 @@ export function Organizer(props: {
   const [lastClickKey, setLastClickKey] = createSignal<string>('');
   const [bulkDest, setBulkDest] = createSignal<string>('');
 
-  // Helper to find the item by a fully-qualified key.
+  // Plan 04 — disabled-server state (per project_path) and policy.
+  // Disabled list is keyed by absolute project path so toggles stay
+  // scoped to the project the user is viewing.
+  const [disabledByProject, setDisabledByProject] = createSignal<Record<string, Set<string>>>({});
+  const [policyResource] = createResource(() => props.api.mcpGetPolicy());
+  // Whenever the policy changes (or the visible items do), recompute
+  // every MCP item's verdict. We use the entire `items` array + the
+  // policy resource as the effect's tracked deps.
+  createEffect(() => {
+    const p = policyResource();
+    if (!p) return;
+    // Recompute against the current items.
+    const next: Record<string, PolicyVerdict> = {};
+    for (const item of props.scan.items) {
+      if (item.category !== 'mcp') continue;
+      next[itemKey(item)] = checkPolicyLocal(item.name, ((item.mcpConfig ?? {}) as { command?: string; args?: string[]; url?: string }), p);
+    }
+    setVerdicts(next);
+  });
+
+  // ── Helpers ──
+
   function findByKey(key: string): HarnessItem | null {
     return props.scan.items.find((i) => itemKey(i) === key) ?? null;
+  }
+
+  /** The real on-disk project path for a given scope_id, looked up via
+   *  the scan result. Falls back to scope.id for global / unresolved. */
+  function projectPathForScope(scopeId: string): string | null {
+    if (scopeId === 'global') return null;
+    const s = props.scan.scopes.find((sc) => sc.id === scopeId);
+    return s?.root ?? null;
+  }
+
+  function disabledSetFor(item: HarnessItem): Set<string> {
+    if (item.scopeId === 'global') return new Set();
+    const proj = projectPathForScope(item.scopeId);
+    if (!proj) return new Set();
+    return disabledByProject()[proj] ?? new Set();
+  }
+
+  function isMcpDisabled(item: HarnessItem): boolean {
+    return item.category === 'mcp' && disabledSetFor(item).has(item.name);
   }
 
   const itemsForCat = createMemo(() =>
@@ -77,6 +127,26 @@ export function Organizer(props: {
     return props.scan.items.find((i) => itemKey(i) === key) ?? null;
   });
 
+  // Per-item policy verdict cache — populated eagerly when an item
+  // row is rendered AND the policy resource has resolved. The policy
+  // algo runs in-process; no IPC. Stores `undefined` for "not computed
+  // yet" (NOT to be confused with `noPolicy` — that's a real verdict).
+  const [verdicts, setVerdicts] = createSignal<Record<string, PolicyVerdict>>({});
+
+  function computeAndStoreVerdict(item: HarnessItem): PolicyVerdict {
+    const v = computeVerdict(item);
+    const k = itemKey(item);
+    setVerdicts({ ...verdicts(), [k]: v });
+    return v;
+  }
+
+  function computeVerdict(item: HarnessItem): PolicyVerdict {
+    const policy = policyResource();
+    if (!policy) return 'noPolicy';
+    const cfg = (item.mcpConfig ?? {}) as { command?: string; args?: string[]; url?: string };
+    return checkPolicyLocal(item.name, cfg, policy);
+  }
+
   async function open(item: HarnessItem) {
     setSelected(itemKey(item));
     setShowMoveMenu(false);
@@ -91,6 +161,18 @@ export function Organizer(props: {
         setDestinations(dests);
       } catch (e) {
         setStatusMsg(`destinations error: ${String(e)}`);
+      }
+    }
+    // Plan 04 — load disabled list for this project's scope on first view.
+    if (item.category === 'mcp' && item.scopeId !== 'global') {
+      const proj = projectPathForScope(item.scopeId);
+      if (proj && !(proj in disabledByProject())) {
+        try {
+          const list = await props.api.mcpGetDisabled(proj);
+          setDisabledByProject({ ...disabledByProject(), [proj]: new Set(list) });
+        } catch (e) {
+          setStatusMsg(`disabled list error: ${String(e)}`);
+        }
       }
     }
   }
@@ -122,6 +204,8 @@ export function Organizer(props: {
     }
     void open(item);
   }
+
+  // ── Mutations ──
 
   async function doMove(item: HarnessItem, destScopeId: string) {
     setShowMoveMenu(false);
@@ -202,6 +286,29 @@ export function Organizer(props: {
     }
   }
 
+  // Plan 04 — toggle an MCP server's disabled flag for the project.
+  async function doToggleMcpDisabled(item: HarnessItem) {
+    if (item.category !== 'mcp') return;
+    const proj = projectPathForScope(item.scopeId);
+    if (!proj) return;
+    const current = new Set(disabledByProject()[proj] ?? new Set<string>());
+    const wasDisabled = current.has(item.name);
+    if (wasDisabled) { current.delete(item.name); } else { current.add(item.name); }
+    // Optimistic update.
+    setDisabledByProject({ ...disabledByProject(), [proj]: current });
+    try {
+      const info = await props.api.mcpSetDisabled(proj, Array.from(current));
+      setLastUndo(info);
+      setStatusMsg(`${wasDisabled ? 'Enabled' : 'Disabled'} "${item.name}". Click Undo to reverse.`);
+    } catch (e) {
+      // Roll back.
+      const rollback = new Set(disabledByProject()[proj] ?? new Set<string>());
+      if (wasDisabled) rollback.add(item.name); else rollback.delete(item.name);
+      setDisabledByProject({ ...disabledByProject(), [proj]: rollback });
+      setStatusMsg(`disabled toggle failed: ${String(e)}`);
+    }
+  }
+
   function bulkMoveDestinations(): Destination[] {
     // First selected item's destinations drive the bulk UI (CCO does the
     // same per-item). Caller can pick any scope that's valid for at least
@@ -240,7 +347,7 @@ export function Organizer(props: {
         </For>
       </div>
 
-      <div style={{ width: '320px', 'border-right': '1px solid var(--border)', padding: '10px 8px', overflow: 'auto' }}>
+      <div style={{ width: '360px', 'border-right': '1px solid var(--border)', padding: '10px 8px', overflow: 'auto' }}>
         <label style={{ display: 'flex', 'align-items': 'center', gap: '6px',
           'font-size': '11px', color: 'var(--text-dim)', padding: '4px 0' }}>
           <input
@@ -258,10 +365,26 @@ export function Organizer(props: {
               <For each={visibleItems().filter((i) => i.scopeId === scope.id)}>
                 {(item) => {
                   const k = itemKey(item);
+                  // Eagerly compute verdict for MCP items so the row's
+                  // badge appears immediately on render. If the policy
+                  // resource hasn't loaded yet, the verdict is `noPolicy`
+                  // (matches Rust behavior: empty policy → no-policy).
+                  if (item.category === 'mcp' && policyResource()) {
+                    if (!(k in verdicts())) {
+                      computeAndStoreVerdict(item);
+                    }
+                  }
+                  const disabled = () => isMcpDisabled(item);
+                  const verdict = () => verdicts()[k];
+                  const badge = () => {
+                    const v = verdict();
+                    return v ? policyBadge(v) : null;
+                  };
                   return (
                     <div onClick={(e) => onItemClick(item, e)}
                       data-testid="item-row"
                       data-item-name={item.name}
+                      data-disabled={disabled() ? 'true' : 'false'}
                       style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between',
                         padding: '5px 8px', margin: '3px 0', 'border-radius': 'var(--radius)', cursor: 'pointer',
                         background: selected() === k ? 'var(--surface)' :
@@ -272,9 +395,27 @@ export function Organizer(props: {
                         </Show>
                         {item.name}{item.locked ? ' 🔒' : ''}
                       </span>
-                      <Show when={effectiveBadge(item)}>
-                        <span style={{ 'font-size': '10px', color: 'var(--text-dim)' }}>{effectiveBadge(item)}</span>
-                      </Show>
+                      <span style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
+                        <Show when={badge()}>
+                          {(b) => (
+                            <span data-testid="policy-badge"
+                              style={{ 'font-size': '10px', color: b().color }}>{b().label}</span>
+                          )}
+                        </Show>
+                        <Show when={effectiveBadge(item)}>
+                          <span style={{ 'font-size': '10px', color: 'var(--text-dim)' }}>{effectiveBadge(item)}</span>
+                        </Show>
+                        <Show when={item.category === 'mcp' && item.scopeId !== 'global'}>
+                          <button data-testid="mcp-disable-toggle" data-disabled={disabled() ? 'true' : 'false'}
+                            onClick={(e) => { e.stopPropagation(); void doToggleMcpDisabled(item); }}
+                            title={disabled() ? 'Enable for this project' : 'Disable for this project'}
+                            style={{ padding: '1px 6px', 'font-size': '10px',
+                              color: disabled() ? 'var(--danger)' : 'var(--accent)',
+                              border: '1px solid var(--border)', 'border-radius': 'var(--radius)' }}>
+                            {disabled() ? '✗ Disabled' : '✓ Enabled'}
+                          </button>
+                        </Show>
+                      </span>
                     </div>
                   );
                 }}
@@ -310,11 +451,27 @@ export function Organizer(props: {
         <Show when={selectedItem()} fallback={
           <div style={{ color: 'var(--text-dim)' }}>Select an item</div>
         }>
-          {(item) => (
+          {(item) => {
+            // Eagerly compute verdict for the selected item so the
+            // detail pane's badge appears synchronously.
+            const detailItem = item();
+            const detailK = itemKey(detailItem);
+            if (detailItem.category === 'mcp' && policyResource() && !(detailK in verdicts())) {
+              computeAndStoreVerdict(detailItem);
+            }
+            const detailVerdict = () => verdicts()[detailK];
+            const detailBadge = () => {
+              const v = detailVerdict();
+              return v ? policyBadge(v) : null;
+            };
+            return (
             <>
               <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'margin-bottom': '8px' }}>
                 <strong>{item().name}</strong>
                 <span style={{ color: 'var(--text-dim)', 'font-size': '11px' }}>{item().category} · {item().scopeId}</span>
+                <Show when={detailBadge()}>
+                  {(badge) => <span data-testid="policy-badge-detail" style={{ 'font-size': '11px', color: badge().color }}>{badge().label}</span>}
+                </Show>
                 <span style={{ flex: 1 }} />
                 <Show when={destinations().length > 0}>
                   <div style={{ position: 'relative' }}>
@@ -378,9 +535,70 @@ export function Organizer(props: {
                 </div>
               </Show>
             </>
-          )}
+            );
+          }}
         </Show>
       </div>
     </div>
   );
+}
+
+// ── Local re-implementation of `checkMcpPolicy` for the badge ──
+//
+// Kept inline (instead of going through `api.mcpCheckPolicy`) so the
+// verdict appears immediately on render without a round-trip. The
+// algorithm mirrors `crate::harness::adapters::claude_mcp::check_policy`.
+function checkPolicyLocal(serverName: string, cfg: { command?: string; args?: string[]; url?: string }, policy: McpPolicy): PolicyVerdict {
+  // Denylist first (absolute precedence).
+  for (const entry of policy.denylist) {
+    if (matchesEntry(entry, serverName, cfg)) return 'denied';
+  }
+  if (policy.allowlist.length === 0) return 'noPolicy';
+  for (const entry of policy.allowlist) {
+    if (matchesEntry(entry, serverName, cfg)) return 'allowed';
+  }
+  return 'denied';
+}
+
+function matchesEntry(
+  entry: { serverName?: string; serverCommand?: string[]; serverUrl?: string },
+  serverName: string,
+  cfg: { command?: string; args?: string[]; url?: string },
+): boolean {
+  if (entry.serverName && entry.serverName === serverName) return true;
+  if (entry.serverCommand && cfg.command) {
+    const cmd = [cfg.command, ...(cfg.args ?? [])];
+    if (entry.serverCommand.length === cmd.length && entry.serverCommand.every((c, i) => c === cmd[i])) {
+      return true;
+    }
+  }
+  if (entry.serverUrl && cfg.url) {
+    if (globMatch(entry.serverUrl, cfg.url)) return true;
+  }
+  return false;
+}
+
+/** `*` matches any run of chars; everything else is a literal. */
+function globMatch(pattern: string, value: string): boolean {
+  let pi = 0, vi = 0;
+  let star: number | null = null;
+  let starVi = 0;
+  while (vi < value.length) {
+    if (pi < pattern.length && pattern[pi] === '*') {
+      star = pi;
+      starVi = vi;
+      pi++;
+    } else if (pi < pattern.length && pattern[pi] === value[vi]) {
+      pi++;
+      vi++;
+    } else if (star !== null) {
+      pi = star + 1;
+      starVi++;
+      vi = starVi;
+    } else {
+      return false;
+    }
+  }
+  while (pi < pattern.length && pattern[pi] === '*') pi++;
+  return pi === pattern.length;
 }

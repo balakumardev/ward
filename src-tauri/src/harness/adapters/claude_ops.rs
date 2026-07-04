@@ -239,6 +239,7 @@ impl HarnessOps for ClaudeOps {
         match info.kind.as_str() {
             "file" => restore_file(ctx, info),
             "mcp-entry" => restore_mcp_entry(ctx, info),
+            "mcp-disabled" | "mcp-policy" => crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
             other => Err(WardError::NotFound(format!("Unknown restore kind: {other}"))),
         }
     }
@@ -859,6 +860,7 @@ mod tests {
             deletable: true,
             locked: false,
             effective: None,
+            mcp_config: None,
         }
     }
 
@@ -1118,6 +1120,7 @@ mod tests {
             deletable: true,
             locked: false,
             effective: None,
+            mcp_config: None,
         }
     }
 

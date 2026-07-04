@@ -18,7 +18,12 @@ pub fn run() {
             commands::restore,
             commands::save_file,
             commands::bulk,
-            commands::bulk_restore
+            commands::bulk_restore,
+            commands::mcp_get_disabled,
+            commands::mcp_set_disabled,
+            commands::mcp_get_policy,
+            commands::mcp_set_policy,
+            commands::mcp_check_policy
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
