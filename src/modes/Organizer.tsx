@@ -19,12 +19,6 @@ function itemKey(item: HarnessItem): string {
   return `${item.category}::${item.name}::${item.scopeId}::${item.path}`;
 }
 
-/** Same as itemKey but takes the constituent fields. Useful when
- *  building a key from a `selected` value or restoring from a path. */
-function keyFromPath(category: string, path: string, name: string, scopeId: string): string {
-  return `${category}::${name}::${scopeId}::${path}`;
-}
-
 export interface OrganizerApi {
   listDestinations: (item: HarnessItem) => Promise<Destination[]>;
   moveItem: (item: HarnessItem, destScopeId: string) => Promise<RestoreInfo>;
@@ -78,10 +72,6 @@ export function Organizer(props: {
   });
 
   // ── Helpers ──
-
-  function findByKey(key: string): HarnessItem | null {
-    return props.scan.items.find((i) => itemKey(i) === key) ?? null;
-  }
 
   /** The real on-disk project path for a given scope_id, looked up via
    *  the scan result. Falls back to scope.id for global / unresolved. */
@@ -199,7 +189,7 @@ export function Organizer(props: {
       setLastClickKey(itemKey(item));
       return;
     } else {
-      setSelectedKeys(new Set());
+      setSelectedKeys(new Set<string>());
       setLastClickKey(itemKey(item));
     }
     void open(item);
@@ -279,7 +269,7 @@ export function Organizer(props: {
     try {
       const infos = await props.api.bulk(items, op, op === 'move' ? bulkDest() : undefined);
       setLastUndo(infos);
-      setSelectedKeys(new Set());
+      setSelectedKeys(new Set<string>());
       setStatusMsg(`${op === 'move' ? 'Moved' : 'Deleted'} ${items.length} items. Click Undo to reverse.`);
     } catch (e) {
       setStatusMsg(`bulk ${op} failed: ${String(e)}`);
@@ -320,11 +310,13 @@ export function Organizer(props: {
         // ready.
         const cached = destinations();
         if (cached.length > 0) return cached;
-        const any = props.scan.scopes.filter((s) => s.id !== item.scopeId && s.id !== 'global');
-        return [
-          ...props.scan.scopes.filter((s) => s.id === 'global'),
-          ...any,
-        ];
+        const dests: Destination[] = props.scan.scopes
+          .filter((s) => s.id !== item.scopeId && s.id !== 'global')
+          .map((s) => ({ scopeId: s.id, label: s.label, kind: s.kind }));
+        const global = props.scan.scopes
+          .filter((s) => s.id === 'global')
+          .map((s) => ({ scopeId: s.id, label: s.label, kind: s.kind }));
+        return [...global, ...dests];
       }
     }
     return [];

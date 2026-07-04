@@ -10,7 +10,11 @@ export default function App() {
   const [mode, setMode] = createSignal('organizer');
   const [scan, { refetch }] = createResource(() => api.scan('claude'));
   const [showPolicyPanel, setShowPolicyPanel] = createSignal(false);
-  const [lastUndo, setLastUndo] = createSignal<RestoreInfo | null>(null);
+  // Per Plan 04, the undo state lives in Organizer.tsx (it owns the detail
+  // pane that surfaces the Undo button). The McpPolicy panel still emits
+  // `onUndoAvailable` so a future "combined" panel can wire the same state
+  // back through, but App.tsx intentionally doesn't track it today.
+  const [, setLastUndo] = createSignal<RestoreInfo | null>(null);
   const [policyResource, { refetch: refetchPolicy }] = createResource(() => api.mcpGetPolicy());
 
   // Bridge api → organizer-shape. We re-scan after every mutation so

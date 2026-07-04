@@ -381,7 +381,7 @@ test('undo captures the disabled toggle as a RestoreInfo', async () => {
   const fakeApi: OrganizerApi = {
     ...noopApi,
     mcpGetDisabled: async () => [],
-    mcpSetDisabled: async (_p, list) => ({
+    mcpSetDisabled: async (_p, _list) => ({
       kind: 'mcp-disabled',
       originalPath: '/Users/x/.claude.json',
       mcpKey: '/work/repo-a',
