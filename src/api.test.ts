@@ -112,3 +112,19 @@ test('mcpCheckPolicy passes name + config + policy', async () => {
     policy: { allowlist: [], denylist: [] },
   });
 });
+
+// ── Plan 06: Context Budget ──
+
+test('contextBudget passes harness + scopeId', async () => {
+  invoke.mockResolvedValue({
+    systemLoaded: 18000, systemDeferred: 7000,
+    mcpSchemas: 0, claudemd: 100, claudeMdFiles: [],
+    alwaysLoadedItems: [], autocompactBuffer: 13000,
+    maxOutput: 32000, warningThreshold: 20000,
+    measured: false, used: 18100, contextLimit: 200000,
+  });
+  const r = await api.contextBudget('claude', 'global');
+  expect(invoke).toHaveBeenCalledWith('context_budget', { harness: 'claude', scopeId: 'global' });
+  expect(r.used).toBe(18100);
+  expect(r.contextLimit).toBe(200000);
+});

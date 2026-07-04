@@ -1,6 +1,7 @@
 use std::path::Path;
 use crate::error::WardError;
 use crate::harness::adapters::claude::ClaudeAdapter;
+use crate::harness::adapters::claude_budget as budget;
 use crate::harness::adapters::claude_mcp as mcp;
 use crate::harness::adapters::claude_ops::ClaudeOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
@@ -272,6 +273,38 @@ pub fn security_baseline_accept(
     crate::security::baseline::save(&path, &current)
 }
 
+// ── Context Budget (Plan 06) ──────────────────────────────────────────
+
+/// Compose the per-scope context budget for `scope_id`. Looks up the
+/// scope in a fresh scan, collects MCP server names (deduped by name)
+/// from the scope's MCP items, and hands them to the budget composer.
+///
+/// Errors when:
+///   - the home directory cannot be resolved (mirrors `scan`),
+///   - the harness is unknown (`HarnessUnavailable`),
+///   - the scan itself fails (IO, parse, etc.).
+#[tauri::command]
+pub fn context_budget(
+    harness: String,
+    scope_id: String,
+) -> Result<budget::BudgetBreakdown, WardError> {
+    let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+    let registry = build_registry();
+    let result = scan_impl(&registry, &home, &harness)?;
+    // Collect unique MCP server names from the scope (we keep this
+    // strict to the requested scope for parity with CCO's per-scope
+    // view — inherited scopes would be a Plan 06+ extension).
+    let mut unique_servers: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for item in &result.items {
+        if item.category == "mcp" && item.scope_id == scope_id {
+            unique_servers.insert(item.name.clone());
+        }
+    }
+    let servers_vec: Vec<String> = unique_servers.into_iter().collect();
+    Ok(budget::compose(&scope_id, &result.items, &servers_vec, &home))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +431,61 @@ mod tests {
         }
         assert!(p1.exists());
         assert!(p2.exists());
+    }
+
+    /// `context_budget` is the public command wired to the Budget mode
+    /// in the UI. We exercise it directly through the `compose` helper
+    /// (the Tauri command itself relies on `dirs::home_dir()` which is
+    /// not testable here without process isolation). This test verifies
+    /// the happy path produces a populated `BudgetBreakdown` for a
+    /// scope containing skills + CLAUDE.md.
+    #[test]
+    fn context_budget_compose_for_populated_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let skill_path = home.join(".claude/skills/brainstorming/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, "brainstorming body 1234").unwrap();
+        let claude_md = home.join(".claude/CLAUDE.md");
+        fs::write(&claude_md, "global memory\nwith second line").unwrap();
+
+        let ctx = Ctx { home, cwd: None };
+        let items = framework::run_scan(&ClaudeAdapter, &ctx).unwrap().items;
+        let servers: Vec<String> = vec![];
+        let b = budget::compose("global", &items, &servers, home);
+        assert_eq!(b.system_loaded, budget::SYSTEM_LOADED);
+        assert_eq!(b.mcp_schemas, 0);
+        assert!(b.claudemd > budget::CLAUDEMD_WRAPPER);
+        assert!(b.always_loaded_items.iter().any(|i| i.category == "skill"));
+        assert!(b.used > b.system_loaded);
+    }
+
+    /// Verifies that the same MCP server appearing twice in the scan
+    /// is still counted ONCE — i.e. the dedup happens at compose time.
+    #[test]
+    fn context_budget_dedupes_mcp_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let items = vec![
+            HarnessItem {
+                category: "mcp".into(), scope_id: "global".into(),
+                name: "github".into(), description: String::new(),
+                path: home.join(".claude.json").display().to_string(),
+                movable: false, deletable: false, locked: false,
+                effective: None,
+                mcp_config: Some(serde_json::json!({"command":"gh"})),
+            },
+            HarnessItem {
+                category: "mcp".into(), scope_id: "global".into(),
+                name: "github".into(), description: String::new(),
+                path: home.join(".mcp.json").display().to_string(),
+                movable: false, deletable: false, locked: false,
+                effective: None,
+                mcp_config: Some(serde_json::json!({"command":"gh"})),
+            },
+        ];
+        let servers = vec!["github".to_string(), "github".to_string()];
+        let b = budget::compose("global", &items, &servers, home);
+        assert_eq!(b.mcp_schemas, budget::MCP_TOOL_SCHEMA);
     }
 }

@@ -3,6 +3,7 @@ import { Shell } from './components/Shell';
 import { Organizer } from './modes/Organizer';
 import { McpPolicy } from './modes/McpPolicy';
 import { Security } from './modes/Security';
+import { BudgetWithPicker } from './modes/Budget';
 import { api } from './api';
 import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -68,7 +69,17 @@ export default function App() {
       <Show when={scan()} fallback={<div style={{ padding: '16px' }}>Scanning ~/.claude…</div>}>
         {(result) => (
           <Show when={mode() === 'organizer'} fallback={
-            <Show when={mode() === 'security'} fallback={<div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>}>
+            <Show when={mode() === 'security'} fallback={
+              <Show when={mode() === 'budget'} fallback={<div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>}>
+                <Show when={result().capabilities.contextBudget} fallback={
+                  <div data-testid="budget-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>
+                    Context Budget mode is not supported by this harness.
+                  </div>
+                }>
+                  <BudgetWithPicker scan={result()} />
+                </Show>
+              </Show>
+            }>
               <Security
                 items={result().items}
                 api={{

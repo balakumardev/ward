@@ -82,6 +82,40 @@ export interface ScanResultSec {
   judgeUsed: boolean;
 }
 
+/** Plan 06 — Context Budget breakdown for a single scope. */
+export interface BudgetBreakdown {
+  systemLoaded: number;
+  systemDeferred: number;
+  mcpSchemas: number;
+  claudemd: number;
+  claudeMdFiles: BudgetFile[];
+  alwaysLoadedItems: BudgetItem[];
+  autocompactBuffer: number;
+  maxOutput: number;
+  warningThreshold: number;
+  /** True when a real BPE tokenizer produced the numbers; false when the
+   *  bytes/4 heuristic was used. The UI surfaces this as "measured" vs
+   *  "estimated". */
+  measured: boolean;
+  /** Total tokens used by always-loaded + system overhead (what the meter
+   *  fills toward). */
+  used: number;
+  /** Model's full context window (200K for Claude Sonnet/Opus). */
+  contextLimit: number;
+}
+export interface BudgetFile {
+  path: string;
+  name: string;
+  tokens: number;
+  measured: boolean;
+}
+export interface BudgetItem {
+  category: string;
+  name: string;
+  tokens: number;
+  measured: boolean;
+}
+
 export const api = {
   scan: (harness: string) => invoke<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invoke<string>('read_file_content', { path }),
@@ -118,4 +152,8 @@ export const api = {
     invoke<BaselineDiff[]>('security_baseline_check', { scan }),
   securityBaselineAccept: (server: string, findings: string[]) =>
     invoke<void>('security_baseline_accept', { server, findings }),
+
+  // Plan 06 — Context Budget.
+  contextBudget: (harness: string, scopeId: string) =>
+    invoke<BudgetBreakdown>('context_budget', { harness, scopeId }),
 };
