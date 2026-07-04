@@ -9,4 +9,5 @@
 //!   - `trim`    — replace base64 image blocks with `[image redacted]`
 
 pub mod cost;
+pub mod distill;
 pub mod parse;
