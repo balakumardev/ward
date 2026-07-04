@@ -18,3 +18,24 @@ security scanner is one of five sidebar modes, not the whole app.
 
 Ward is a clean-room reimplementation inspired by the MIT-licensed
 [Cross-Code Organizer](https://github.com/mcpware/cross-code-organizer) — see [`NOTICE`](NOTICE).
+
+## Building
+
+For development:
+
+```sh
+npm install
+npm run tauri dev       # hot-reload dev session
+```
+
+For a distributable `.dmg` (Apple Silicon + Intel via `lipo`):
+
+```sh
+./src-tauri/dist/sign.sh universal
+```
+
+The wrapper reads the `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+`APPLE_PASSWORD`, and `APPLE_TEAM_ID` env vars for Apple notarization.
+Without them, the build succeeds unsigned. See
+[`BUILD.md`](BUILD.md) for the full production-build playbook,
+troubleshooting, and the post-build Gatekeeper / `stapler` checks.
