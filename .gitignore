@@ -1,0 +1,26 @@
+# Rust / Tauri
+/src-tauri/target/
+**/*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# macOS
+.DS_Store
+
+# Build artifacts
+/src-tauri/gen/
+*.dmg
+
+# Brainstorming companion (if ever run from here)
+.superpowers/
+
+# Local env
+.env
+.env.local
+
+# Your global ~/.gitignore_global ignores docs/ — keep design docs tracked here
+!docs/
+!docs/**

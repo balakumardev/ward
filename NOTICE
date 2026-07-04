@@ -1,0 +1,18 @@
+Ward
+====
+
+Ward is a native macOS configuration organizer for AI coding harnesses
+(Claude Code and Codex CLI).
+
+Ward is a from-scratch reimplementation. Its feature set and product design
+were inspired by the open-source project:
+
+    Cross-Code Organizer (CCO)
+    @mcpware/cross-code-organizer
+    Copyright (c) 2026 mcpware
+    Licensed under the MIT License
+    https://github.com/mcpware/cross-code-organizer
+
+Ward reuses no verbatim source code from CCO; the backend is an independent
+Rust implementation and the frontend is an independent redesign. This notice
+is provided as a good-faith acknowledgment of CCO as the original inspiration.
