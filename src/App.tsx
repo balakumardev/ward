@@ -1,5 +1,6 @@
 import { createResource, createSignal, Show } from 'solid-js';
 import { Shell } from './components/Shell';
+import type { HarnessId } from './components/Sidebar';
 import { Organizer } from './modes/Organizer';
 import { McpPolicy } from './modes/McpPolicy';
 import { Security } from './modes/Security';
@@ -11,7 +12,10 @@ import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
 export default function App() {
   const [mode, setMode] = createSignal('organizer');
-  const [scan, { refetch }] = createResource(() => api.scan('claude'));
+  // Plan 09 — selected harness; defaults to 'claude'. Switching the
+  // harness re-fetches the scan resource via the createResource source.
+  const [harness, setHarness] = createSignal<HarnessId>('claude');
+  const [scan, { refetch }] = createResource(harness, (h) => api.scan(h));
   const [showPolicyPanel, setShowPolicyPanel] = createSignal(false);
   // Per Plan 04, the undo state lives in Organizer.tsx (it owns the detail
   // pane that surfaces the Undo button). The McpPolicy panel still emits
@@ -21,30 +25,28 @@ export default function App() {
   const [policyResource, { refetch: refetchPolicy }] = createResource(() => api.mcpGetPolicy());
 
   // Bridge api → organizer-shape. We re-scan after every mutation so
-  // the UI reflects the new on-disk state.
+  // the UI reflects the new on-disk state. The harness id is read from
+  // a closure so the same functions work for both Claude and Codex.
   const organizerApi = {
     listDestinations: (item: Parameters<typeof api.listDestinations>[1]) =>
-      api.listDestinations('claude', item),
+      api.listDestinations(harness(), item),
     moveItem: async (item: Parameters<typeof api.moveItem>[1], destScopeId: string) => {
-      const r = await api.moveItem('claude', item, destScopeId);
+      const r = await api.moveItem(harness(), item, destScopeId);
       await refetch();
       return r;
     },
     deleteItem: async (item: Parameters<typeof api.deleteItem>[1]) => {
-      const r = await api.deleteItem('claude', item);
+      const r = await api.deleteItem(harness(), item);
       await refetch();
       return r;
     },
     restore: async (info: Parameters<typeof api.restore>[1]) => {
-      await api.restore('claude', info);
+      await api.restore(harness(), info);
       await refetch();
-      // Plan 04 — policy changes don't show up in the scan, but the
-      // disabled list does; refresh policy so any verdict changes are
-      // visible immediately.
       await refetchPolicy();
     },
     bulkRestore: async (infos: Parameters<typeof api.bulkRestore>[1]) => {
-      await api.bulkRestore('claude', infos);
+      await api.bulkRestore(harness(), infos);
       await refetch();
     },
     saveFile: async (path: string, content: string) => {
@@ -52,7 +54,7 @@ export default function App() {
       await refetch();
     },
     bulk: async (items: Parameters<typeof api.bulk>[1], op: 'move' | 'delete', destScopeId?: string) => {
-      const r = await api.bulk('claude', items, op, destScopeId);
+      const r = await api.bulk(harness(), items, op, destScopeId);
       await refetch();
       return r;
     },
@@ -84,8 +86,15 @@ export default function App() {
   };
 
   return (
-    <Shell active={mode()} onSelect={setMode}>
-      <Show when={scan()} fallback={<div style={{ padding: '16px' }}>Scanning ~/.claude…</div>}>
+    <Shell
+      active={mode()}
+      onSelect={setMode}
+      harness={harness()}
+      onSelectHarness={setHarness}
+    >
+      <Show when={scan()} fallback={
+        <div data-testid="scan-loading" style={{ padding: '16px' }}>Scanning…</div>
+      }>
         {(result) => (
           <Show when={mode() === 'organizer'} fallback={
             <Show when={mode() === 'security'} fallback={
@@ -124,10 +133,10 @@ export default function App() {
               <Security
                 items={result().items}
                 api={{
-                  listDestinations: (item) => api.listDestinations('claude', item) as any,
-                  moveItem: (item, dest) => api.moveItem('claude', item, dest),
-                  deleteItem: (item) => api.deleteItem('claude', item),
-                  restore: (info) => api.restore('claude', info),
+                  listDestinations: (item) => api.listDestinations(harness(), item) as any,
+                  moveItem: (item, dest) => api.moveItem(harness(), item, dest),
+                  deleteItem: (item) => api.deleteItem(harness(), item),
+                  restore: (info) => api.restore(harness(), info),
                   mcpSetDisabled: (path, list) => api.mcpSetDisabled(path, list),
                 }}
               />
