@@ -1,15 +1,28 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use clap::Parser;
+use ward_lib::cli::{self, CliArgs};
+
 fn main() {
-    // Plan 08 — `ward --backup-once <harness_id>` is invoked headlessly
-    // by the launchd scheduler. It runs the same backup pipeline as
-    // the UI's "Run backup" button (`backup_run` + `backup_sync`)
-    // and exits. The push step is intentionally NEVER part of this
-    // path — push is a network action gated to user clicks.
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--backup-once") {
-        std::process::exit(ward_lib::run_backup_once(&args));
+    // Plan 10 — clap-derived CLI dispatch.
+    //
+    // Headless subcommands (--scan, --security-scan, --backup-once,
+    // --mcp) print JSON to stdout and exit before the GUI builder
+    // starts. The legacy --backup-once argv-style path is preserved
+    // inside `cli::dispatch` for compatibility with the launchd agent.
+    let args: CliArgs = match CliArgs::try_parse() {
+        Ok(a) => a,
+        Err(e) => {
+            // clap's own error formatting goes to stderr; honor its
+            // requested exit code (2 for usage errors).
+            let _ = e.print();
+            std::process::exit(2);
+        }
+    };
+
+    if cli::is_headless(&args) {
+        std::process::exit(cli::dispatch(&args));
     }
 
     ward_lib::run()

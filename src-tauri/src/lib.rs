@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod cli;
 mod commands;
 mod effective;
 mod error;
