@@ -1,0 +1,17 @@
+:root {
+  --bg: #0e1420;
+  --surface: #131c2b;
+  --surface-2: #0c121d;
+  --border: rgba(120, 160, 220, 0.14);
+  --text: #dfe7f2;
+  --text-dim: rgba(223, 231, 242, 0.6);
+  --accent: #8ff0a8;
+  --crit: #ff453a;
+  --warn: #ff9f0a;
+  --ok: #30d158;
+  --font-ui: -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 8px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
