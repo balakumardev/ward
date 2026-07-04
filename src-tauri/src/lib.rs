@@ -6,6 +6,7 @@ mod harness;
 mod model;
 pub mod mcp;
 pub mod security;
+pub mod sessions;
 pub mod tokenizer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
