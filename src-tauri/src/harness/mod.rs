@@ -2,12 +2,41 @@ pub mod framework;
 pub mod adapters;
 
 use std::path::Path;
-use crate::model::{Capabilities, HarnessItem, Scope};
+use crate::model::{Capabilities, Destination, HarnessItem, RestoreInfo, Scope};
 use crate::error::WardError;
 
 pub struct Ctx<'a> {
     pub home: &'a Path,
     pub cwd: Option<&'a Path>,
+}
+
+/// Optional mutation surface for a Harness adapter. Adapters that
+/// support move / delete / restore / save_file implement this trait
+/// and expose it via [`Harness::operations`]. The default [`Harness`]
+/// methods below return "unsupported" — adapters that don't ship
+/// mutations (e.g. a future read-only scanner) just don't override
+/// [`Harness::operations`].
+pub trait HarnessOps: Send + Sync {
+    /// Valid move destinations for `item`, scoped to `scopes` already
+    /// discovered by this harness.
+    fn get_valid_destinations(&self, ctx: &Ctx, item: &HarnessItem, scopes: &[Scope]) -> Vec<Destination>;
+
+    /// Move `item` to the scope identified by `dest_scope_id`. Returns
+    /// an undo payload the caller stores for a future `restore`.
+    fn move_item(&self, ctx: &Ctx, item: &HarnessItem, dest_scope_id: &str, scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>;
+
+    /// Delete `item`. Captures enough state in the returned `RestoreInfo`
+    /// that `restore` can recreate the item in its original location.
+    fn delete_item(&self, ctx: &Ctx, item: &HarnessItem, scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>;
+
+    /// Reverse a previous `move_item` / `delete_item` using its captured
+    /// `RestoreInfo`.
+    fn restore(&self, ctx: &Ctx, info: &RestoreInfo) -> Result<(), WardError>;
+
+    /// Write `content` to `path` after validating it stays under `home`.
+    fn save_file(&self, ctx: &Ctx, path: &str, content: &str) -> Result<(), WardError>;
 }
 
 pub trait Harness: Send + Sync {
@@ -21,6 +50,11 @@ pub trait Harness: Send + Sync {
     fn discover_scopes(&self, ctx: &Ctx) -> Result<Vec<Scope>, WardError>;
     fn scan_category(&self, ctx: &Ctx, category: &str, scope: &Scope)
         -> Result<Vec<HarnessItem>, WardError>;
+
+    /// Optional mutation surface. `None` means this adapter is
+    /// read-only; the Tauri commands fall back to an "unsupported"
+    /// error in that case.
+    fn operations(&self) -> Option<&dyn HarnessOps> { None }
 }
 
 pub struct Registry {
