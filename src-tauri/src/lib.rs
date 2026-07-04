@@ -1,3 +1,4 @@
+pub mod backup;
 mod commands;
 mod effective;
 mod error;

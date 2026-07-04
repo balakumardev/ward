@@ -8,6 +8,10 @@ pub enum WardError {
     HarnessUnavailable(String),
     #[error("mcp introspection failed: {0}")]
     McpIntrospectFailed(String),
+    #[error("git operation failed: {0}")]
+    Git(String),
+    #[error("backup error: {0}")]
+    Backup(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -20,6 +24,8 @@ enum ErrorKind {
     PathEscaped(String),
     HarnessUnavailable(String),
     McpIntrospectFailed(String),
+    Git(String),
+    Backup(String),
     Io(String),
 }
 
@@ -34,6 +40,8 @@ impl serde::Serialize for WardError {
             WardError::PathEscaped(_) => ErrorKind::PathEscaped(message),
             WardError::HarnessUnavailable(_) => ErrorKind::HarnessUnavailable(message),
             WardError::McpIntrospectFailed(_) => ErrorKind::McpIntrospectFailed(message),
+            WardError::Git(_) => ErrorKind::Git(message),
+            WardError::Backup(_) => ErrorKind::Backup(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)
@@ -49,5 +57,12 @@ mod tests {
         let e = WardError::HarnessUnavailable("codex".into());
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(json, "{\"kind\":\"harnessUnavailable\",\"message\":\"harness unavailable: codex\"}");
+    }
+
+    #[test]
+    fn git_error_serializes_camel_case() {
+        let e = WardError::Git("nothing to commit".into());
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(json, "{\"kind\":\"git\",\"message\":\"git operation failed: nothing to commit\"}");
     }
 }
