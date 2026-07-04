@@ -48,6 +48,40 @@ export interface McpPolicy {
 /** Plan 04 — outcome of `mcp_check_policy`. */
 export type PolicyVerdict = 'allowed' | 'denied' | 'noPolicy';
 
+/** Plan 05 — security scan finding. */
+export type Severity = 'critical' | 'high' | 'medium' | 'low';
+export interface Finding {
+  id: string; ruleId: string; category: string; severity: Severity;
+  name: string; description: string; matchedText: string; context: string;
+  sourceType: string; sourceName: string;
+}
+export interface ServerSummary {
+  serverName: string; scopeId: string; status: string;
+  error?: string | null; toolCount: number;
+  tools: Array<{ name: string; description: string; inputSchema: unknown; hash: string }>;
+  findings: Finding[];
+}
+export interface DupFinding {
+  kind: 'duplicate'; server: string; serverScope: string;
+  duplicateOf: string; winnerScope: string;
+  signatureType: string; signature: string;
+}
+export interface BaselineDiff {
+  server: string; tool: string; change: 'added' | 'removed' | 'changed' | 'unchanged';
+}
+export interface SeverityCounts { critical: number; high: number; medium: number; low: number; }
+export interface ScanResultSec {
+  timestamp: string;
+  servers: ServerSummary[];
+  findings: Finding[];
+  duplicates: DupFinding[];
+  baselineDiffs: BaselineDiff[];
+  severityCounts: SeverityCounts;
+  totalTools: number; totalServers: number;
+  serversConnected: number; serversFailed: number;
+  judgeUsed: boolean;
+}
+
 export const api = {
   scan: (harness: string) => invoke<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invoke<string>('read_file_content', { path }),
@@ -76,4 +110,12 @@ export const api = {
     invoke<RestoreInfo>('mcp_set_policy', { policy }),
   mcpCheckPolicy: (serverName: string, serverConfig: unknown, policy: McpPolicy) =>
     invoke<PolicyVerdict>('mcp_check_policy', { serverName, serverConfig, policy }),
+
+  // Plan 05 — Security scanner.
+  securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>
+    invoke<ScanResultSec>('security_scan', { harness, items, runJudge }),
+  securityBaselineCheck: (scan: ScanResultSec) =>
+    invoke<BaselineDiff[]>('security_baseline_check', { scan }),
+  securityBaselineAccept: (server: string, findings: string[]) =>
+    invoke<void>('security_baseline_accept', { server, findings }),
 };

@@ -2,6 +2,7 @@ import { createResource, createSignal, Show } from 'solid-js';
 import { Shell } from './components/Shell';
 import { Organizer } from './modes/Organizer';
 import { McpPolicy } from './modes/McpPolicy';
+import { Security } from './modes/Security';
 import { api } from './api';
 import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -62,7 +63,20 @@ export default function App() {
     <Shell active={mode()} onSelect={setMode}>
       <Show when={scan()} fallback={<div style={{ padding: '16px' }}>Scanning ~/.claude…</div>}>
         {(result) => (
-          <Show when={mode() === 'organizer'} fallback={<div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>}>
+          <Show when={mode() === 'organizer'} fallback={
+            <Show when={mode() === 'security'} fallback={<div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>}>
+              <Security
+                items={result().items}
+                api={{
+                  listDestinations: (item) => api.listDestinations('claude', item) as any,
+                  moveItem: (item, dest) => api.moveItem('claude', item, dest),
+                  deleteItem: (item) => api.deleteItem('claude', item),
+                  restore: (info) => api.restore('claude', info),
+                  mcpSetDisabled: (path, list) => api.mcpSetDisabled(path, list),
+                }}
+              />
+            </Show>
+          }>
             <div style={{ position: 'relative', height: '100%' }}>
               <div style={{ position: 'absolute', top: '8px', right: '12px', 'z-index': 5 }}>
                 <Show when={result().capabilities.mcpPolicy}>

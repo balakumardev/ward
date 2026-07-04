@@ -210,6 +210,68 @@ pub fn mcp_check_policy(
     Ok(mcp::check_policy(&server_name, &server_config, &policy))
 }
 
+// ── Security Scanner (Plan 05) ─────────────────────────────────────────
+
+/// Run the security scan over the discovered MCP items.
+#[tauri::command]
+pub fn security_scan(
+    harness: String,
+    items: Vec<HarnessItem>,
+    run_judge: Option<bool>,
+) -> Result<crate::security::scan::ScanResult, WardError> {
+    let opts = crate::security::scan::ScanOptions {
+        run_judge: run_judge.unwrap_or(false),
+    };
+    crate::security::scan::scan(&items, &opts)
+}
+
+/// Compare a fresh scan against the saved baseline; return diffs.
+#[tauri::command]
+pub fn security_baseline_check(
+    scan: crate::security::scan::ScanResult,
+) -> Result<Vec<crate::security::baseline::BaselineDiff>, WardError> {
+    let path = crate::security::baseline::default_path()?;
+    let saved = crate::security::baseline::load(&path)?;
+    let mut new_baseline = crate::security::baseline::Baseline::default();
+    for s in &scan.servers {
+        let mut hashes = std::collections::HashMap::new();
+        for t in &s.tools {
+            hashes.insert(t.name.clone(), t.hash.clone());
+        }
+        new_baseline.servers.insert(
+            s.server_name.clone(),
+            crate::security::baseline::BaselineEntry {
+                tool_hashes: hashes,
+                accepted_at: chrono::Utc::now(),
+                accepted_findings: scan.findings.iter()
+                    .filter(|f| f.source_name.starts_with(&s.server_name))
+                    .map(|f| f.rule_id.clone())
+                    .collect(),
+            },
+        );
+    }
+    Ok(crate::security::baseline::diff(&saved, &new_baseline))
+}
+
+/// Persist a baseline snapshot.
+#[tauri::command]
+pub fn security_baseline_accept(
+    server: String,
+    findings: Vec<String>,
+) -> Result<(), WardError> {
+    let path = crate::security::baseline::default_path()?;
+    let mut current = crate::security::baseline::load(&path)?;
+    current.servers.insert(
+        server,
+        crate::security::baseline::BaselineEntry {
+            tool_hashes: std::collections::HashMap::new(),
+            accepted_at: chrono::Utc::now(),
+            accepted_findings: findings,
+        },
+    );
+    crate::security::baseline::save(&path, &current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

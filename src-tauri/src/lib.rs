@@ -25,7 +25,10 @@ pub fn run() {
             commands::mcp_set_disabled,
             commands::mcp_get_policy,
             commands::mcp_set_policy,
-            commands::mcp_check_policy
+            commands::mcp_check_policy,
+            commands::security_scan,
+            commands::security_baseline_check,
+            commands::security_baseline_accept
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
