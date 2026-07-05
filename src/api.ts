@@ -158,11 +158,22 @@ export interface Usage {
   cacheWrite?: number;
 }
 
+/** A single content block inside a user/assistant message. Mirrors the
+ *  Rust `ContentBlock` enum (internally tagged on `type`, camelCase).
+ *  Real turns are arrays of these — plain text is only one variant. */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'toolUse'; name: string; inputSummary: string }
+  | { type: 'toolResult'; content: string }
+  | { type: 'image' };
+
 /** A single classified JSONL line. The `kind` discriminator mirrors
- *  the Rust `SessionRecord` enum (camelCase). */
+ *  the Rust `SessionRecord` enum (camelCase). User/Assistant carry the
+ *  structured `blocks` plus a derived flattened `content`. */
 export type SessionRecord =
-  | { kind: 'user'; content: string; ts?: string }
-  | { kind: 'assistant'; content: string; model?: string; ts?: string; usage?: Usage }
+  | { kind: 'user'; content: string; blocks: ContentBlock[]; ts?: string }
+  | { kind: 'assistant'; content: string; blocks: ContentBlock[]; model?: string; ts?: string; usage?: Usage }
   | { kind: 'system'; subtype: string; summary?: string }
   | { kind: 'aiTitle'; title: string }
   | { kind: 'queueOperation'; enqueue: boolean }

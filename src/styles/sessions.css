@@ -272,6 +272,95 @@
   word-break: break-word;
 }
 
+/* ── structured content blocks ───────────────────────────────────────────── */
+.sx-msg-blocks { display: flex; flex-direction: column; gap: 6px; }
+
+.sx-block-empty { color: var(--text-mute); font-style: italic; }
+
+/* plain text block */
+.sx-block--text {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* thinking — dimmed, foldable <details> */
+.sx-block--thinking {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+}
+.sx-block-thinking-head {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-mute);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  user-select: none;
+}
+.sx-block-thinking-head::-webkit-details-marker { display: none; }
+.sx-block-thinking-head::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 5px;
+  transition: transform 0.12s ease;
+}
+.sx-block--thinking[open] .sx-block-thinking-head::before { transform: rotate(90deg); }
+.sx-block-tag { font-weight: 600; }
+.sx-block-thinking-body {
+  margin-top: 5px;
+  white-space: pre-wrap;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  font-style: italic;
+  word-break: break-word;
+}
+
+/* tool call — one salient line, warn-tinted */
+.sx-block--tooluse {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--warn-bg);
+  border: 1px solid rgba(255, 159, 10, 0.28);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+}
+.sx-block-tool-icon { font-size: 11px; flex: none; }
+.sx-block-tool-name { font-weight: 700; color: var(--warn); }
+.sx-block-tool-input {
+  color: var(--text-dim);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* tool result — dimmed, monospace, arrow rail */
+.sx-block--toolresult {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+.sx-block-result-arrow { color: var(--accent); flex: none; font-weight: 700; }
+.sx-block-result-body { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+
+/* image placeholder */
+.sx-block--image { font-size: 11.5px; color: var(--text-mute); }
+
 /* ── RIGHT — cost panel ──────────────────────────────────────────────────── */
 .sx-cost {
   width: 320px;

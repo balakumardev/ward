@@ -1,0 +1,137 @@
+import { test, expect } from 'vitest';
+import { render, fireEvent } from '@solidjs/testing-library';
+import { Sessions } from './Sessions';
+import type { SessionsApi } from './Sessions';
+import type { Conversation, ScanResult } from '../api';
+
+// Regression coverage for the "(empty)" bug: real Claude/Codex turns are
+// arrays of structured blocks — user turns are `tool_result`, assistant
+// turns are `thinking` + `tool_use` (+ optional text). None carry a
+// top-level `.text`, so the old renderer collapsed them all to "(empty)".
+// These records mirror the real on-disk shapes.
+const CONVO: Conversation = {
+  sessionId: 'sess-1',
+  records: [
+    {
+      kind: 'user',
+      content: 'refactor the scan pipeline',
+      blocks: [{ type: 'text', text: 'refactor the scan pipeline' }],
+    },
+    {
+      kind: 'assistant',
+      content: 'inspect commands.rs first\nRead: src-tauri/src/commands.rs',
+      blocks: [
+        { type: 'thinking', text: 'I should inspect commands.rs before editing.' },
+        { type: 'toolUse', name: 'Read', inputSummary: 'src-tauri/src/commands.rs' },
+      ],
+      model: 'claude-opus-4-8',
+      usage: { inputTokens: 100, outputTokens: 20 },
+    },
+    {
+      kind: 'user',
+      content: 'BUILD SUCCEEDED in 4.2s',
+      blocks: [{ type: 'toolResult', content: 'BUILD SUCCEEDED in 4.2s' }],
+    },
+    // A system record with no summary must NOT render "(empty)".
+    { kind: 'system', subtype: 'session_start' },
+  ],
+};
+
+const SCAN = {
+  harness: 'claude',
+  items: [
+    {
+      category: 'session',
+      scopeId: 'project',
+      name: 'sess-1',
+      path: '/x/projects/p/sess-1.jsonl',
+      description: 'a session',
+      movable: false,
+      deletable: true,
+      locked: false,
+    },
+  ],
+} as unknown as ScanResult;
+
+function makeApi(convo: Conversation = CONVO): SessionsApi {
+  return {
+    sessionPreview: () => Promise.resolve(convo),
+    sessionCost: () =>
+      Promise.resolve({
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheRead: 0,
+        totalCacheWrite: 0,
+        perModel: [],
+        estimatedCostUsd: 0,
+        estimatedRecords: 0,
+      }),
+    sessionDistill: () =>
+      Promise.resolve({
+        originalPath: '',
+        cleanedPath: '',
+        backupPath: '',
+        originalBytes: 0,
+        cleanedBytes: 0,
+        reductionPct: 0,
+        indexMd: '',
+      }),
+    sessionTrim: () => Promise.resolve({} as never),
+    restore: () => Promise.resolve(),
+  };
+}
+
+test('renders tool-call, tool-result, and thinking blocks with their real text', async () => {
+  const { getByTestId, findByTestId } = render(() => (
+    <Sessions scan={SCAN} api={makeApi()} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  // 🔧 tool call — shows name + brief input.
+  const toolUse = await findByTestId('sessions-block-tooluse');
+  expect(toolUse.textContent).toContain('Read');
+  expect(toolUse.textContent).toContain('src-tauri/src/commands.rs');
+
+  // ↳ result — shows the tool output text.
+  const toolResult = await findByTestId('sessions-block-toolresult');
+  expect(toolResult.textContent).toContain('BUILD SUCCEEDED in 4.2s');
+
+  // thinking — foldable <details>, text present in DOM.
+  const thinking = await findByTestId('sessions-block-thinking');
+  expect(thinking.tagName.toLowerCase()).toBe('details');
+  expect(thinking.textContent).toContain('inspect commands.rs before editing');
+});
+
+test('no turn collapses to the "(empty)" placeholder', async () => {
+  const { getByTestId, findByTestId, queryByText } = render(() => (
+    <Sessions scan={SCAN} api={makeApi()} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  // The literal "(empty)" string is gone from the transcript entirely —
+  // tool/thinking turns render their content, meta turns render nothing.
+  expect(queryByText('(empty)')).toBeNull();
+});
+
+test('assistant turn that is ONLY a tool call still renders its text', async () => {
+  const toolOnly: Conversation = {
+    sessionId: 's',
+    records: [
+      {
+        kind: 'assistant',
+        content: 'Bash: cargo test',
+        blocks: [{ type: 'toolUse', name: 'Bash', inputSummary: 'cargo test' }],
+        model: 'claude-opus-4-8',
+      },
+    ],
+  };
+  const { getByTestId, findByTestId } = render(() => (
+    <Sessions scan={SCAN} api={makeApi(toolOnly)} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  const toolUse = await findByTestId('sessions-block-tooluse');
+  expect(toolUse.textContent).toContain('Bash');
+  expect(toolUse.textContent).toContain('cargo test');
+});

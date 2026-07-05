@@ -125,6 +125,12 @@ export function budgetFor(scopeId: string): BudgetBreakdown {
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────
+// These records mirror REAL on-disk Claude Code shapes: assistant turns are
+// `thinking` + `tool_use` (+ optional `text`) blocks, and the tool results
+// come back as `tool_result` USER turns. Most turns carry NO top-level text —
+// the whole point of the structured-block parser. Hand-authoring populated
+// string content here (as the old fixture did) hid the "(empty)" bug behind
+// unrealistic data, so `dev:mock` looked perfect on data that never occurs.
 export function conversationFor(path: string): Conversation {
   const sessionId = path.split('/').pop()?.replace('.jsonl', '') ?? 'mock-session';
   return {
@@ -132,12 +138,69 @@ export function conversationFor(path: string): Conversation {
     records: [
       { kind: 'aiTitle', title: 'Refactor the scan pipeline and add a golden test' },
       { kind: 'system', subtype: 'session_start', summary: 'Session started in ~/personal/ward' },
-      { kind: 'user', content: 'Can you refactor the scan pipeline to stream results instead of collecting them all up front?', ts: '2026-07-05T08:00:00Z' },
-      { kind: 'assistant', content: "Sure — I'll split `scan_impl` into a streaming iterator so items flush as each scope is walked. Here's the plan…", model: 'claude-opus-4-8', ts: '2026-07-05T08:00:07Z', usage: { inputTokens: 4200, outputTokens: 810, cacheRead: 38000, cacheWrite: 1200 } },
-      { kind: 'user', content: 'Great. Now add a golden test that asserts ordering.', ts: '2026-07-05T08:03:00Z' },
-      { kind: 'assistant', content: 'Added `scan_streams_in_scope_order` covering global → project ordering with a tempdir fixture.', model: 'claude-opus-4-8', ts: '2026-07-05T08:03:20Z', usage: { inputTokens: 5100, outputTokens: 640, cacheRead: 41000, cacheWrite: 300 } },
+      // Plain user prompt (string content -> single text block).
+      {
+        kind: 'user',
+        content: 'Can you refactor the scan pipeline to stream results instead of collecting them all up front?',
+        blocks: [{ type: 'text', text: 'Can you refactor the scan pipeline to stream results instead of collecting them all up front?' }],
+        ts: '2026-07-05T08:00:00Z',
+      },
+      // Assistant: thinking + a tool call, NO plain-text block.
+      {
+        kind: 'assistant',
+        content: "The scan_impl fn collects into a Vec before returning. I'll make it stream.\nRead: src-tauri/src/commands.rs",
+        blocks: [
+          { type: 'thinking', text: "The scan_impl fn collects into a Vec before returning. I'll turn it into a streaming iterator so items flush per scope." },
+          { type: 'toolUse', name: 'Read', inputSummary: 'src-tauri/src/commands.rs' },
+        ],
+        model: 'claude-opus-4-8',
+        ts: '2026-07-05T08:00:07Z',
+        usage: { inputTokens: 4200, outputTokens: 810, cacheRead: 38000, cacheWrite: 1200 },
+      },
+      // Tool result comes back as a USER turn (real Claude shape).
+      {
+        kind: 'user',
+        content: 'pub fn scan_impl(registry: &Registry, home: &Path, harness_id: &str) -> Result<ScanResult, WardError> { … }',
+        blocks: [{ type: 'toolResult', content: 'pub fn scan_impl(registry: &Registry, home: &Path, harness_id: &str) -> Result<ScanResult, WardError> {\n    let harness = registry.get(harness_id)?;\n    // …collects items into a Vec\n}' }],
+        ts: '2026-07-05T08:00:08Z',
+      },
+      // Assistant: an edit tool call + a short closing text block.
+      {
+        kind: 'assistant',
+        content: "Edit: src-tauri/src/commands.rs\nDone — scan now flushes each scope as it's walked.",
+        blocks: [
+          { type: 'toolUse', name: 'Edit', inputSummary: 'src-tauri/src/commands.rs' },
+          { type: 'text', text: "Done — scan now flushes each scope as it's walked." },
+        ],
+        model: 'claude-opus-4-8',
+        ts: '2026-07-05T08:01:12Z',
+        usage: { inputTokens: 5100, outputTokens: 640, cacheRead: 41000, cacheWrite: 300 },
+      },
+      {
+        kind: 'user',
+        content: 'Great. Now add a golden test that asserts ordering.',
+        blocks: [{ type: 'text', text: 'Great. Now add a golden test that asserts ordering.' }],
+        ts: '2026-07-05T08:03:00Z',
+      },
+      // Assistant: thinking + Bash tool call.
+      {
+        kind: 'assistant',
+        content: 'A tempdir fixture with global + project scopes will pin the order.\nBash: cargo test scan_streams_in_scope_order',
+        blocks: [
+          { type: 'thinking', text: 'A tempdir fixture with a global scope and a project scope will pin global → project ordering deterministically.' },
+          { type: 'toolUse', name: 'Bash', inputSummary: 'cargo test scan_streams_in_scope_order' },
+        ],
+        model: 'claude-opus-4-8',
+        ts: '2026-07-05T08:03:20Z',
+        usage: { inputTokens: 5300, outputTokens: 410, cacheRead: 44000, cacheWrite: 200 },
+      },
+      {
+        kind: 'user',
+        content: 'test result: ok. 1 passed; 0 failed',
+        blocks: [{ type: 'toolResult', content: 'running 1 test\ntest sessions::scan_streams_in_scope_order ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored' }],
+        ts: '2026-07-05T08:03:41Z',
+      },
       { kind: 'queueOperation', enqueue: true },
-      { kind: 'other', recordType: 'tool_result' },
     ],
   };
 }

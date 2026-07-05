@@ -1,6 +1,7 @@
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show, type JSX } from 'solid-js';
 import '../styles/sessions.css';
 import type {
+  ContentBlock,
   Conversation,
   CostBreakdown,
   DistillResult,
@@ -40,31 +41,91 @@ function fmtUsd(n: number): string {
   return `$${n.toFixed(3)}`;
 }
 
-function recordSummary(rec: SessionRecord): { label: string; sub: string } {
+/** Header label for a record row (role + model / subtype). */
+function headLabel(rec: SessionRecord): string {
   switch (rec.kind) {
     case 'user':
-      return {
-        label: 'User',
-        sub: rec.content.length > 140 ? rec.content.slice(0, 140) + '…' : rec.content,
-      };
+      return 'User';
     case 'assistant': {
       const model = rec.model ? rec.model.replace(/^claude-/, '') : 'assistant';
-      const txt = rec.content.length > 140 ? rec.content.slice(0, 140) + '…' : rec.content;
-      return { label: `Assistant (${model})`, sub: txt };
+      return `Assistant (${model})`;
     }
     case 'system':
-      return { label: `System: ${rec.subtype}`, sub: rec.summary ?? '' };
+      return `System: ${rec.subtype}`;
     case 'aiTitle':
-      return { label: 'Title', sub: rec.title };
+      return 'Title';
     case 'queueOperation':
-      return { label: 'Queue', sub: rec.enqueue ? 'enqueue' : 'dequeue' };
+      return 'Queue';
     case 'other':
-      return { label: rec.recordType, sub: '' };
+      return rec.recordType;
+  }
+}
+
+/** Body text for meta records (system/aiTitle/queue/other). Empty string
+ *  means "render no body" — meta rows no longer show a misleading
+ *  "(empty)" placeholder. */
+function metaBody(rec: SessionRecord): string {
+  switch (rec.kind) {
+    case 'system':
+      return rec.summary ?? '';
+    case 'aiTitle':
+      return rec.title;
+    case 'queueOperation':
+      return rec.enqueue ? 'enqueue' : 'dequeue';
+    default:
+      return '';
   }
 }
 
 function recordHasUsage(rec: SessionRecord): boolean {
   return rec.kind === 'assistant' && !!rec.usage;
+}
+
+/** Render a single structured content block as its own distinct row:
+ *  normal text, a foldable dimmed `thinking` row, a `🔧 tool call` row,
+ *  a `↳ result` row, or an image placeholder. */
+function BlockRow(props: { block: ContentBlock }): JSX.Element {
+  const b = props.block;
+  switch (b.type) {
+    case 'text':
+      return (
+        <div data-testid="sessions-block-text" class="sx-block sx-block--text">
+          {b.text}
+        </div>
+      );
+    case 'thinking':
+      return (
+        <details data-testid="sessions-block-thinking" class="sx-block sx-block--thinking">
+          <summary class="sx-block-thinking-head">
+            <span class="sx-block-tag">thinking</span>
+          </summary>
+          <div class="sx-block-thinking-body">{b.text}</div>
+        </details>
+      );
+    case 'toolUse':
+      return (
+        <div data-testid="sessions-block-tooluse" class="sx-block sx-block--tooluse">
+          <span class="sx-block-tool-icon" aria-hidden="true">🔧</span>
+          <span class="sx-block-tool-name">{b.name}</span>
+          <Show when={b.inputSummary}>
+            <span class="sx-block-tool-input">{b.inputSummary}</span>
+          </Show>
+        </div>
+      );
+    case 'toolResult':
+      return (
+        <div data-testid="sessions-block-toolresult" class="sx-block sx-block--toolresult">
+          <span class="sx-block-result-arrow" aria-hidden="true">↳</span>
+          <span class="sx-block-result-body">{b.content}</span>
+        </div>
+      );
+    case 'image':
+      return (
+        <div data-testid="sessions-block-image" class="sx-block sx-block--image">
+          <span aria-hidden="true">🖼</span> <span>[image]</span>
+        </div>
+      );
+  }
 }
 
 export interface SessionsApi {
@@ -295,10 +356,11 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                 </h2>
                 <For each={c().records}>
                   {(rec, i) => {
-                    const s = recordSummary(rec);
                     const isAssistant = rec.kind === 'assistant';
                     const isUser = rec.kind === 'user';
                     const isMeta = !isAssistant && !isUser;
+                    const blocks = () =>
+                      (rec as Extract<SessionRecord, { kind: 'user' | 'assistant' }>).blocks ?? [];
                     return (
                       <div
                         data-testid={`sessions-record-${i()}`}
@@ -311,13 +373,31 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                         }}
                       >
                         <div class="sx-msg-head">
-                          <span class="sx-msg-idx">#{i() + 1}</span>{' · '}<span class="sx-msg-role">{s.label}</span>
+                          <span class="sx-msg-idx">#{i() + 1}</span>{' · '}<span class="sx-msg-role">{headLabel(rec)}</span>
                           <Show when={recordHasUsage(rec)}>
                             <span class="sx-msg-usage"> · in={fmtTokens((rec as Extract<SessionRecord, { kind: 'assistant' }>).usage!.inputTokens)}
                               {' '}out={fmtTokens((rec as Extract<SessionRecord, { kind: 'assistant' }>).usage!.outputTokens)}</span>
                           </Show>
                         </div>
-                        <div class="sx-msg-body">{s.sub || '(empty)'}</div>
+                        <Show
+                          when={!isMeta}
+                          fallback={
+                            <Show when={metaBody(rec)}>
+                              <div class="sx-msg-body">{metaBody(rec)}</div>
+                            </Show>
+                          }
+                        >
+                          <div class="sx-msg-blocks" data-testid="sessions-msg-blocks">
+                            <For each={blocks()}>
+                              {(block) => <BlockRow block={block} />}
+                            </For>
+                            <Show when={blocks().length === 0}>
+                              <div data-testid="sessions-block-empty" class="sx-msg-body sx-block-empty">
+                                (no content)
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
                       </div>
                     );
                   }}
