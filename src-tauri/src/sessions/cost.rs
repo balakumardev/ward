@@ -230,6 +230,7 @@ mod tests {
     fn assistant(model: &str, usage: Usage) -> SessionRecord {
         SessionRecord::Assistant {
             content: String::new(),
+            blocks: Vec::new(),
             model: Some(model.into()),
             ts: None,
             usage: Some(usage),
@@ -345,6 +346,7 @@ mod tests {
         let conv = conv_with(vec![
             SessionRecord::Assistant {
                 content: "x".into(),
+                blocks: Vec::new(),
                 model: Some("claude-sonnet-4-5".into()),
                 ts: None,
                 usage: None,
@@ -373,6 +375,7 @@ mod tests {
         let conv = conv_with(vec![
             SessionRecord::Assistant {
                 content: "x".into(),
+                blocks: Vec::new(),
                 model: None,
                 ts: None,
                 usage: Some(Usage {

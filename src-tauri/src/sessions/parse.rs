@@ -38,21 +38,56 @@ pub struct Usage {
     pub cache_write: Option<u64>,
 }
 
-/// A single JSONL line, classified by `type`. The content fields are
-/// pre-extracted (string or normalized text) so the UI can render them
-/// without walking the raw `Value`.
+/// A single content block inside a `user`/`assistant` message. Real
+/// Claude Code (and Codex) messages are arrays of typed blocks — plain
+/// text is only one of them. Modelling every block type lets the viewer
+/// render tool calls, tool results, and reasoning distinctly instead of
+/// collapsing everything to a single (often empty) string.
+///
+/// Internally tagged on `type` (camelCase) so the frontend can
+/// discriminate: `text`, `thinking`, `toolUse`, `toolResult`, `image`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ContentBlock {
+    /// A plain assistant/user text block (`{"type":"text","text":"…"}`).
+    Text { text: String },
+    /// Assistant chain-of-thought (`{"type":"thinking","thinking":"…"}`)
+    /// or Codex `reasoning` summary. The text lives in `.thinking` /
+    /// `.summary[].text`, never a top-level `.text`.
+    Thinking { text: String },
+    /// A tool invocation (`{"type":"tool_use","name":"…","input":{…}}`) or
+    /// Codex `function_call`. No text of its own — identity is the tool
+    /// name plus a short one-line summary of the salient input.
+    ToolUse { name: String, input_summary: String },
+    /// A tool's result (`{"type":"tool_result","content":…}`) or Codex
+    /// `function_call_output`. `.content` may be a string OR an array of
+    /// text blocks on disk — both are flattened into this string.
+    ToolResult { content: String },
+    /// An image block — rendered as a `[image]` placeholder (the base64
+    /// payload is never surfaced).
+    Image,
+}
+
+/// A single JSONL line, classified by `type`. User/Assistant records
+/// carry the structured `blocks` (so the viewer can render tool calls,
+/// results, and reasoning distinctly) plus a derived flattened `content`
+/// string (kept for search / cost / distill compatibility).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SessionRecord {
     /// `{"type":"user","message":{"role":"user","content":...},"timestamp":"..."}`
     User {
         content: String,
+        #[serde(default)]
+        blocks: Vec<ContentBlock>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ts: Option<String>,
     },
     /// `{"type":"assistant","message":{"role":"assistant","content":[...],"model":"...","usage":{...}}}`
     Assistant {
         content: String,
+        #[serde(default)]
+        blocks: Vec<ContentBlock>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -159,19 +194,23 @@ fn classify(v: Value) -> SessionRecord {
         .map(str::to_string);
 
     match (record_type.as_str(), role) {
-        ("user", "user") => SessionRecord::User {
-            content: extract_text(content),
-            ts,
-        },
-        ("assistant", "assistant") => SessionRecord::Assistant {
-            content: extract_text(content),
-            model: message
-                .and_then(|m| m.get("model"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-            ts,
-            usage: message.and_then(|m| m.get("usage")).and_then(parse_usage),
-        },
+        ("user", "user") => {
+            let blocks = parse_claude_blocks(content);
+            SessionRecord::User { content: flatten_blocks(&blocks), blocks, ts }
+        }
+        ("assistant", "assistant") => {
+            let blocks = parse_claude_blocks(content);
+            SessionRecord::Assistant {
+                content: flatten_blocks(&blocks),
+                blocks,
+                model: message
+                    .and_then(|m| m.get("model"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                ts,
+                usage: message.and_then(|m| m.get("usage")).and_then(parse_usage),
+            }
+        }
         ("system", _) => {
             let subtype = obj
                 .get("subtype")
@@ -201,25 +240,160 @@ fn classify(v: Value) -> SessionRecord {
     }
 }
 
-/// Pull the textual content out of a `message.content` value. Strings
-/// pass through; arrays of content blocks get joined by `\n` so the
-/// UI can show them as a single block.
-fn extract_text(content: Option<&Value>) -> String {
+/// Parse a Claude `message.content` value into structured blocks. A
+/// bare string becomes a single `Text` block; an array is walked block
+/// by block. This is the replacement for the old lossy `extract_text`,
+/// which only ever read blocks with a top-level `.text` — silently
+/// dropping every `tool_result`, `tool_use`, and `thinking` block (the
+/// vast majority of real turns).
+fn parse_claude_blocks(content: Option<&Value>) -> Vec<ContentBlock> {
+    match content {
+        Some(Value::String(s)) => vec![ContentBlock::Text { text: s.clone() }],
+        Some(Value::Array(arr)) => arr.iter().filter_map(parse_claude_block).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Classify a single Claude content block. Returns `None` for a block we
+/// can't turn into anything meaningful (e.g. a `text` block with no
+/// `text` field).
+fn parse_claude_block(b: &Value) -> Option<ContentBlock> {
+    let btype = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    match btype {
+        "text" => b
+            .get("text")
+            .and_then(|t| t.as_str())
+            .map(|s| ContentBlock::Text { text: s.to_string() }),
+        "thinking" => Some(ContentBlock::Thinking {
+            text: b
+                .get("thinking")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
+        }),
+        "tool_use" => {
+            let name = b
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool")
+                .to_string();
+            Some(ContentBlock::ToolUse {
+                name,
+                input_summary: summarize_input(b.get("input")),
+            })
+        }
+        "tool_result" => Some(ContentBlock::ToolResult {
+            content: tool_result_text(b.get("content")),
+        }),
+        "image" => Some(ContentBlock::Image),
+        // Unknown block: salvage a `.text` if present, else drop it.
+        _ => b
+            .get("text")
+            .and_then(|t| t.as_str())
+            .map(|s| ContentBlock::Text { text: s.to_string() }),
+    }
+}
+
+/// A `tool_result` block's `.content` is a String on most turns but an
+/// array of `{type:"text",text:…}` (and/or image) blocks on others.
+/// Both collapse to a single newline-joined string.
+fn tool_result_text(content: Option<&Value>) -> String {
     match content {
         Some(Value::String(s)) => s.clone(),
-        Some(Value::Array(arr)) => {
-            let mut out = String::new();
-            for block in arr {
-                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                    if !out.is_empty() {
-                        out.push('\n');
-                    }
-                    out.push_str(text);
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| b.get("text").and_then(|t| t.as_str()).map(str::to_string))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// Flatten structured blocks into a single searchable/derivable string.
+/// This is the `content` field kept for search, cost, and distill
+/// compatibility. Empty fragments are skipped so a lone empty text block
+/// still flattens to "" (and distill still drops it).
+fn flatten_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .map(block_display_text)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The single-line/inline textual representation of one block, used both
+/// for the flattened `content` and as a fallback in the viewer.
+fn block_display_text(b: &ContentBlock) -> String {
+    match b {
+        ContentBlock::Text { text } => text.clone(),
+        ContentBlock::Thinking { text } => text.clone(),
+        ContentBlock::ToolUse { name, input_summary } => tool_use_label(name, input_summary),
+        ContentBlock::ToolResult { content } => content.clone(),
+        ContentBlock::Image => "[image]".to_string(),
+    }
+}
+
+/// Compact label for a tool call: `name: summary` (e.g. `Bash: git
+/// status`) or just `name` when there is no salient input to show.
+fn tool_use_label(name: &str, input_summary: &str) -> String {
+    if input_summary.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name}: {input_summary}")
+    }
+}
+
+/// Priority order of input keys to surface as a tool-call summary. Covers
+/// the common Claude Code + Codex tools (Bash `command`, Read/Edit/Write
+/// `file_path`, Grep/Glob `pattern`, WebFetch `url`, Skill `command`, …).
+const INPUT_SUMMARY_KEYS: &[&str] = &[
+    "command",
+    "file_path",
+    "path",
+    "pattern",
+    "query",
+    "url",
+    "skill",
+    "description",
+    "prompt",
+    "name",
+    "text",
+    "content",
+];
+
+/// Summarize a `tool_use.input` object into a short one-line string. We
+/// pick the first salient key (by `INPUT_SUMMARY_KEYS` priority), falling
+/// back to the first string value, and truncate to keep the row compact.
+fn summarize_input(input: Option<&Value>) -> String {
+    match input {
+        Some(Value::Object(map)) => {
+            for k in INPUT_SUMMARY_KEYS {
+                if let Some(s) = map.get(*k).and_then(|v| v.as_str()) {
+                    return one_line_truncate(s, 80);
                 }
             }
-            out
+            // Fall back to the first string-valued field, if any.
+            map.values()
+                .find_map(|v| v.as_str())
+                .map(|s| one_line_truncate(s, 80))
+                .unwrap_or_default()
         }
+        Some(Value::String(s)) => one_line_truncate(s, 80),
         _ => String::new(),
+    }
+}
+
+/// Collapse a value to a single trimmed line and truncate to `max`
+/// characters (char-boundary safe), appending an ellipsis when clipped.
+fn one_line_truncate(s: &str, max: usize) -> String {
+    let one: String = s.chars().map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c }).collect();
+    let one = one.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > max {
+        let clipped: String = one.chars().take(max).collect();
+        format!("{clipped}…")
+    } else {
+        one
     }
 }
 
@@ -255,7 +429,7 @@ mod tests {
         let line = r#"{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-01-01T00:00:00Z"}"#;
         let rec = parse_line(line).unwrap();
         match rec {
-            SessionRecord::User { content, ts } => {
+            SessionRecord::User { content, ts, .. } => {
                 assert_eq!(content, "hello");
                 assert_eq!(ts.as_deref(), Some("2026-01-01T00:00:00Z"));
             }
@@ -401,6 +575,7 @@ mod tests {
             session_id: "x".into(),
             records: vec![SessionRecord::User {
                 content: "hi".into(),
+                blocks: vec![ContentBlock::Text { text: "hi".into() }],
                 ts: None,
             }],
         };
@@ -408,6 +583,135 @@ mod tests {
         assert!(j.contains("\"sessionId\":\"x\""));
         assert!(j.contains("\"records\""));
         assert!(j.contains("\"kind\":\"user\""));
+    }
+
+    // ── Structured content-block golden tests (Commit A) ──────────────
+    // These use the REAL on-disk Claude Code shapes: user turns are
+    // `tool_result` blocks (string OR array content), assistant turns are
+    // `thinking` + `tool_use` (+ optional `text`) blocks. None of these
+    // carry a top-level `.text`, so the old `extract_text` collapsed them
+    // to "" — the "(empty)" bug. Each asserts the flattened `content` now
+    // carries the real text AND that structured `blocks` are populated.
+
+    #[test]
+    fn parse_user_tool_result_string_content() {
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01ABC","content":"1\tfirst line\n2\tsecond line"}]}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, .. } => {
+                assert_eq!(content, "1\tfirst line\n2\tsecond line");
+                assert_eq!(blocks, vec![ContentBlock::ToolResult {
+                    content: "1\tfirst line\n2\tsecond line".into(),
+                }]);
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_user_tool_result_array_content() {
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02DEF","content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]}]}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, .. } => {
+                assert_eq!(content, "line one\nline two");
+                assert_eq!(blocks, vec![ContentBlock::ToolResult {
+                    content: "line one\nline two".into(),
+                }]);
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_assistant_thinking_block() {
+        let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me consider the options carefully.","signature":"EqoBd3aE"}],"model":"claude-opus-4-8"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, model, .. } => {
+                assert_eq!(content, "Let me consider the options carefully.");
+                assert_eq!(model.as_deref(), Some("claude-opus-4-8"));
+                assert_eq!(blocks, vec![ContentBlock::Thinking {
+                    text: "Let me consider the options carefully.".into(),
+                }]);
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_assistant_tool_use_renders_name() {
+        let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_03GHI","name":"Bash","input":{"command":"git status","description":"check status"}}],"model":"claude-opus-4-8"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, .. } => {
+                // Compact label = name + first salient input value.
+                assert_eq!(content, "Bash: git status");
+                assert_eq!(blocks, vec![ContentBlock::ToolUse {
+                    name: "Bash".into(),
+                    input_summary: "git status".into(),
+                }]);
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_assistant_mixed_thinking_tool_use_text() {
+        // A real-shaped assistant line: thinking + tool_use + text together.
+        let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Planning the approach.","signature":"sig"},{"type":"tool_use","id":"toolu_04","name":"Skill","input":{"command":"brainstorming"}},{"type":"text","text":"Done."}],"model":"claude-opus-4-8"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, .. } => {
+                assert!(!content.is_empty(), "mixed assistant turn must not be empty");
+                assert_eq!(content, "Planning the approach.\nSkill: brainstorming\nDone.");
+                assert_eq!(blocks.len(), 3);
+                assert!(matches!(blocks[0], ContentBlock::Thinking { .. }));
+                assert!(matches!(blocks[1], ContentBlock::ToolUse { .. }));
+                assert!(matches!(blocks[2], ContentBlock::Text { .. }));
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_user_image_block_placeholder() {
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},{"type":"text","text":"see attached"}]}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, .. } => {
+                assert_eq!(content, "[image]\nsee attached");
+                assert_eq!(blocks, vec![
+                    ContentBlock::Image,
+                    ContentBlock::Text { text: "see attached".into() },
+                ]);
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_user_string_content_yields_single_text_block() {
+        let line = r#"{"type":"user","message":{"role":"user","content":"plain prompt"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, .. } => {
+                assert_eq!(content, "plain prompt");
+                assert_eq!(blocks, vec![ContentBlock::Text { text: "plain prompt".into() }]);
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn content_block_serializes_camel_case_internally_tagged() {
+        let b = ContentBlock::ToolUse { name: "Read".into(), input_summary: "/tmp/x".into() };
+        let j = serde_json::to_string(&b).unwrap();
+        assert!(j.contains("\"type\":\"toolUse\""), "got {j}");
+        assert!(j.contains("\"name\":\"Read\""));
+        assert!(j.contains("\"inputSummary\":\"/tmp/x\""));
+        let img = serde_json::to_string(&ContentBlock::Image).unwrap();
+        assert_eq!(img, "{\"type\":\"image\"}");
     }
 
     #[test]

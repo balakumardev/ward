@@ -262,7 +262,14 @@ fn classify_for_distill(rec: &SessionRecord) -> DistillAction {
         SessionRecord::AiTitle { .. } => DistillAction::Drop,
         SessionRecord::QueueOperation { .. } => DistillAction::PassThrough,
         SessionRecord::User { content, .. } => {
-            // We only need the textual content — drop image blocks.
+            // `content` is the flattened text derived from the structured
+            // blocks (tool_result / text / image). We keep any turn that
+            // carries text and drop only genuinely-empty ones. NOTE: this
+            // now preserves `tool_result` user turns — before the block
+            // parser landed they flattened to "" and were silently
+            // dropped, discarding what every tool returned. Keeping the
+            // derived text is the intended behavior (see
+            // `distill_keeps_tool_result_user_turn`).
             let cleaned = if content.trim().is_empty() { return DistillAction::Drop; } else { content.clone() };
             DistillAction::Rewritten(build_user_line(&cleaned))
         }
@@ -416,6 +423,36 @@ mod tests {
         assert!(cleaned.contains("queue-operation"), "queue-op must pass through: {cleaned}");
         assert!(cleaned.contains("compact_boundary"), "compact_boundary must pass through: {cleaned}");
         assert!(!cleaned.contains("hook_started"), "non-compact system records are dropped: {cleaned}");
+    }
+
+    #[test]
+    fn distill_keeps_tool_result_user_turn() {
+        // Coupling with the structured-block parser (Commit A): a user
+        // `tool_result` turn used to flatten to "" and get dropped here,
+        // silently discarding every tool output from the resumed
+        // conversation. Now that the parser populates the derived
+        // `content`, distill KEEPS it. This asserts that intended change.
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_session(dir.path(), "src.jsonl",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_9\",\"content\":\"BUILD SUCCEEDED in 4.2s\"}]}}\n");
+        let r = distill(&p).unwrap();
+        let cleaned = fs::read_to_string(&r.cleaned_path).unwrap();
+        assert!(
+            cleaned.contains("BUILD SUCCEEDED in 4.2s"),
+            "tool_result user turn must be preserved, got: {cleaned}"
+        );
+    }
+
+    #[test]
+    fn distill_keeps_assistant_tool_use_turn() {
+        // Likewise an assistant turn that is ONLY a `tool_use` block (no
+        // text) used to drop out; it now carries a `Bash: …` label.
+        let dir = tempfile::tempdir().unwrap();
+        let p = write_session(dir.path(), "src.jsonl",
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}}],\"model\":\"claude-opus-4-8\"}}\n");
+        let r = distill(&p).unwrap();
+        let cleaned = fs::read_to_string(&r.cleaned_path).unwrap();
+        assert!(cleaned.contains("Bash: cargo test"), "tool_use assistant turn preserved, got: {cleaned}");
     }
 
     #[test]
