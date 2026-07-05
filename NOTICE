@@ -16,3 +16,9 @@ were inspired by the open-source project:
 Ward reuses no verbatim source code from CCO; the backend is an independent
 Rust implementation and the frontend is an independent redesign. This notice
 is provided as a good-faith acknowledgment of CCO as the original inspiration.
+
+Ward's usage engine (src-tauri/src/usage/) ports the 5-hour session-block
+algorithm and pricing approach from ccusage (https://github.com/ryoppippi/ccusage,
+MIT © 2025 ryoppippi) and its Rust ports ccstat (MIT) and ccusage-in-rust
+(BSD-3-Clause). No source was copied verbatim; the algorithm was reimplemented
+for Ward's data model.

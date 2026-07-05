@@ -313,7 +313,8 @@ pub fn run() {
             commands::backup_scheduler_install,
             commands::backup_scheduler_remove,
             commands::autostart_status,
-            commands::autostart_set
+            commands::autostart_set,
+            commands::usage_snapshot
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

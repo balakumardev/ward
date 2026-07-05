@@ -515,6 +515,14 @@ pub fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), WardErr
     crate::native::autostart::set(&app, enabled)
 }
 
+// ── Usage engine (Plan 14) ───────────────────────────────────────────────
+
+/// Plan 14 — local usage snapshot (tokens/cost/reset) for a harness.
+#[tauri::command]
+pub fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
+    crate::usage::usage_snapshot(&harness)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

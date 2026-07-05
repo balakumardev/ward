@@ -88,6 +88,18 @@ pub struct UsageSnapshot {
     pub generated_at: String,
 }
 
+use crate::error::WardError;
+
+/// Dispatch to the per-harness usage engine. Unknown harness → error;
+/// a known harness with no data → `available: false` (not an error).
+pub fn usage_snapshot(harness: &str) -> Result<UsageSnapshot, WardError> {
+    match harness {
+        "claude" => claude::snapshot(),
+        "codex" => codex::snapshot(),
+        other => Err(WardError::HarnessUnavailable(other.to_string())),
+    }
+}
+
 /// Test-only lock serializing env-var mutation across the usage submodule
 /// tests (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`) so Rust's parallel test runner
 /// can't race two tests that set/read the same process-global var.
@@ -134,5 +146,22 @@ mod tests {
     #[test]
     fn source_rate_limits_serializes_camel() {
         assert_eq!(serde_json::to_string(&UsageSource::RateLimits).unwrap(), "\"rateLimits\"");
+    }
+
+    #[test]
+    fn dispatch_unknown_harness_errors() {
+        let err = usage_snapshot("nope").unwrap_err();
+        assert!(matches!(err, crate::error::WardError::HarnessUnavailable(_)));
+    }
+
+    #[test]
+    fn dispatch_codex_no_dir_is_unavailable_not_error() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("CODEX_HOME", dir.path());
+        let snap = usage_snapshot("codex").unwrap();
+        std::env::remove_var("CODEX_HOME");
+        assert_eq!(snap.harness, "codex");
+        assert!(!snap.available);
     }
 }
