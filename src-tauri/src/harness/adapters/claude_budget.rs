@@ -38,6 +38,10 @@ pub const SYSTEM_DEFERRED: usize = 7000;
 /// Search only pulls a server's schemas when the model invokes one of
 /// its tools). Estimated.
 pub const MCP_TOOL_SCHEMA: usize = 3100;
+/// Always-on MCP tool-*names* line (~120). Tool Search injects a short
+/// index of available tool names even though the full schemas stay
+/// deferred. Counted once when ≥1 enabled server exists. Estimated.
+pub const MCP_TOOL_NAMES: usize = 120;
 /// `<system-reminder>` wrapper tokens around injected CLAUDE.md.
 pub const CLAUDEMD_WRAPPER: usize = 100;
 /// One-time `<available_skills>` boilerplate the Skill tool injects when
@@ -83,9 +87,13 @@ pub struct BudgetBreakdown {
     pub output_style: usize,
     /// Deferred system tools (CCO `SYSTEM_DEFERRED`).
     pub system_deferred: usize,
-    /// Per-unique-server MCP schema tokens (CCO `MCP_TOOL_SCHEMA *
-    /// unique_servers`).
+    /// Per-unique-enabled-server MCP schema tokens
+    /// (`MCP_TOOL_SCHEMA * unique_servers`). DEFERRED — part of
+    /// `deferred_total`, NOT `used`.
     pub mcp_schemas: usize,
+    /// Always-on MCP tool-names line (`MCP_TOOL_NAMES` when ≥1 enabled
+    /// server exists, else 0). Part of `used`.
+    pub mcp_tool_names: usize,
     /// Sum of token-counted CLAUDE.md files (after `@import` expansion)
     /// plus `CLAUDEMD_WRAPPER`.
     pub claudemd: usize,
@@ -332,14 +340,17 @@ pub fn compose_with_limit(
     let scope_items: Vec<&HarnessItem> =
         items.iter().filter(|i| i.scope_id == scope_id).collect();
 
-    // ── MCP schemas ──
-    // Count once per unique server. Caller dedupes; we dedupe again as
-    // defense in depth (the test suite verifies the dedup contract).
+    // ── MCP ──
+    // Count once per unique enabled server. Caller dedupes + filters to
+    // enabled; we dedupe again as defense in depth. Tool schemas are
+    // DEFERRED (Tool Search pulls them on invoke); only a short
+    // tool-*names* index is always-on.
     let mut unique_servers: HashSet<&str> = HashSet::new();
     for s in mcp_servers {
         unique_servers.insert(s.as_str());
     }
     let mcp_schemas = unique_servers.len() * MCP_TOOL_SCHEMA;
+    let mcp_tool_names = if unique_servers.is_empty() { 0 } else { MCP_TOOL_NAMES };
 
     // ── CLAUDE.md files ──
     // Count ancestor CLAUDE.md / CLAUDE.local.md / managed items. The
@@ -528,23 +539,29 @@ pub fn compose_with_limit(
     let output_style = active_output_style_tokens(home, scope_id);
 
     // ── Totals ──
+    // Always-on `used` = system + output style + CLAUDE.md + the capped
+    // skill/agent listings + the always-on MCP tool-names line + the
+    // full-content always-loaded items (unscoped rules + MEMORY.md).
+    // MCP tool schemas + skill/command/agent bodies + scoped rules are
+    // DEFERRED and surfaced separately.
     let loaded_subtotal: usize = always_loaded_items.iter().map(|i| i.tokens).sum();
     let used = SYSTEM_LOADED
         + output_style
-        + mcp_schemas
+        + mcp_tool_names
         + claudemd_total
         + skill_listing
         + skill_boilerplate
         + agent_listing
         + loaded_subtotal;
     let deferred_bodies: usize = deferred_items.iter().map(|i| i.tokens).sum();
-    let deferred_total = SYSTEM_DEFERRED + deferred_bodies;
+    let deferred_total = SYSTEM_DEFERRED + mcp_schemas + deferred_bodies;
 
     BudgetBreakdown {
         system_loaded: SYSTEM_LOADED,
         output_style,
         system_deferred: SYSTEM_DEFERRED,
         mcp_schemas,
+        mcp_tool_names,
         claudemd: claudemd_total,
         claude_md_files,
         skill_listing,
@@ -562,6 +579,38 @@ pub fn compose_with_limit(
         used,
         context_limit,
     }
+}
+
+/// Unique names of the *enabled* MCP servers for a scope, sorted. A
+/// server is excluded when its own config carries `disabled: true` OR
+/// its name appears in `disabled_names` (the settings-level
+/// `disabledMcpjsonServers` list). This is what the budget composer
+/// should be handed as `mcp_servers` — only enabled servers cost tokens.
+pub fn enabled_mcp_servers(
+    items: &[HarnessItem],
+    scope_id: &str,
+    disabled_names: &HashSet<String>,
+) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for item in items {
+        if item.category != "mcp" || item.scope_id != scope_id {
+            continue;
+        }
+        if disabled_names.contains(&item.name) {
+            continue;
+        }
+        let disabled = item
+            .mcp_config
+            .as_ref()
+            .and_then(|c| c.get("disabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if disabled {
+            continue;
+        }
+        set.insert(item.name.clone());
+    }
+    set.into_iter().collect()
 }
 
 /// Returns true when `name` is an ancestor-hierarchy memory file the
@@ -979,8 +1028,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let items: Vec<HarnessItem> = vec![];
         let b = compose("global", &items, &["s1".into()], dir.path());
-        // system + mcp + wrapper (no claudemd files) + 0 always-loaded
-        assert_eq!(b.used, SYSTEM_LOADED + MCP_TOOL_SCHEMA + CLAUDEMD_WRAPPER);
+        // Always-on `used` = system + MCP tool-NAMES line + wrapper
+        // (no claudemd files, 0 always-loaded). MCP schemas are DEFERRED.
+        assert_eq!(b.used, SYSTEM_LOADED + MCP_TOOL_NAMES + CLAUDEMD_WRAPPER);
+        assert_eq!(b.deferred_total, SYSTEM_DEFERRED + MCP_TOOL_SCHEMA);
     }
 
     #[test]
@@ -1313,5 +1364,66 @@ mod tests {
         // 1% of a 1M model = 10,000 — a bigger cap than the 200K case.
         let b = compose_with_limit("global", &items, &[], home, 1_000_000);
         assert_eq!(b.skill_listing, 1_000_000 / 100);
+    }
+
+    // ── Commit 3: MCP schemas -> deferred + always-on tool-names line ──
+
+    #[test]
+    fn mcp_schemas_land_in_deferred_not_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let b = compose("global", &[], &["s1".into()], home);
+        // The 3100-token schema must NOT be part of always-on `used`.
+        assert!(
+            b.used < SYSTEM_LOADED + 1000,
+            "mcp schemas must not inflate used; got {}",
+            b.used
+        );
+        // It rides in the deferred figure alongside the deferred system
+        // tools.
+        assert_eq!(b.deferred_total, SYSTEM_DEFERRED + MCP_TOOL_SCHEMA);
+        // The short always-on tool-names line IS counted (once).
+        assert_eq!(b.mcp_tool_names, MCP_TOOL_NAMES);
+        assert_eq!(b.used, SYSTEM_LOADED + CLAUDEMD_WRAPPER + MCP_TOOL_NAMES);
+    }
+
+    #[test]
+    fn no_enabled_servers_means_no_tool_names_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = compose("global", &[], &[], dir.path());
+        assert_eq!(b.mcp_tool_names, 0);
+        assert_eq!(b.mcp_schemas, 0);
+    }
+
+    #[test]
+    fn enabled_mcp_servers_excludes_disabled() {
+        let mut disabled_flag = serde_json::Map::new();
+        disabled_flag.insert("command".into(), serde_json::json!("x"));
+        disabled_flag.insert("disabled".into(), serde_json::json!(true));
+        let items = vec![
+            {
+                let mut it = item("mcp", "global", "github", "/p");
+                it.mcp_config = Some(serde_json::json!({"command": "gh"}));
+                it
+            },
+            {
+                // Per-server disabled flag.
+                let mut it = item("mcp", "global", "off-server", "/p");
+                it.mcp_config = Some(serde_json::Value::Object(disabled_flag));
+                it
+            },
+            {
+                // Disabled via the settings-level list.
+                let mut it = item("mcp", "global", "listed-off", "/p");
+                it.mcp_config = Some(serde_json::json!({"command": "x"}));
+                it
+            },
+            // Wrong scope — excluded.
+            item("mcp", "other", "elsewhere", "/p"),
+        ];
+        let mut disabled_names: HashSet<String> = HashSet::new();
+        disabled_names.insert("listed-off".into());
+        let enabled = enabled_mcp_servers(&items, "global", &disabled_names);
+        assert_eq!(enabled, vec!["github".to_string()]);
     }
 }

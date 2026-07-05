@@ -296,18 +296,42 @@ pub fn context_budget(
     let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
     let registry = build_registry();
     let result = scan_impl(&registry, &home, &harness)?;
-    // Collect unique MCP server names from the scope (we keep this
-    // strict to the requested scope for parity with CCO's per-scope
-    // view — inherited scopes would be a Plan 06+ extension).
-    let mut unique_servers: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
-    for item in &result.items {
-        if item.category == "mcp" && item.scope_id == scope_id {
-            unique_servers.insert(item.name.clone());
+    // Only ENABLED MCP servers cost tokens. Exclude per-server
+    // `disabled: true` and the settings-level `disabledMcpjsonServers`
+    // list for the scope. (Strict to the requested scope, matching CCO's
+    // per-scope view.)
+    let disabled_names = read_disabled_mcp_names(&home, &scope_id);
+    let servers_vec = budget::enabled_mcp_servers(&result.items, &scope_id, &disabled_names);
+    Ok(budget::compose(&scope_id, &result.items, &servers_vec, &home))
+}
+
+/// Read the settings-level `disabledMcpjsonServers` list for a scope.
+/// Global settings live at `~/.claude/settings{,.local}.json`; the union
+/// of both is returned. Project scopes aren't resolvable from home +
+/// scope_id alone here, so they return an empty set (per-server
+/// `disabled` flags still apply via `enabled_mcp_servers`).
+fn read_disabled_mcp_names(
+    home: &Path,
+    scope_id: &str,
+) -> std::collections::HashSet<String> {
+    let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if scope_id != "global" {
+        return out;
+    }
+    let claude = home.join(".claude");
+    for f in ["settings.json", "settings.local.json"] {
+        let p = claude.join(f);
+        let Ok(content) = std::fs::read_to_string(&p) else { continue };
+        let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
+        if let Some(arr) = cfg.get("disabledMcpjsonServers").and_then(|v| v.as_array()) {
+            for v in arr {
+                if let Some(name) = v.as_str() {
+                    out.insert(name.to_string());
+                }
+            }
         }
     }
-    let servers_vec: Vec<String> = unique_servers.into_iter().collect();
-    Ok(budget::compose(&scope_id, &result.items, &servers_vec, &home))
+    out
 }
 
 // ── Sessions mode (Plan 07) ─────────────────────────────────────────────
