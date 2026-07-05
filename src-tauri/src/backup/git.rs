@@ -163,6 +163,8 @@ pub struct ExportReport {
 ///
 /// Symlinks are NOT followed — we read the link itself and skip
 /// rather than recursing, to avoid copying outside the backup dir.
+/// Nested `.git` directories are skipped entirely so embedded repos
+/// under `~/.claude/` are never recorded as gitlinks (mode 160000).
 pub fn export_to_repo(source: &Path, repo_dir: &Path) -> Result<ExportReport, WardError> {
     let mut report = ExportReport::default();
     if !source.exists() {
@@ -187,6 +189,14 @@ fn copy_tree(src: &Path, dst: &Path, report: &mut ExportReport) -> Result<(), Wa
         ensure_dir(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
+            // Skip nested `.git` directories. Several dirs under
+            // `~/.claude/` (e.g. `memory/`) are their own git repos;
+            // copying their `.git/` would make the outer `git add -A`
+            // record them as gitlinks (mode 160000) instead of backing
+            // up the real files — silently losing the actual content.
+            if entry.file_name() == ".git" {
+                continue;
+            }
             let child_src = entry.path();
             let child_dst = dst.join(entry.file_name());
             copy_tree(&child_src, &child_dst, report)?;
@@ -629,6 +639,62 @@ mod tests {
         assert!(report.bytes_copied > 0);
         assert!(repo_dir(&bd).join("CLAUDE.md").exists());
         assert!(repo_dir(&bd).join("agents/a.md").exists());
+    }
+
+    #[test]
+    fn export_skips_nested_git_dirs() {
+        // Regression: several dirs under `~/.claude/` (e.g. `memory/`) are
+        // themselves git repos. If copy_tree recurses into their `.git/`,
+        // the outer `git add -A` records each as a gitlink (mode 160000)
+        // instead of backing up the real files — so those files are
+        // silently NOT backed up (only an unrestorable SHA).
+        //
+        // NOTE: this test builds a REAL committed nested repo. A bare
+        // `.git/HEAD` file is NOT sufficient to reproduce the bug — git
+        // only records a gitlink when `.git` resolves to a valid
+        // repository, so a stub `HEAD` would pass both before and after
+        // the fix (verified empirically). The real repo makes the test
+        // genuinely fail before the copy_tree `.git` skip and pass after.
+        let src = tempfile::tempdir().unwrap();
+        let backup_root = tempfile::tempdir().unwrap();
+        let bd = backup_dir_at(backup_root.path()).unwrap();
+        init(repo_dir(&bd), "ward", "ward@local").unwrap();
+
+        // Build ~/.claude/memory/ as its own committed git repo.
+        let mem = src.path().join(".claude/memory");
+        fs::create_dir_all(&mem).unwrap();
+        fs::write(mem.join("note.md"), "important memory\n").unwrap();
+        git(&mem, &["init", "-b", "main"]).unwrap();
+        git(&mem, &["config", "--local", "user.name", "nested"]).unwrap();
+        git(&mem, &["config", "--local", "user.email", "nested@local"]).unwrap();
+        git(&mem, &["add", "-A"]).unwrap();
+        git(&mem, &["commit", "-m", "seed"]).unwrap();
+        assert!(mem.join(".git").exists());
+
+        // Export the ~/.claude tree into the backup repo, then commit.
+        export_to_repo(&src.path().join(".claude"), repo_dir(&bd)).unwrap();
+        let ci = commit(repo_dir(&bd), "backup").unwrap();
+        assert!(ci.committed);
+
+        // The nested repo's real file must be backed up …
+        assert!(
+            repo_dir(&bd).join("memory/note.md").exists(),
+            "nested repo's real file must be copied into the backup"
+        );
+        // … its `.git` dir must NOT have been copied …
+        assert!(
+            !repo_dir(&bd).join("memory/.git").exists(),
+            "nested .git dir must be skipped, never copied"
+        );
+        // … and NOTHING may be recorded as a gitlink (mode 160000).
+        let ls = git_capture_stdout(repo_dir(&bd), &["ls-files", "-s"]).unwrap();
+        let gitlinks = ls.lines().filter(|l| l.starts_with("160000")).count();
+        assert_eq!(gitlinks, 0, "no gitlinks allowed; ls-files -s:\n{ls}");
+        // Positive: the file is tracked as a normal blob.
+        assert!(
+            ls.lines().any(|l| l.contains("memory/note.md")),
+            "memory/note.md must be tracked as a blob; ls-files -s:\n{ls}"
+        );
     }
 
     #[test]
