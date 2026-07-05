@@ -44,6 +44,11 @@ pub struct CliArgs {
     /// presence.
     #[arg(long)]
     pub mcp: bool,
+    /// GUI-only: start hidden to the menu bar. Passed by the
+    /// launch-at-login LaunchAgent (Plan 13) so Ward boots into the
+    /// tray without stealing focus. NOT a headless subcommand.
+    #[arg(long)]
+    pub start_hidden: bool,
 }
 
 /// Parse `argv` (excluding the binary name) into `CliArgs`.
@@ -215,6 +220,7 @@ mod tests {
             security_scan: false,
             backup_once: None,
             mcp: false,
+            start_hidden: false,
         });
     }
 
@@ -244,6 +250,14 @@ mod tests {
         let args = parse_from(["ward", "--mcp"]).unwrap();
         assert!(args.mcp);
         assert!(is_headless(&args));
+    }
+
+    #[test]
+    fn parses_start_hidden_flag() {
+        let args = parse_from(["ward", "--start-hidden"]).unwrap();
+        assert!(args.start_hidden);
+        // GUI-only: must NOT be treated as a headless subcommand.
+        assert!(!is_headless(&args));
     }
 
     #[test]

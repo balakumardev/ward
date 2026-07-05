@@ -213,6 +213,16 @@ pub fn run() {
                 }
             }
 
+            // Launch-at-login UX (Plan 13): when the LaunchAgent starts
+            // Ward with `--start-hidden`, hide the main window so it boots
+            // into the menu bar instead of stealing focus. Reopen via the
+            // tray "Open Ward" menu item.
+            if std::env::args().any(|a| a == "--start-hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             // Start the fs watcher (Plan 10). Stash the keepalive
             // handle in app-managed state.
             if let Some(handle) = start_watcher(app.handle().clone()) {
