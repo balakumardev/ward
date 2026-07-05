@@ -523,6 +523,23 @@ pub fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, Wa
     crate::usage::usage_snapshot(&harness)
 }
 
+// ── Native shell status (Plan 15) ────────────────────────────────────────
+
+/// Plan 15 — push the latest scan's critical count to the dock badge + tray tooltip.
+#[tauri::command]
+pub fn native_update_status(
+    app: tauri::AppHandle,
+    critical: usize,
+    last_scan_at: Option<String>,
+) -> Result<(), WardError> {
+    crate::native::tray::update_badge(&app, critical);
+    if let Some(tray) = app.tray_by_id("ward-tray") {
+        let tip = crate::native::tray::format_tooltip(critical, last_scan_at.as_deref());
+        let _ = tray.set_tooltip(Some(tip));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

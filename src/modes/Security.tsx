@@ -1,8 +1,8 @@
 import '../styles/security.css';
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import type { Finding, Severity, HarnessItem, RestoreInfo } from '../api';
-import { api } from '../api';
+import { api, isTauri } from '../api';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low'];
 /** severity → tint class (defined in security.css); sets --sev/--sev-bg. */
@@ -58,6 +58,17 @@ export function Security(props: {
   });
   onCleanup(() => {
     if (unlistenScan) unlistenScan();
+  });
+
+  // Plan 15 — push each resolved scan's critical count to the native
+  // dock badge + tray tooltip. Runs on every scan (initial + every
+  // refetch). No-op outside the Tauri webview so dev:mock/jsdom don't
+  // invoke a backend command that isn't there.
+  createEffect(() => {
+    const r = scan();
+    if (r && isTauri()) {
+      void api.nativeUpdateStatus(r.severityCounts.critical, r.timestamp);
+    }
   });
 
   const sortedFindings = createMemo(() => {
