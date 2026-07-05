@@ -258,6 +258,7 @@ mod tests {
 
     #[test]
     fn snapshot_unavailable_when_no_dir() {
+        let _env = crate::usage::ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("CLAUDE_CONFIG_DIR", dir.path());
         let snap = snapshot().unwrap();
@@ -269,6 +270,7 @@ mod tests {
 
     #[test]
     fn snapshot_aggregates_recent_entries_into_block_and_week() {
+        let _env = crate::usage::ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
         // two recent messages (now-ish); use a fixed recent ISO within 5h.

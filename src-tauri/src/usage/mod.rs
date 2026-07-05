@@ -88,6 +88,12 @@ pub struct UsageSnapshot {
     pub generated_at: String,
 }
 
+/// Test-only lock serializing env-var mutation across the usage submodule
+/// tests (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`) so Rust's parallel test runner
+/// can't race two tests that set/read the same process-global var.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
