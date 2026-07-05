@@ -1,0 +1,618 @@
+{
+  "harnessId": "claude",
+  "categories": [
+    {
+      "id": "skill",
+      "label": "Skills",
+      "count": 8
+    },
+    {
+      "id": "memory",
+      "label": "Memories",
+      "count": 4
+    },
+    {
+      "id": "mcp",
+      "label": "MCP",
+      "count": 5
+    },
+    {
+      "id": "command",
+      "label": "Commands",
+      "count": 4
+    },
+    {
+      "id": "agent",
+      "label": "Agents",
+      "count": 0
+    },
+    {
+      "id": "plan",
+      "label": "Plans",
+      "count": 3
+    },
+    {
+      "id": "rule",
+      "label": "Rules",
+      "count": 0
+    },
+    {
+      "id": "config",
+      "label": "Config",
+      "count": 5
+    },
+    {
+      "id": "hook",
+      "label": "Hooks",
+      "count": 4
+    },
+    {
+      "id": "plugin",
+      "label": "Plugins",
+      "count": 6
+    },
+    {
+      "id": "session",
+      "label": "Sessions",
+      "count": 5
+    },
+    {
+      "id": "setting",
+      "label": "Settings",
+      "count": 6
+    }
+  ],
+  "scopes": [
+    {
+      "id": "global",
+      "kind": "global",
+      "label": "Global (~/.claude)",
+      "root": "/Users/you/.claude"
+    },
+    {
+      "id": "-Users-you-personal-example-app",
+      "kind": "project",
+      "label": "example-app",
+      "root": "/Users/you/personal/example-app"
+    },
+    {
+      "id": "-Users-you-personal-web-dashboard",
+      "kind": "project",
+      "label": "web-dashboard",
+      "root": "/Users/you/personal/web-dashboard"
+    },
+    {
+      "id": "-Users-you-work-api-service",
+      "kind": "project",
+      "label": "api-service",
+      "root": "/Users/you/work/api-service"
+    },
+    {
+      "id": "-Users-you-archived-old-proj",
+      "kind": "project-unresolved",
+      "label": "old-proj",
+      "root": "/Users/you/archived/old-proj"
+    }
+  ],
+  "items": [
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "pdf",
+      "path": "/Users/you/.claude/skills/pdf/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "browser-testing",
+      "path": "/Users/you/.claude/skills/browser-testing/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "deploy-helper",
+      "path": "/Users/you/.claude/skills/deploy-helper/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "changelog",
+      "path": "/Users/you/.claude/skills/changelog/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "commit-writer",
+      "path": "/Users/you/.claude/skills/commit-writer/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "api-designer",
+      "path": "/Users/you/.claude/skills/api-designer/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "test-runner",
+      "path": "/Users/you/.claude/skills/test-runner/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "skill",
+      "scopeId": "global",
+      "name": "doc-gen",
+      "path": "/Users/you/.claude/skills/doc-gen/SKILL.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "memory",
+      "scopeId": "global",
+      "name": "coding-style",
+      "path": "/Users/you/.claude/memory/coding-style.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "memory",
+      "scopeId": "global",
+      "name": "preferred-stack",
+      "path": "/Users/you/.claude/memory/preferred-stack.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "memory",
+      "scopeId": "global",
+      "name": "review-checklist",
+      "path": "/Users/you/.claude/memory/review-checklist.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "memory",
+      "scopeId": "global",
+      "name": "glossary",
+      "path": "/Users/you/.claude/memory/glossary.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "mcp",
+      "scopeId": "global",
+      "name": "context7",
+      "description": "npx -y @upstash/context7-mcp@latest",
+      "path": "/Users/you/.claude.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "mcpConfig": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@upstash/context7-mcp@latest"
+        ],
+        "env": {}
+      }
+    },
+    {
+      "category": "mcp",
+      "scopeId": "global",
+      "name": "filesystem",
+      "description": "npx -y @modelcontextprotocol/server-filesystem /Users/you/projects",
+      "path": "/Users/you/.claude.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "mcpConfig": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/Users/you/projects"
+        ],
+        "env": {}
+      }
+    },
+    {
+      "category": "mcp",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "demo-postgres",
+      "description": "npx -y @example/mcp-postgres",
+      "path": "/Users/you/personal/example-app/.mcp.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "mcpConfig": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@example/mcp-postgres"
+        ],
+        "env": {
+          "DATABASE_URL": "postgresql://localhost:5432/example_db"
+        }
+      }
+    },
+    {
+      "category": "mcp",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "demo-github",
+      "description": "npx -y @modelcontextprotocol/server-github",
+      "path": "/Users/you/personal/example-app/.mcp.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "mcpConfig": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-github"
+        ],
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+        }
+      }
+    },
+    {
+      "category": "mcp",
+      "scopeId": "-Users-you-personal-web-dashboard",
+      "name": "fetch",
+      "description": "npx -y @example/mcp-fetch",
+      "path": "/Users/you/personal/web-dashboard/.mcp.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "mcpConfig": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@example/mcp-fetch"
+        ],
+        "env": {}
+      }
+    },
+    {
+      "category": "command",
+      "scopeId": "global",
+      "name": "deploy",
+      "description": "Build and deploy the app",
+      "path": "/Users/you/.claude/commands/deploy.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "command",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "deploy",
+      "description": "Project-specific deploy",
+      "path": "/Users/you/personal/example-app/.claude/commands/deploy.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "effective": "conflict"
+    },
+    {
+      "category": "command",
+      "scopeId": "global",
+      "name": "review",
+      "description": "Review the current diff",
+      "path": "/Users/you/.claude/commands/review.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "command",
+      "scopeId": "global",
+      "name": "test",
+      "description": "Run the test suite",
+      "path": "/Users/you/.claude/commands/test.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plan",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "2026-06-01-auth",
+      "path": "/Users/you/personal/example-app/docs/plans/2026-06-01-auth.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plan",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "2026-06-14-billing",
+      "path": "/Users/you/personal/example-app/docs/plans/2026-06-14-billing.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plan",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "2026-06-28-search",
+      "path": "/Users/you/personal/example-app/docs/plans/2026-06-28-search.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "config",
+      "scopeId": "global",
+      "name": "CLAUDE.md",
+      "path": "/Users/you/.claude/CLAUDE.md",
+      "movable": false,
+      "deletable": true,
+      "locked": true
+    },
+    {
+      "category": "config",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "CLAUDE.md",
+      "path": "/Users/you/personal/example-app/CLAUDE.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "config",
+      "scopeId": "-Users-you-personal-web-dashboard",
+      "name": "CLAUDE.md",
+      "path": "/Users/you/personal/web-dashboard/CLAUDE.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "config",
+      "scopeId": "-Users-you-work-api-service",
+      "name": "CLAUDE.md",
+      "path": "/Users/you/work/api-service/CLAUDE.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "config",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "AGENTS.md",
+      "path": "/Users/you/personal/example-app/AGENTS.md",
+      "movable": true,
+      "deletable": true,
+      "locked": false,
+      "effective": "shadowed"
+    },
+    {
+      "category": "hook",
+      "scopeId": "global",
+      "name": "PreToolUse",
+      "description": "format staged files before edits",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "hook",
+      "scopeId": "global",
+      "name": "PostToolUse",
+      "description": "run linter after writes",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "hook",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "Stop",
+      "description": "notify on session end",
+      "path": "/Users/you/personal/example-app/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "hook",
+      "scopeId": "-Users-you-work-api-service",
+      "name": "PreToolUse",
+      "description": "block edits to migrations",
+      "path": "/Users/you/work/api-service/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "superpowers",
+      "path": "/Users/you/.claude/plugins/superpowers",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "frontend-design",
+      "path": "/Users/you/.claude/plugins/frontend-design",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "code-review",
+      "path": "/Users/you/.claude/plugins/code-review",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "visual-explainer",
+      "path": "/Users/you/.claude/plugins/visual-explainer",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "skill-creator",
+      "path": "/Users/you/.claude/plugins/skill-creator",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "plugin",
+      "scopeId": "global",
+      "name": "dataviz",
+      "path": "/Users/you/.claude/plugins/dataviz",
+      "movable": false,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "session",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "a1b2c3",
+      "path": "/Users/you/.claude/projects/-Users-you-personal-example-app/a1b2c3.jsonl",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "session",
+      "scopeId": "-Users-you-personal-web-dashboard",
+      "name": "d4e5f6",
+      "path": "/Users/you/.claude/projects/-Users-you-personal-web-dashboard/d4e5f6.jsonl",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "session",
+      "scopeId": "-Users-you-work-api-service",
+      "name": "071819",
+      "path": "/Users/you/.claude/projects/-Users-you-work-api-service/071819.jsonl",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "session",
+      "scopeId": "-Users-you-personal-example-app",
+      "name": "2a3b4c",
+      "path": "/Users/you/.claude/projects/-Users-you-personal-example-app/2a3b4c.jsonl",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "session",
+      "scopeId": "-Users-you-personal-web-dashboard",
+      "name": "5d6e7f",
+      "path": "/Users/you/.claude/projects/-Users-you-personal-web-dashboard/5d6e7f.jsonl",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "model",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "theme",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "permissions.allow",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": true
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "env.DEBUG",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "statusLine",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    },
+    {
+      "category": "setting",
+      "scopeId": "global",
+      "name": "autoUpdates",
+      "path": "/Users/you/.claude/settings.json",
+      "movable": true,
+      "deletable": true,
+      "locked": false
+    }
+  ],
+  "capabilities": {
+    "contextBudget": true,
+    "mcpControls": true,
+    "mcpPolicy": true,
+    "mcpSecurity": true,
+    "sessions": true,
+    "effective": true,
+    "backup": true
+  }
+}
