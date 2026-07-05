@@ -204,6 +204,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--start-hidden"]),
         ))
+        .plugin(tauri_plugin_positioner::init())
         .setup(|app| {
             // Menu-bar tray (Plan 10). Build it after the app is
             // initialised so the window icon is available. We hold
@@ -216,6 +217,27 @@ pub fn run() {
                 Err(e) => {
                     eprintln!("ward: tray setup failed: {e}");
                 }
+            }
+
+            // Glance popover window (Plan 15): a small decorationless webview
+            // that loads the same bundle; `index.tsx` renders <Popover> for the
+            // "popover" label. Hidden until the tray icon is left-clicked.
+            match tauri::WebviewWindowBuilder::new(
+                app,
+                "popover",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Ward")
+            .inner_size(320.0, 300.0)
+            .resizable(false)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible(false)
+            .build()
+            {
+                Ok(_) => {}
+                Err(e) => eprintln!("ward: popover window setup failed: {e}"),
             }
 
             // Launch-at-login UX (Plan 13): when the LaunchAgent starts
@@ -271,15 +293,21 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Close-to-tray (Plan 13): the red button / ⌘W hides the
-            // window to the menu bar; only a genuine quit closes it.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if crate::native::lifecycle::should_hide_on_close(
-                    crate::native::lifecycle::is_quitting(),
-                ) {
-                    let _ = window.hide();
-                    api.prevent_close();
+            match event {
+                // Close-to-tray (Plan 13): red button / ⌘W hides; only a real quit closes.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if crate::native::lifecycle::should_hide_on_close(
+                        crate::native::lifecycle::is_quitting(),
+                    ) {
+                        let _ = window.hide();
+                        api.prevent_close();
+                    }
                 }
+                // Popover (Plan 15): hide when it loses focus, like a native menu-bar popover.
+                tauri::WindowEvent::Focused(false) if window.label() == "popover" => {
+                    let _ = window.hide();
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![

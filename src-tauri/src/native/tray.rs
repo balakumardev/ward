@@ -11,7 +11,7 @@
 //! pure logic bits: state, formatters, and the dock-badge payload).
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 use crate::error::WardError;
@@ -38,7 +38,7 @@ pub fn build_menu<R: Runtime>(app: &App<R>) -> Result<Menu<R>, WardError> {
 /// `TrayIcon` so the caller can hold it (drop = icon disappears).
 ///
 /// Wires:
-///   - Left-click on the icon → `tray_clicked` event (with coords).
+///   - Left-click on the icon → toggle the tray-anchored popover window.
 ///   - Right-click menu items → `tray_action` event with the menu id.
 pub fn setup<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, WardError> {
     let menu = build_menu(app)?;
@@ -60,10 +60,21 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, WardError> {
             let _ = app.emit("tray_action", event.id().0.clone());
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button_state, .. } = event {
-                if matches!(button_state, MouseButtonState::Up) {
+            // Let the positioner cache the tray-icon rect for TrayCenter anchoring.
+            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+            if let TrayIconEvent::Click { button, button_state, .. } = event {
+                if matches!(button, MouseButton::Left) && matches!(button_state, MouseButtonState::Up) {
                     let app = tray.app_handle();
-                    let _ = app.emit("tray_clicked", ());
+                    if let Some(win) = app.get_webview_window("popover") {
+                        if win.is_visible().unwrap_or(false) {
+                            let _ = win.hide();
+                        } else {
+                            use tauri_plugin_positioner::{Position, WindowExt};
+                            let _ = win.move_window(Position::TrayCenter);
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
                 }
             }
         })
