@@ -30,27 +30,39 @@ use crate::tokenizer::{self, TokenCount};
 
 /// System overhead — always injected. Real measurements range 14.8K
 /// (Sonnet 200K) to 20.2K (Opus 200K). We use 18K as a middle-ground.
+/// Estimated (labeled as such in the UI); do not tune without re-measuring.
 pub const SYSTEM_LOADED: usize = 18000;
-/// Tools kept "deferred" until invoked via ToolSearch (~7K).
+/// Tools kept "deferred" until invoked via ToolSearch (~7K). Estimated.
 pub const SYSTEM_DEFERRED: usize = 7000;
-/// Per-unique-server tool schema footprint when ToolSearch is active.
+/// Per-unique-server tool schema footprint, DEFERRED by default (Tool
+/// Search only pulls a server's schemas when the model invokes one of
+/// its tools). Estimated.
 pub const MCP_TOOL_SCHEMA: usize = 3100;
 /// `<system-reminder>` wrapper tokens around injected CLAUDE.md.
 pub const CLAUDEMD_WRAPPER: usize = 100;
-/// Reserved headroom for autocompact to do its work.
+/// First-N-lines cap Claude Code applies when loading a `MEMORY.md`
+/// index into always-on context.
+pub const MEMORY_MAX_LINES: usize = 200;
+/// Byte cap applied (after the line cap) to a loaded `MEMORY.md` index.
+pub const MEMORY_MAX_BYTES: usize = 25_000;
+/// Reserved headroom for autocompact to do its work. Estimated.
 pub const AUTOCOMPACT_BUFFER: usize = 13000;
-/// Free space below which Claude Code starts warning the user.
+/// Free space below which Claude Code starts warning the user. Estimated.
 pub const WARNING_THRESHOLD: usize = 20000;
-/// Reserved for the model's response.
+/// Reserved for the model's response. Estimated.
 pub const MAX_OUTPUT: usize = 32000;
+/// Default model context window (Claude Sonnet/Opus 200K). NOT hardcoded
+/// at the call sites — `compose_with_limit` accepts any limit (e.g. a
+/// 1M-token model) and scales the skill-listing budget off it.
+pub const DEFAULT_CONTEXT_LIMIT: usize = 200_000;
 
 /// Categories Claude Code always injects at session start. Everything
 /// in this set is counted into `always_loaded_items`.
 pub const ALWAYS_LOADED_CATEGORIES: &[&str] = &["skill", "rule", "command", "agent"];
 
-/// Hard cap on `@import` expansion hops. Matches CCO. Anything past this
-/// depth is returned verbatim (no further recursion).
-pub const MAX_IMPORT_DEPTH: u8 = 5;
+/// Hard cap on `@import` expansion hops. Claude Code follows imports up
+/// to 4 hops; anything past this depth is returned verbatim.
+pub const MAX_IMPORT_DEPTH: u8 = 4;
 
 // ── Wire types ────────────────────────────────────────────────────────
 
@@ -60,6 +72,9 @@ pub const MAX_IMPORT_DEPTH: u8 = 5;
 #[serde(rename_all = "camelCase")]
 pub struct BudgetBreakdown {
     pub system_loaded: usize,
+    /// Text of an active non-default output style, folded into the
+    /// always-on system overhead (0 when the default style is active).
+    pub output_style: usize,
     /// Deferred system tools (CCO `SYSTEM_DEFERRED`).
     pub system_deferred: usize,
     /// Per-unique-server MCP schema tokens (CCO `MCP_TOOL_SCHEMA *
@@ -85,7 +100,8 @@ pub struct BudgetBreakdown {
     /// Total tokens used by always-loaded + system overhead. Used by
     /// the meter.
     pub used: usize,
-    /// Total available context (200K model).
+    /// Total available context (200K default, but any model limit —
+    /// e.g. a 1M-token model — flows through `compose_with_limit`).
     pub context_limit: usize,
 }
 
@@ -138,8 +154,22 @@ pub fn expand_imports(
         return content.to_string();
     }
     let mut out_lines: Vec<String> = Vec::new();
+    // Track fenced code blocks (``` or ~~~). `@import` lines inside a
+    // fence — or written as an inline code span (`` `@path` ``) — are
+    // examples, not real imports, and Claude Code leaves them verbatim.
+    let mut in_fence = false;
     for line in content.lines() {
         let trimmed = line.trim_start();
+        if is_code_fence(trimmed) {
+            in_fence = !in_fence;
+            out_lines.push(line.to_string());
+            continue;
+        }
+        if in_fence || trimmed.starts_with('`') {
+            // Inside a fenced block or an inline code span — keep verbatim.
+            out_lines.push(line.to_string());
+            continue;
+        }
         // Match `@<path>` where <path> starts at the first non-@ char.
         // We intentionally do NOT match indented `@` (e.g. inside code
         // blocks); CCO also matches line-leading `@` only.
@@ -208,19 +238,69 @@ fn normalize_path(p: &Path) -> PathBuf {
     out
 }
 
+/// True when a (leading-trimmed) line opens or closes a Markdown code
+/// fence — three-or-more backticks or tildes, optionally followed by an
+/// info string.
+fn is_code_fence(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    (bytes.starts_with(b"```") ) || (bytes.starts_with(b"~~~"))
+}
+
+/// Strip block-level HTML comments (`<!-- … -->`, possibly multi-line)
+/// before tokenizing. Official docs: Claude Code strips these before
+/// injecting CLAUDE.md / rules into context, so they cost no tokens.
+pub fn strip_html_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end_rel) => {
+                // Skip the comment including the closing `-->`.
+                rest = &rest[start + end_rel + 3..];
+            }
+            None => {
+                // Unterminated comment — drop the remainder (matches the
+                // non-greedy `<!--[\s\S]*?-->` intent: nothing after an
+                // open-without-close survives).
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 // ── Composition ──────────────────────────────────────────────────────
 
-/// Compute the per-scope context budget.
+/// Compute the per-scope context budget for the default 200K model.
 ///
-/// `items` may contain items from any scope — we filter to `scope_id`
-/// internally so callers don't have to. `mcp_servers` MUST already be
-/// deduplicated by the caller (the plan requires counting per UNIQUE
-/// server, not per item).
+/// Thin wrapper over [`compose_with_limit`] — see it for the full
+/// model. Existing call sites (and the 200K UI) use this.
 pub fn compose(
     scope_id: &str,
     items: &[HarnessItem],
     mcp_servers: &[String],
     home: &Path,
+) -> BudgetBreakdown {
+    compose_with_limit(scope_id, items, mcp_servers, home, DEFAULT_CONTEXT_LIMIT)
+}
+
+/// Compute the per-scope context budget against an explicit
+/// `context_limit` (so a 1M-token model scales the same code path —
+/// the skill-listing budget is `SKILL_LISTING_BUDGET_PCT %` of *this*
+/// limit, never a hardcoded 200K).
+///
+/// `items` may contain items from any scope — we filter to `scope_id`
+/// internally so callers don't have to. `mcp_servers` MUST already be
+/// deduplicated AND filtered to *enabled* servers by the caller.
+pub fn compose_with_limit(
+    scope_id: &str,
+    items: &[HarnessItem],
+    mcp_servers: &[String],
+    home: &Path,
+    context_limit: usize,
 ) -> BudgetBreakdown {
     let scope_items: Vec<&HarnessItem> =
         items.iter().filter(|i| i.scope_id == scope_id).collect();
@@ -235,14 +315,20 @@ pub fn compose(
     let mcp_schemas = unique_servers.len() * MCP_TOOL_SCHEMA;
 
     // ── CLAUDE.md files ──
-    // Count items named "CLAUDE.md" (covers root ~/.claude/CLAUDE.md
-    // scanned under memory) OR ".claude/CLAUDE.md" (scanned under
-    // config). Tokens are taken AFTER @import expansion to mirror CCO's
-    // composition, which inlines imports before injection.
+    // Count ancestor CLAUDE.md / CLAUDE.local.md / managed items. The
+    // same path can surface under both `memory` and `config` categories
+    // (the scanner emits it in each) — dedupe by path so it's counted
+    // ONCE. Tokens are taken AFTER @import expansion + HTML-comment
+    // stripping to mirror what Claude Code injects.
     let mut claude_md_files: Vec<BudgetFile> = Vec::new();
     let mut claudemd_total: usize = CLAUDEMD_WRAPPER;
+    let mut seen_md_paths: HashSet<String> = HashSet::new();
     for item in &scope_items {
         if !is_claudemd_name(&item.name) {
+            continue;
+        }
+        if !seen_md_paths.insert(item.path.clone()) {
+            // Already counted this exact file under another category.
             continue;
         }
         let path = PathBuf::from(&item.path);
@@ -283,12 +369,34 @@ pub fn compose(
         });
     }
 
+    // ── MEMORY.md index (always-on, first 200 lines / 25 KB) ──
+    // The scanner deliberately excludes MEMORY.md from the item list
+    // (it isn't user-managed like the topic files), so we read it here
+    // straight from the scope's memory dir — porting CCO's
+    // `addMemoryIndexFiles`.
+    if let Some(mem_path) = memory_index_path(home, scope_id) {
+        if let Ok(count) = count_memory_index(&mem_path) {
+            if count.tokens > 0 {
+                always_loaded_items.push(BudgetItem {
+                    category: "memory".into(),
+                    name: "MEMORY.md".into(),
+                    tokens: count.tokens,
+                    measured: count.measured,
+                });
+            }
+        }
+    }
+
+    // ── Active output style (folds into system overhead) ──
+    let output_style = active_output_style_tokens(home, scope_id);
+
     // ── Total ──
     let loaded_subtotal: usize = always_loaded_items.iter().map(|i| i.tokens).sum();
-    let used = SYSTEM_LOADED + mcp_schemas + claudemd_total + loaded_subtotal;
+    let used = SYSTEM_LOADED + output_style + mcp_schemas + claudemd_total + loaded_subtotal;
 
     BudgetBreakdown {
         system_loaded: SYSTEM_LOADED,
+        output_style,
         system_deferred: SYSTEM_DEFERRED,
         mcp_schemas,
         claudemd: claudemd_total,
@@ -299,27 +407,125 @@ pub fn compose(
         warning_threshold: WARNING_THRESHOLD,
         measured: tokenizer::active_tokenizer() == crate::tokenizer::TokenizerKind::Tiktoken,
         used,
-        context_limit: 200_000,
+        context_limit,
     }
 }
 
-/// Returns true when `name` looks like a CLAUDE.md the loader would
-/// inject. Both `CLAUDE.md` (root, scanned under `memory`) and
-/// `.claude/CLAUDE.md` (scanned under `config`) match.
+/// Returns true when `name` is an ancestor-hierarchy memory file the
+/// loader injects at session start: the root/repo `CLAUDE.md`, the
+/// project-local `CLAUDE.local.md`, an enterprise-managed variant, or
+/// the `.claude/CLAUDE.md` (scanned under `config`). Nested/subdir
+/// CLAUDE.md files are NOT ancestor memory and never match here (the
+/// scanner only emits ancestor files, so this is a belt-and-braces
+/// guard).
 fn is_claudemd_name(name: &str) -> bool {
-    name == "CLAUDE.md" || name == ".claude/CLAUDE.md"
+    matches!(
+        name,
+        "CLAUDE.md"
+            | ".claude/CLAUDE.md"
+            | "CLAUDE.local.md"
+            | ".claude/CLAUDE.local.md"
+            | "CLAUDE.md (managed)"
+    )
 }
 
-/// Read a CLAUDE.md, expand its `@import` lines, and tokenize. The
-/// `@import` recursion is bounded by `MAX_IMPORT_DEPTH` and circular
-/// imports are detected via the `seen` set seeded with the file itself.
+/// Read a CLAUDE.md, expand its `@import` lines, strip block-level HTML
+/// comments, and tokenize — the exact transform Claude Code applies
+/// before injecting the file. The `@import` recursion is bounded by
+/// `MAX_IMPORT_DEPTH` and circular imports are detected via the `seen`
+/// set seeded with the file itself.
 fn count_claudemd(path: &Path, home: &Path) -> Result<TokenCount, WardError> {
     let raw = std::fs::read_to_string(path)?;
     let parent = path.parent().unwrap_or(home);
     let mut seen: HashSet<PathBuf> = HashSet::new();
     seen.insert(normalize_path(path));
     let expanded = expand_imports(&raw, parent, 0, &mut seen, home);
-    Ok(tokenizer::count_text(&expanded))
+    let cleaned = strip_html_comments(&expanded);
+    Ok(tokenizer::count_text(&cleaned))
+}
+
+/// Resolve the `MEMORY.md` index path for a scope. Global lives at
+/// `~/.claude/memory/MEMORY.md`; a project scope (whose id is the
+/// encoded project-dir name) lives at
+/// `~/.claude/projects/<id>/memory/MEMORY.md`. Mirrors CCO's
+/// `addMemoryIndexFiles`.
+fn memory_index_path(home: &Path, scope_id: &str) -> Option<PathBuf> {
+    if scope_id == "global" {
+        Some(home.join(".claude").join("memory").join("MEMORY.md"))
+    } else {
+        Some(
+            home.join(".claude")
+                .join("projects")
+                .join(scope_id)
+                .join("memory")
+                .join("MEMORY.md"),
+        )
+    }
+}
+
+/// Count a `MEMORY.md` index the way Claude Code loads it: only the
+/// first `MEMORY_MAX_LINES` lines, then truncated to `MEMORY_MAX_BYTES`.
+/// The per-topic auto-memory files it links to are loaded on demand and
+/// are NOT counted here.
+fn count_memory_index(path: &Path) -> Result<TokenCount, WardError> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut capped: String = raw
+        .lines()
+        .take(MEMORY_MAX_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if capped.len() > MEMORY_MAX_BYTES {
+        // Truncate on a char boundary at/below the byte cap.
+        let mut end = MEMORY_MAX_BYTES;
+        while end > 0 && !capped.is_char_boundary(end) {
+            end -= 1;
+        }
+        capped.truncate(end);
+    }
+    Ok(tokenizer::count_text(&capped))
+}
+
+/// Tokens contributed by an *active, non-default* output style. Claude
+/// Code folds the selected style's markdown into the system prompt, so
+/// a custom style adds always-on overhead. Returns 0 for the built-in
+/// default (or when no style file is found). Reads the scope's
+/// `settings.local.json` then `settings.json` for `outputStyle`, then
+/// counts `~/.claude/output-styles/<name>.md` if present.
+fn active_output_style_tokens(home: &Path, scope_id: &str) -> usize {
+    // Only the global scope has a settings dir we can resolve from
+    // `home` + `scope_id` alone; project settings live in the repo which
+    // the composer isn't handed. Global is where the user's real config
+    // lives, which is the case that matters.
+    if scope_id != "global" {
+        return 0;
+    }
+    let claude = home.join(".claude");
+    let mut style_name: Option<String> = None;
+    // Local settings win over shared settings.
+    for f in ["settings.local.json", "settings.json"] {
+        let p = claude.join(f);
+        let Ok(content) = std::fs::read_to_string(&p) else { continue };
+        let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) else { continue };
+        if let Some(v) = cfg.get("outputStyle").and_then(|v| v.as_str()) {
+            style_name = Some(v.to_string());
+            break;
+        }
+    }
+    let name = match style_name {
+        Some(n) => n,
+        None => return 0,
+    };
+    // The built-in default carries no extra always-on text.
+    if name.is_empty() || name.eq_ignore_ascii_case("default") {
+        return 0;
+    }
+    // Custom styles live as markdown files; count the file if present.
+    // Built-in named styles (no file) can't be measured — treat as 0.
+    let style_file = claude.join("output-styles").join(format!("{name}.md"));
+    match tokenizer::count_file(&style_file) {
+        Ok(c) => c.tokens,
+        Err(_) => 0,
+    }
 }
 
 /// Tokenize one always-loaded item by reading its file. MCP items are
@@ -594,5 +800,151 @@ mod tests {
         for key in ["systemLoaded", "mcpSchemas", "alwaysLoadedItems", "autocompactBuffer", "warningThreshold"] {
             assert!(json.contains(key), "missing {key} in {json}");
         }
+    }
+
+    // ── Commit 1: CLAUDE.md refinements + MEMORY.md + output styles ──
+
+    #[test]
+    fn compose_counts_memory_index_always_on() {
+        // MEMORY.md at ~/.claude/memory/MEMORY.md must be counted as an
+        // always-on item, so `used` grows beyond the empty baseline.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let mem = home.join(".claude/memory/MEMORY.md");
+        fs::create_dir_all(mem.parent().unwrap()).unwrap();
+        fs::write(&mem, "index line one\nindex line two\n").unwrap();
+        let items: Vec<HarnessItem> = vec![];
+        let b = compose("global", &items, &[], home);
+        assert!(
+            b.used > SYSTEM_LOADED + CLAUDEMD_WRAPPER,
+            "MEMORY.md must add to always-on used; got {}",
+            b.used
+        );
+    }
+
+    #[test]
+    fn expand_imports_skips_at_import_inside_code_fence() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("frag.md"), "SHOULD-NOT-APPEAR").unwrap();
+        let home = dir.path();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        // The @frag.md sits inside a fenced code block and must be kept
+        // verbatim (Claude Code does not expand imports inside fences).
+        let src = "```\n@frag.md\n```";
+        let out = expand_imports(src, dir.path(), 0, &mut seen, home);
+        assert_eq!(out, src);
+        assert!(!out.contains("SHOULD-NOT-APPEAR"));
+    }
+
+    #[test]
+    fn expand_imports_skips_inline_code_span() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("frag.md"), "SHOULD-NOT-APPEAR").unwrap();
+        let home = dir.path();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        // A line that opens with a backtick is an inline code span.
+        let src = "`@frag.md` is how you import";
+        let out = expand_imports(src, dir.path(), 0, &mut seen, home);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn max_import_depth_is_four() {
+        assert_eq!(MAX_IMPORT_DEPTH, 4);
+    }
+
+    #[test]
+    fn strip_html_comments_removes_block_comments() {
+        assert_eq!(strip_html_comments("a<!-- hide -->b"), "ab");
+        // Multi-line.
+        assert_eq!(strip_html_comments("x<!--\nmany\nlines\n-->y"), "xy");
+        // Unterminated — everything after the open is dropped.
+        assert_eq!(strip_html_comments("keep<!-- oops"), "keep");
+        // No comment — unchanged.
+        assert_eq!(strip_html_comments("plain text"), "plain text");
+    }
+
+    #[test]
+    fn count_claudemd_strips_html_comments_before_counting() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let with_comment = home.join("WITH.md");
+        let without = home.join("WITHOUT.md");
+        // Identical visible text; one carries a big HTML comment that
+        // must NOT be tokenized.
+        fs::write(&with_comment, "hello<!-- 0123456789012345678901234567890123456789 -->world").unwrap();
+        fs::write(&without, "helloworld").unwrap();
+        let a = count_claudemd(&with_comment, home).unwrap();
+        let b = count_claudemd(&without, home).unwrap();
+        assert_eq!(a.tokens, b.tokens, "HTML comment must be stripped before counting");
+    }
+
+    #[test]
+    fn compose_dedupes_claudemd_counted_under_two_categories() {
+        // The scanner emits the SAME CLAUDE.md under both `memory` and
+        // `config`. It must be counted once, not twice.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let md = home.join(".claude/CLAUDE.md");
+        fs::create_dir_all(md.parent().unwrap()).unwrap();
+        fs::write(&md, "x".repeat(400)).unwrap(); // 100 tokens
+        let items = vec![
+            item("memory", "global", "CLAUDE.md", md.to_str().unwrap()),
+            item("config", "global", "CLAUDE.md", md.to_str().unwrap()),
+        ];
+        let b = compose("global", &items, &[], home);
+        // Only one CLAUDE.md file row; claudemd = 100 content + wrapper.
+        assert_eq!(b.claude_md_files.len(), 1);
+        assert_eq!(b.claudemd, 100 + CLAUDEMD_WRAPPER);
+    }
+
+    #[test]
+    fn compose_counts_active_output_style_into_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let claude = home.join(".claude");
+        fs::create_dir_all(claude.join("output-styles")).unwrap();
+        fs::write(claude.join("settings.json"), r#"{"outputStyle":"verbose"}"#).unwrap();
+        fs::write(claude.join("output-styles/verbose.md"), "s".repeat(400)).unwrap(); // 100 tokens
+        let items: Vec<HarnessItem> = vec![];
+        let b = compose("global", &items, &[], home);
+        assert_eq!(b.output_style, 100);
+        assert_eq!(b.used, SYSTEM_LOADED + 100 + CLAUDEMD_WRAPPER);
+    }
+
+    #[test]
+    fn default_output_style_costs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let claude = home.join(".claude");
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(claude.join("settings.json"), r#"{"outputStyle":"default"}"#).unwrap();
+        let items: Vec<HarnessItem> = vec![];
+        let b = compose("global", &items, &[], home);
+        assert_eq!(b.output_style, 0);
+    }
+
+    #[test]
+    fn memory_index_capped_at_200_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let mem = home.join(".claude/memory/MEMORY.md");
+        fs::create_dir_all(mem.parent().unwrap()).unwrap();
+        // 300 lines of "ABC" (4 bytes each incl. newline). Only the
+        // first 200 count.
+        let body = "ABC\n".repeat(300);
+        fs::write(&mem, &body).unwrap();
+        let items: Vec<HarnessItem> = vec![];
+        let b = compose("global", &items, &[], home);
+        let mem_item = b.always_loaded_items.iter().find(|i| i.category == "memory").unwrap();
+        // 200 lines joined by "\n" = 200*3 + 199 = 799 bytes -> 200 tokens.
+        assert_eq!(mem_item.tokens, 200);
+    }
+
+    #[test]
+    fn compose_scales_context_limit_for_million_token_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = compose_with_limit("global", &[], &[], dir.path(), 1_000_000);
+        assert_eq!(b.context_limit, 1_000_000);
     }
 }
