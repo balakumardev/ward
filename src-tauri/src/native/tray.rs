@@ -42,10 +42,10 @@ pub fn build_menu<R: Runtime>(app: &App<R>) -> Result<Menu<R>, WardError> {
 ///   - Right-click menu items → `tray_action` event with the menu id.
 pub fn setup<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, WardError> {
     let menu = build_menu(app)?;
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| WardError::NotFound("default tray icon missing".into()))?;
+    // Plan 13 — dedicated monochrome template so the menu-bar glyph adapts
+    // cleanly to light/dark instead of muddily tinting the color app icon.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../../icons/tray-template.png"))
+        .map_err(|e| WardError::NotFound(format!("tray template icon: {e}")))?;
 
     let tray = TrayIconBuilder::with_id("ward-tray")
         .icon(icon)
