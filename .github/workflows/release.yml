@@ -1,0 +1,97 @@
+name: Release
+
+# Every push to main cuts a new release: run the test suite, build the
+# universal macOS .app + .dmg, and publish them to a GitHub Release.
+# Add `[skip ci]` to a commit message to skip a release for that push.
+on:
+  push:
+    branches: [main]
+
+# Serialize releases on main so two pushes can't race on tag/release creation.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version
+        id: v
+        # 0.1.<run_number> — monotonic, one release per push.
+        run: echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test (release gate)
+        run: |
+          npm test
+          npx tsc --noEmit
+          cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Stamp version ${{ steps.v.outputs.version }}
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          npm version "$v" --no-git-tag-version --allow-same-version
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$tmp" && mv "$tmp" src-tauri/tauri.conf.json
+
+      - name: Build universal macOS app + dmg
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Locate dmg
+        id: art
+        run: |
+          dmg="$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: Ward v${{ steps.v.outputs.version }}
+          generate_release_notes: true
+          append_body: true
+          body: |
+            ### Install — macOS (universal: Apple Silicon + Intel)
+
+            1. Download `Ward_${{ steps.v.outputs.version }}_universal.dmg` below and open it.
+            2. Drag **Ward** into Applications.
+            3. This build is **not notarized**, so on first launch macOS will block it. Either right-click **Ward.app → Open → Open**, or clear the quarantine flag:
+               ```sh
+               xattr -dr com.apple.quarantine /Applications/Ward.app
+               ```
+
+            Ward runs from the menu bar — click the tray icon for the Claude/Codex usage glance; closing the window keeps it running in the background.
+          files: ${{ steps.art.outputs.dmg }}
+
+      - name: Notify
+        if: success()
+        run: |
+          curl -s \
+            -H "Title: Ward v${{ steps.v.outputs.version }} released" \
+            -H "Tags: package,white_check_mark" \
+            -d "https://github.com/balakumardev/ward/releases/tag/v${{ steps.v.outputs.version }}" \
+            https://ntfy.sh/bala-pr || echo "ntfy notification failed"
