@@ -818,7 +818,9 @@ mod tests {
         assert_eq!(b.system_loaded, budget::SYSTEM_LOADED);
         assert_eq!(b.mcp_schemas, 0);
         assert!(b.claudemd > budget::CLAUDEMD_WRAPPER);
-        assert!(b.always_loaded_items.iter().any(|i| i.category == "skill"));
+        // New model: the skill surfaces as a METADATA row (its body is
+        // deferred), not a full always-loaded item.
+        assert!(b.metadata_items.iter().any(|i| i.category == "skill"));
         assert!(b.used > b.system_loaded);
     }
 

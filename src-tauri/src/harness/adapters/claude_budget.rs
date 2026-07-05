@@ -40,6 +40,16 @@ pub const SYSTEM_DEFERRED: usize = 7000;
 pub const MCP_TOOL_SCHEMA: usize = 3100;
 /// `<system-reminder>` wrapper tokens around injected CLAUDE.md.
 pub const CLAUDEMD_WRAPPER: usize = 100;
+/// One-time `<available_skills>` boilerplate the Skill tool injects when
+/// any model-invocable skill (or custom slash-command) exists. Estimated.
+pub const SKILL_BOILERPLATE: usize = 400;
+/// Per-description character cap applied to each skill/command listing
+/// entry before tokenizing (Claude Code truncates long descriptions).
+pub const SKILL_DESC_CAP: usize = 1536;
+/// Percent of the context limit the whole skill/command listing may
+/// occupy. The metadata block is capped as a whole (the bodies are
+/// deferred), so 100 tiny descriptions can't blow past this ceiling.
+pub const SKILL_LISTING_BUDGET_PCT: usize = 1;
 /// First-N-lines cap Claude Code applies when loading a `MEMORY.md`
 /// index into always-on context.
 pub const MEMORY_MAX_LINES: usize = 200;
@@ -55,10 +65,6 @@ pub const MAX_OUTPUT: usize = 32000;
 /// at the call sites — `compose_with_limit` accepts any limit (e.g. a
 /// 1M-token model) and scales the skill-listing budget off it.
 pub const DEFAULT_CONTEXT_LIMIT: usize = 200_000;
-
-/// Categories Claude Code always injects at session start. Everything
-/// in this set is counted into `always_loaded_items`.
-pub const ALWAYS_LOADED_CATEGORIES: &[&str] = &["skill", "rule", "command", "agent"];
 
 /// Hard cap on `@import` expansion hops. Claude Code follows imports up
 /// to 4 hops; anything past this depth is returned verbatim.
@@ -85,9 +91,30 @@ pub struct BudgetBreakdown {
     pub claudemd: usize,
     /// Per-file token breakdown for each CLAUDE.md that contributed.
     pub claude_md_files: Vec<BudgetFile>,
-    /// Per-item token breakdown for every always-loaded item (skill,
-    /// rule, command, agent).
+    /// Always-on skill+command *listing* (`"name": description`),
+    /// capped at `SKILL_LISTING_BUDGET_PCT %` of the context limit.
+    pub skill_listing: usize,
+    /// The uncapped listing total, so the UI can show "capped from N".
+    pub skill_listing_raw: usize,
+    /// `<available_skills>` boilerplate (0 when no skill/command exists).
+    pub skill_boilerplate: usize,
+    /// Always-on subagent *listing* (`name: description` via the Agent
+    /// tool). Uncapped — agents are few.
+    pub agent_listing: usize,
+    /// Per-item token breakdown for full-content always-on items: rules
+    /// WITHOUT `paths:` and the `MEMORY.md` index.
     pub always_loaded_items: Vec<BudgetItem>,
+    /// Per-item metadata rows behind `skill_listing` / `agent_listing`
+    /// (skills, commands, agents) — for the detail list. These do NOT
+    /// sum into `used`; the capped scalars above do.
+    pub metadata_items: Vec<BudgetItem>,
+    /// On-invoke / DEFERRED per-item bodies: skill/command/agent bodies
+    /// and `paths:`-scoped rules. Loaded only when invoked, so they are
+    /// NOT part of `used`.
+    pub deferred_items: Vec<BudgetItem>,
+    /// Total deferred tokens: `system_deferred` + `mcp_schemas` +
+    /// the sum of `deferred_items`. Surfaced as a separate figure.
+    pub deferred_total: usize,
     /// Reserved buffer for autocompact.
     pub autocompact_buffer: usize,
     /// Reserved for the model's response.
@@ -350,23 +377,125 @@ pub fn compose_with_limit(
         }
     }
 
-    // ── Always-loaded items ──
+    // ── Categorised items ──
+    //
+    // Three tiers, per the researched Claude Code context model:
+    //   • always_loaded_items — FULL content that's always injected:
+    //       rules WITHOUT `paths:`, plus the MEMORY.md index (below).
+    //   • metadata_items — always-on METADATA only: the skill/command
+    //       listing (`"name": description`) + subagent listing. These
+    //       roll up into the capped `skill_listing` / `agent_listing`
+    //       scalars, NOT into a per-item sum.
+    //   • deferred_items — on-invoke bodies: skill/command/agent bodies
+    //       and `paths:`-scoped rules. NOT part of `used`.
     let mut always_loaded_items: Vec<BudgetItem> = Vec::new();
+    let mut metadata_items: Vec<BudgetItem> = Vec::new();
+    let mut deferred_items: Vec<BudgetItem> = Vec::new();
+    let mut skill_listing_raw: usize = 0;
+    let mut agent_listing: usize = 0;
+    let mut has_skill_or_command = false;
+
     for item in &scope_items {
-        if !ALWAYS_LOADED_CATEGORIES.contains(&item.category.as_str()) {
-            continue;
+        match item.category.as_str() {
+            "skill" => {
+                let meta = read_skill_meta(&item.path, &item.description);
+                // `disable-model-invocation: true` → the model can't see
+                // or call it, so it costs ZERO always-on (no metadata, no
+                // boilerplate, no deferred body).
+                if !meta.model_invocable {
+                    continue;
+                }
+                has_skill_or_command = true;
+                let listing = format!("\"{}\": {}", item.name, cap_desc(&meta.description));
+                let m = tokenizer::count_text(&listing);
+                skill_listing_raw += m.tokens;
+                metadata_items.push(BudgetItem {
+                    category: "skill".into(),
+                    name: item.name.clone(),
+                    tokens: m.tokens,
+                    measured: m.measured,
+                });
+                let body = count_item(item);
+                if body.tokens > 0 {
+                    deferred_items.push(BudgetItem {
+                        category: "skill".into(),
+                        name: item.name.clone(),
+                        tokens: body.tokens,
+                        measured: body.measured,
+                    });
+                }
+            }
+            "command" => {
+                // Slash-commands are model-invocable skills now: listing
+                // metadata always-on, body deferred.
+                has_skill_or_command = true;
+                let listing = format!("\"{}\": {}", item.name, cap_desc(&item.description));
+                let m = tokenizer::count_text(&listing);
+                skill_listing_raw += m.tokens;
+                metadata_items.push(BudgetItem {
+                    category: "command".into(),
+                    name: item.name.clone(),
+                    tokens: m.tokens,
+                    measured: m.measured,
+                });
+                let body = count_item(item);
+                if body.tokens > 0 {
+                    deferred_items.push(BudgetItem {
+                        category: "command".into(),
+                        name: item.name.clone(),
+                        tokens: body.tokens,
+                        measured: body.measured,
+                    });
+                }
+            }
+            "agent" => {
+                // Subagents surface as an Agent-tool listing (name +
+                // description); the body lives in the subagent's OWN
+                // window, so it's deferred here.
+                let listing = format!("{}: {}", item.name, cap_desc(&item.description));
+                let m = tokenizer::count_text(&listing);
+                agent_listing += m.tokens;
+                metadata_items.push(BudgetItem {
+                    category: "agent".into(),
+                    name: item.name.clone(),
+                    tokens: m.tokens,
+                    measured: m.measured,
+                });
+                let body = count_item(item);
+                if body.tokens > 0 {
+                    deferred_items.push(BudgetItem {
+                        category: "agent".into(),
+                        name: item.name.clone(),
+                        tokens: body.tokens,
+                        measured: body.measured,
+                    });
+                }
+            }
+            "rule" => {
+                // Rules are injected with HTML comments stripped. Those
+                // WITHOUT `paths:` frontmatter load at session start
+                // (always-on); `paths:`-scoped rules load only when the
+                // model reads a matching file (deferred).
+                let raw = std::fs::read_to_string(&item.path).unwrap_or_default();
+                let cleaned = strip_html_comments(&raw);
+                let m = tokenizer::count_text(&cleaned);
+                if m.tokens == 0 {
+                    continue;
+                }
+                let row = BudgetItem {
+                    category: "rule".into(),
+                    name: item.name.clone(),
+                    tokens: m.tokens,
+                    measured: m.measured,
+                };
+                if frontmatter_has_paths(&raw) {
+                    deferred_items.push(row);
+                } else {
+                    always_loaded_items.push(row);
+                }
+            }
+            _ => {}
         }
-        let count = count_item(item);
-        if count.tokens == 0 {
-            // Skip zero-token items so the UI doesn't show empty rows.
-            continue;
-        }
-        always_loaded_items.push(BudgetItem {
-            category: item.category.clone(),
-            name: item.name.clone(),
-            tokens: count.tokens,
-            measured: count.measured,
-        });
     }
 
     // ── MEMORY.md index (always-on, first 200 lines / 25 KB) ──
@@ -387,12 +516,29 @@ pub fn compose_with_limit(
         }
     }
 
+    // ── Skill/command listing cap + boilerplate ──
+    // The whole listing is capped at a fraction of the context limit
+    // (Claude Code truncates it), so many tiny descriptions can't run
+    // away. Boilerplate is the one-time `<available_skills>` block.
+    let skill_listing_budget = context_limit * SKILL_LISTING_BUDGET_PCT / 100;
+    let skill_listing = skill_listing_raw.min(skill_listing_budget);
+    let skill_boilerplate = if has_skill_or_command { SKILL_BOILERPLATE } else { 0 };
+
     // ── Active output style (folds into system overhead) ──
     let output_style = active_output_style_tokens(home, scope_id);
 
-    // ── Total ──
+    // ── Totals ──
     let loaded_subtotal: usize = always_loaded_items.iter().map(|i| i.tokens).sum();
-    let used = SYSTEM_LOADED + output_style + mcp_schemas + claudemd_total + loaded_subtotal;
+    let used = SYSTEM_LOADED
+        + output_style
+        + mcp_schemas
+        + claudemd_total
+        + skill_listing
+        + skill_boilerplate
+        + agent_listing
+        + loaded_subtotal;
+    let deferred_bodies: usize = deferred_items.iter().map(|i| i.tokens).sum();
+    let deferred_total = SYSTEM_DEFERRED + deferred_bodies;
 
     BudgetBreakdown {
         system_loaded: SYSTEM_LOADED,
@@ -401,7 +547,14 @@ pub fn compose_with_limit(
         mcp_schemas,
         claudemd: claudemd_total,
         claude_md_files,
+        skill_listing,
+        skill_listing_raw,
+        skill_boilerplate,
+        agent_listing,
         always_loaded_items,
+        metadata_items,
+        deferred_items,
+        deferred_total,
         autocompact_buffer: AUTOCOMPACT_BUFFER,
         max_output: MAX_OUTPUT,
         warning_threshold: WARNING_THRESHOLD,
@@ -528,8 +681,8 @@ fn active_output_style_tokens(home: &Path, scope_id: &str) -> usize {
     }
 }
 
-/// Tokenize one always-loaded item by reading its file. MCP items are
-/// not in `ALWAYS_LOADED_CATEGORIES` so this path never sees them.
+/// Tokenize one item's FULL file body (used for deferred skill/command/
+/// agent bodies). Missing/empty → 0 tokens.
 fn count_item(item: &HarnessItem) -> TokenCount {
     if item.path.is_empty() {
         return TokenCount { tokens: 0, measured: false };
@@ -538,6 +691,61 @@ fn count_item(item: &HarnessItem) -> TokenCount {
         Ok(c) => c,
         Err(_) => TokenCount { tokens: 0, measured: false },
     }
+}
+
+/// Frontmatter-derived facts about a skill relevant to the budget.
+struct SkillMeta {
+    /// False when `disable-model-invocation: true` — the model can't see
+    /// or call the skill, so it costs zero always-on.
+    model_invocable: bool,
+    /// The skill's `description` (falls back to the scanned description).
+    description: String,
+}
+
+/// Read a `SKILL.md`'s frontmatter for the fields the budget needs. Falls
+/// back to `scanned_desc` when the file is unreadable or omits the field.
+fn read_skill_meta(path: &str, scanned_desc: &str) -> SkillMeta {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let fm = crate::fs_utils::parse_frontmatter(&content);
+    let model_invocable = fm
+        .get("disable-model-invocation")
+        .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "1"))
+        .unwrap_or(true);
+    let description = match fm.get("description") {
+        Some(d) if !d.trim().is_empty() => d.trim().to_string(),
+        _ => scanned_desc.to_string(),
+    };
+    SkillMeta { model_invocable, description }
+}
+
+/// Truncate a listing description to `SKILL_DESC_CAP` characters, on a
+/// char boundary (Claude Code caps long descriptions in the listing).
+fn cap_desc(desc: &str) -> String {
+    if desc.chars().count() <= SKILL_DESC_CAP {
+        return desc.to_string();
+    }
+    desc.chars().take(SKILL_DESC_CAP).collect()
+}
+
+/// True when a markdown file's leading `---` frontmatter block carries a
+/// top-level `paths:` key (a path-scoped rule that loads on demand, not
+/// at session start). Mirrors CCO's `^paths:` frontmatter check.
+fn frontmatter_has_paths(content: &str) -> bool {
+    let trimmed = content.trim_start_matches('\u{feff}');
+    let stripped = match trimmed
+        .strip_prefix("---\n")
+        .or_else(|| trimmed.strip_prefix("---\r\n"))
+    {
+        Some(s) => s,
+        None => return false,
+    };
+    let end = match stripped.find("\n---").or_else(|| stripped.find("\r\n---")) {
+        Some(i) => i,
+        None => return false,
+    };
+    stripped[..end]
+        .lines()
+        .any(|l| l.trim_end_matches('\r').starts_with("paths:"))
 }
 
 #[cfg(test)]
@@ -705,19 +913,22 @@ mod tests {
     }
 
     #[test]
-    fn compose_counts_skill_rule_command_agent_always_loaded() {
+    fn compose_places_skill_command_agent_metadata_rule_full() {
+        // New model: only rules WITHOUT `paths:` are full always-on;
+        // skills/commands/agents surface as METADATA rows; their bodies
+        // are deferred. Arbitrary "memory" topic items are ignored (only
+        // the MEMORY.md index counts).
         let dir = tempfile::tempdir().unwrap();
-        // One of each always-loaded category.
         let skill_path = dir.path().join("skill.md");
         let rule_path = dir.path().join("rule.md");
         let cmd_path = dir.path().join("cmd.md");
         let agent_path = dir.path().join("agent.md");
         let memory_path = dir.path().join("mem.md");
-        fs::write(&skill_path, "skill body 1234").unwrap();    // 14 bytes -> 4 tokens
-        fs::write(&rule_path, "rule body 12345").unwrap();     // 15 bytes -> 4 tokens
-        fs::write(&cmd_path, "cmd body 123456").unwrap();      // 16 bytes -> 4 tokens
-        fs::write(&agent_path, "agent body 1234567").unwrap(); // 17 bytes -> 5 tokens
-        fs::write(&memory_path, "mem").unwrap();               // NOT always-loaded
+        fs::write(&skill_path, "skill body 1234").unwrap();
+        fs::write(&rule_path, "rule body 12345").unwrap();
+        fs::write(&cmd_path, "cmd body 123456").unwrap();
+        fs::write(&agent_path, "agent body 1234567").unwrap();
+        fs::write(&memory_path, "mem").unwrap();
 
         let items = vec![
             item("skill", "global", "skill", skill_path.to_str().unwrap()),
@@ -727,12 +938,19 @@ mod tests {
             item("memory", "global", "mem", memory_path.to_str().unwrap()),
         ];
         let b = compose("global", &items, &[], dir.path());
-        let cats: Vec<&str> = b.always_loaded_items.iter().map(|i| i.category.as_str()).collect();
-        assert_eq!(cats, vec!["skill", "rule", "command", "agent"]);
-        // No memory in always-loaded.
-        assert!(!cats.contains(&"memory"));
-        // All four items counted.
-        assert_eq!(b.always_loaded_items.len(), 4);
+        // Always-loaded FULL: just the unscoped rule.
+        let loaded_cats: Vec<&str> = b.always_loaded_items.iter().map(|i| i.category.as_str()).collect();
+        assert_eq!(loaded_cats, vec!["rule"]);
+        // Metadata: skill + command + agent.
+        let mut meta_cats: Vec<&str> = b.metadata_items.iter().map(|i| i.category.as_str()).collect();
+        meta_cats.sort();
+        assert_eq!(meta_cats, vec!["agent", "command", "skill"]);
+        // Deferred: skill + command + agent bodies (rule has no paths:).
+        let mut def_cats: Vec<&str> = b.deferred_items.iter().map(|i| i.category.as_str()).collect();
+        def_cats.sort();
+        assert_eq!(def_cats, vec!["agent", "command", "skill"]);
+        // No arbitrary memory topic file leaks into any tier.
+        assert!(!loaded_cats.contains(&"memory"));
     }
 
     #[test]
@@ -768,18 +986,19 @@ mod tests {
     #[test]
     fn compose_filters_to_requested_scope_only() {
         let dir = tempfile::tempdir().unwrap();
+        // Use rules (full always-on) so we can assert on always_loaded_items.
         let p = dir.path().join("a.md");
         fs::write(&p, "x".repeat(40)).unwrap(); // 10 tokens
         let items = vec![
-            item("skill", "scope-a", "a-skill", p.to_str().unwrap()),
-            item("skill", "scope-b", "b-skill", p.to_str().unwrap()),
+            item("rule", "scope-a", "a-rule", p.to_str().unwrap()),
+            item("rule", "scope-b", "b-rule", p.to_str().unwrap()),
         ];
         let b_a = compose("scope-a", &items, &[], dir.path());
         let b_b = compose("scope-b", &items, &[], dir.path());
         assert_eq!(b_a.always_loaded_items.len(), 1);
         assert_eq!(b_b.always_loaded_items.len(), 1);
-        assert_eq!(b_a.always_loaded_items[0].name, "a-skill");
-        assert_eq!(b_b.always_loaded_items[0].name, "b-skill");
+        assert_eq!(b_a.always_loaded_items[0].name, "a-rule");
+        assert_eq!(b_b.always_loaded_items[0].name, "b-rule");
     }
 
     #[test]
@@ -946,5 +1165,153 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let b = compose_with_limit("global", &[], &[], dir.path(), 1_000_000);
         assert_eq!(b.context_limit, 1_000_000);
+    }
+
+    // ── Commit 2: skills/commands/agents metadata + rules paths: split ──
+
+    /// Helper: write a SKILL.md with a frontmatter description + a huge
+    /// body, and return an item pointing at it.
+    fn write_skill(dir: &Path, name: &str, desc: &str, body_bytes: usize, disable: bool) -> HarnessItem {
+        let skill_dir = dir.join(".claude/skills").join(name);
+        fs::create_dir_all(&skill_dir).unwrap();
+        let mut fm = format!("---\nname: {name}\ndescription: {desc}\n");
+        if disable {
+            fm.push_str("disable-model-invocation: true\n");
+        }
+        fm.push_str("---\n");
+        let body = "B".repeat(body_bytes);
+        let manifest = skill_dir.join("SKILL.md");
+        fs::write(&manifest, format!("{fm}{body}")).unwrap();
+        item("skill", "global", name, manifest.to_str().unwrap())
+    }
+
+    #[test]
+    fn skill_large_body_counts_as_metadata_not_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        // 8000-byte body (~2000 tokens) but a short description.
+        let it = write_skill(home, "big", "short summary", 8000, false);
+        let b = compose("global", &[it], &[], home);
+        // Skill contributes a tiny metadata row, not the 2000-token body.
+        let meta = b.metadata_items.iter().find(|i| i.category == "skill").unwrap();
+        assert!(meta.tokens < 50, "metadata should be tiny; got {}", meta.tokens);
+        // The body is DEFERRED, not always-on.
+        let def = b.deferred_items.iter().find(|i| i.category == "skill").unwrap();
+        assert!(def.tokens > 1500, "body should be deferred; got {}", def.tokens);
+        // `used` excludes the body entirely (only tiny metadata + the
+        // one-time boilerplate ride along).
+        assert!(
+            b.used < SYSTEM_LOADED + CLAUDEMD_WRAPPER + SKILL_BOILERPLATE + 50,
+            "skill body must not inflate always-on used; got {}",
+            b.used
+        );
+        assert!(b.skill_boilerplate == SKILL_BOILERPLATE);
+    }
+
+    #[test]
+    fn disable_model_invocation_skill_counts_zero_always_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let it = write_skill(home, "hidden", "not invocable", 8000, true);
+        let b = compose("global", &[it], &[], home);
+        // No metadata, no boilerplate, no body — pure baseline.
+        assert_eq!(b.used, SYSTEM_LOADED + CLAUDEMD_WRAPPER);
+    }
+
+    #[test]
+    fn paths_scoped_rule_is_deferred_not_always_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let rule = home.join(".claude/rules/scoped.md");
+        fs::create_dir_all(rule.parent().unwrap()).unwrap();
+        // A big paths:-scoped rule — must NOT count toward always-on used.
+        fs::write(&rule, format!("---\npaths:\n  - \"*.py\"\n---\n{}", "R".repeat(4000))).unwrap();
+        let it = item("rule", "global", "scoped", rule.to_str().unwrap());
+        let b = compose("global", &[it], &[], home);
+        assert_eq!(b.used, SYSTEM_LOADED + CLAUDEMD_WRAPPER, "scoped rule must be deferred: {}", b.used);
+        // And it lands in the deferred bucket.
+        assert!(b.deferred_items.iter().any(|i| i.category == "rule" && i.name == "scoped"));
+        assert!(b.deferred_total > SYSTEM_DEFERRED);
+    }
+
+    #[test]
+    fn unscoped_rule_stays_always_on_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let rule = home.join("r.md");
+        fs::write(&rule, format!("---\ndescription: x\n---\n{}", "R".repeat(400))).unwrap();
+        let it = item("rule", "global", "plain", rule.to_str().unwrap());
+        let b = compose("global", &[it], &[], home);
+        assert!(b.always_loaded_items.iter().any(|i| i.category == "rule" && i.name == "plain"));
+        assert!(b.used > SYSTEM_LOADED + CLAUDEMD_WRAPPER);
+    }
+
+    #[test]
+    fn command_body_is_deferred_metadata_is_always_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let cmd = home.join(".claude/commands/deploy.md");
+        fs::create_dir_all(cmd.parent().unwrap()).unwrap();
+        fs::write(&cmd, "R".repeat(4000)).unwrap(); // 1000-token body
+        let mut it = item("command", "global", "deploy", cmd.to_str().unwrap());
+        it.description = "Ship the app to prod".into();
+        let b = compose("global", &[it], &[], home);
+        // Metadata tiny + folded into the capped skill listing.
+        assert!(b.metadata_items.iter().any(|i| i.category == "command"));
+        assert!(b.skill_listing > 0 && b.skill_listing < 50);
+        // Body deferred, not in used.
+        assert!(b.deferred_items.iter().any(|i| i.category == "command"));
+        assert!(b.used < SYSTEM_LOADED + CLAUDEMD_WRAPPER + SKILL_BOILERPLATE + 50);
+    }
+
+    #[test]
+    fn agent_body_is_deferred_metadata_in_agent_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let agent = home.join(".claude/agents/reviewer.md");
+        fs::create_dir_all(agent.parent().unwrap()).unwrap();
+        fs::write(&agent, "R".repeat(4000)).unwrap(); // 1000-token body
+        let mut it = item("agent", "global", "reviewer", agent.to_str().unwrap());
+        it.description = "Reviews diffs for bugs".into();
+        let b = compose("global", &[it], &[], home);
+        // Agent metadata rolls into `agent_listing`, NOT `skill_listing`.
+        assert!(b.agent_listing > 0);
+        assert_eq!(b.skill_listing, 0);
+        // No skill boilerplate for an agent-only scope.
+        assert_eq!(b.skill_boilerplate, 0);
+        // Body deferred.
+        assert!(b.deferred_items.iter().any(|i| i.category == "agent"));
+        assert!(b.used < SYSTEM_LOADED + CLAUDEMD_WRAPPER + 50);
+    }
+
+    #[test]
+    fn skill_listing_is_capped_at_one_percent_of_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        // 400 skills each with a long (capped) description — uncapped this
+        // would blow past 1% of 200K (=2000). The listing must be capped.
+        let long_desc = "d".repeat(1200);
+        let mut items = Vec::new();
+        for i in 0..400 {
+            items.push(write_skill(home, &format!("skill{i}"), &long_desc, 10, false));
+        }
+        let b = compose("global", &items, &[], home);
+        let budget = DEFAULT_CONTEXT_LIMIT * SKILL_LISTING_BUDGET_PCT / 100; // 2000
+        assert_eq!(b.skill_listing, budget, "listing must be capped at 1%");
+        assert!(b.skill_listing_raw > budget, "raw sum should exceed the cap");
+    }
+
+    #[test]
+    fn skill_listing_budget_scales_with_context_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let long_desc = "d".repeat(1200);
+        let mut items = Vec::new();
+        for i in 0..400 {
+            items.push(write_skill(home, &format!("skill{i}"), &long_desc, 10, false));
+        }
+        // 1% of a 1M model = 10,000 — a bigger cap than the 200K case.
+        let b = compose_with_limit("global", &items, &[], home, 1_000_000);
+        assert_eq!(b.skill_listing, 1_000_000 / 100);
     }
 }

@@ -232,15 +232,18 @@ fn scan_skills(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             let manifest = p.join("SKILL.md");
             if manifest.is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                // Read frontmatter for the display name (falls back to dir name).
+                // Read frontmatter for the display name (falls back to dir
+                // name) and the description (used by the Organizer detail
+                // pane AND by the context-budget skill listing).
                 let content = std::fs::read_to_string(&manifest).unwrap_or_default();
                 let fm = parse_frontmatter(&content);
                 let display = fm.get("name").cloned().unwrap_or_else(|| name.clone());
+                let description = fm.get("description").cloned().unwrap_or_default();
                 items.push(HarnessItem {
                     category: "skill".into(),
                     scope_id: scope.id.clone(),
                     name: display,
-                    description: String::new(),
+                    description,
                     path: manifest.display().to_string(),
                     movable: true, deletable: true, locked: false,
                     effective: None,
@@ -765,6 +768,25 @@ mod tests {
         assert_eq!(items[0].category, "skill");
         assert_eq!(items[0].scope_id, "global");
         assert!(items[0].path.ends_with("skills/brainstorming/SKILL.md"));
+    }
+
+    #[test]
+    fn scan_skills_populates_description_from_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir.path().join(".claude/skills/deploy");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Ship the app to prod\n---\nbody",
+        )
+        .unwrap();
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let scope = ClaudeAdapter.discover_scopes(&ctx).unwrap().remove(0);
+        let items = ClaudeAdapter.scan_category(&ctx, "skill", &scope).unwrap();
+        let deploy = items.iter().find(|i| i.name == "deploy").unwrap();
+        // Description now flows through so the budget listing + Organizer
+        // detail can use it.
+        assert_eq!(deploy.description, "Ship the app to prod");
     }
 
     #[test]
