@@ -1,17 +1,154 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Ward — "Security Console" design system.
+   The core palette (--bg, --surface, --accent, --crit/--warn/--ok) is locked
+   by the design spec; everything else here extends it into a full system:
+   an elevation ladder, translucent status tints, shadows, a spacing scale,
+   and global control styling so the whole app reads as one native surface.
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
+  /* Locked core palette */
   --bg: #0e1420;
   --surface: #131c2b;
   --surface-2: #0c121d;
-  --border: rgba(120, 160, 220, 0.14);
-  --text: #dfe7f2;
-  --text-dim: rgba(223, 231, 242, 0.6);
   --accent: #8ff0a8;
   --crit: #ff453a;
   --warn: #ff9f0a;
   --ok: #30d158;
+
+  /* Elevation ladder (deepest → highest) */
+  --surface-3: #1a2536;      /* elevated cards, menus, editor chrome */
+  --surface-4: #223148;      /* highest: active menu row, chips */
+  --elevated: #1c2739;
+  --overlay: rgba(7, 11, 18, 0.66);
+
+  /* Hairlines */
+  --border: rgba(120, 160, 220, 0.14);
+  --border-strong: rgba(120, 160, 220, 0.26);
+  --border-accent: rgba(143, 240, 168, 0.45);
+
+  /* Text ramp */
+  --text: #dfe7f2;
+  --text-dim: rgba(223, 231, 242, 0.6);
+  --text-mute: rgba(223, 231, 242, 0.36);
+
+  /* Accent tints */
+  --accent-2: #5be0c8;
+  --accent-bg: rgba(143, 240, 168, 0.12);
+  --accent-bg-2: rgba(143, 240, 168, 0.07);
+  --accent-line: rgba(143, 240, 168, 0.55);
+
+  /* Status + translucent backings. --danger/--warning are aliases the
+     components already reference. */
+  --danger: #ff453a;
+  --warning: #ff9f0a;
+  --info: #6ea8fe;
+  --crit-bg: rgba(255, 69, 58, 0.14);
+  --danger-bg: rgba(255, 69, 58, 0.14);
+  --warn-bg: rgba(255, 159, 10, 0.14);
+  --ok-bg: rgba(48, 209, 88, 0.14);
+  --info-bg: rgba(110, 168, 254, 0.14);
+
+  /* Category accents (used as dots/rails in the organizer) */
+  --cat-skill: #8ff0a8;
+  --cat-memory: #b78cff;
+  --cat-mcp: #6ea8fe;
+  --cat-command: #f0a15b;
+  --cat-agent: #5be0c8;
+  --cat-plan: #7fd0ff;
+  --cat-rule: #ff9f0a;
+  --cat-config: #9aa7bd;
+  --cat-hook: #f6c05b;
+  --cat-plugin: #c08bf0;
+  --cat-session: #6ea8fe;
+  --cat-setting: #9aa7bd;
+
+  /* Type */
   --font-ui: -apple-system, "SF Pro Text", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: -apple-system, "SF Pro Display", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  /* Radii */
   --radius: 8px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* Shadows */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --sh-2: 0 8px 24px -8px rgba(0, 0, 0, 0.55);
+  --sh-3: 0 20px 56px -16px rgba(0, 0, 0, 0.66);
+  --glow: 0 0 0 1px var(--border-accent), 0 6px 22px -8px rgba(143, 240, 168, 0.28);
 }
+
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.1px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Atmospheric depth over the locked base colour. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1100px 620px at 8% -10%, rgba(143, 240, 168, 0.06), transparent 58%),
+    radial-gradient(900px 520px at 102% -6%, rgba(110, 168, 254, 0.05), transparent 55%),
+    radial-gradient(800px 800px at 50% 120%, rgba(91, 224, 200, 0.04), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(143, 240, 168, 0.26); color: #ffffff; }
+
+/* Refined scrollbars — a big part of why long lists feel native. */
+* { scrollbar-width: thin; scrollbar-color: rgba(120, 160, 220, 0.28) transparent; }
+*::-webkit-scrollbar { width: 11px; height: 11px; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(120, 160, 220, 0.22);
+  border-radius: var(--r-pill);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(120, 160, 220, 0.4); background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Global control skins ─────────────────────────────────────────────────
+   The pre-existing components use inline-styled bare <button>/<input>/<select>
+   elements. Skinning the raw elements here upgrades the ENTIRE app at once —
+   including modes not individually refactored — while inline sizing still
+   wins where set. */
+button {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease,
+              transform .05s ease, box-shadow .15s ease;
+}
+button:hover { border-color: var(--border-accent); background: var(--accent-bg-2); color: var(--text); }
+button:active { transform: translateY(0.5px); }
+button:disabled { opacity: .4; cursor: default; transform: none; }
+
+input, select, textarea {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+input::placeholder, textarea::placeholder { color: var(--text-mute); }
+input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+button:focus:not(:focus-visible) { outline: none; }

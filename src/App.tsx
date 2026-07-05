@@ -176,16 +176,13 @@ export default function App() {
             </Show>
           }>
             <div style={{ position: 'relative', height: '100%' }}>
-              <div style={{ position: 'absolute', top: '8px', right: '12px', 'z-index': 5 }}>
-                <Show when={result().capabilities.mcpPolicy}>
-                  <button data-testid="mcp-policy-button"
-                    onClick={() => setShowPolicyPanel(true)}
-                    style={{ padding: '4px 10px', 'font-size': '11px' }}>
-                    MCP Policy
-                  </button>
-                </Show>
-              </div>
-              <Organizer scan={result()} loadFile={api.readFileContent} api={organizerApi as never} />
+              <Organizer
+                scan={result()}
+                loadFile={api.readFileContent}
+                api={organizerApi as never}
+                canPolicy={result().capabilities.mcpPolicy}
+                onOpenPolicy={() => setShowPolicyPanel(true)}
+              />
             </div>
             <Show when={showPolicyPanel() && policyResource()}>
               {(policy) => (

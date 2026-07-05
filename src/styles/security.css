@@ -1,0 +1,135 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Ward — Security mode ("Security Console" findings view).
+   Severity-forward: every finding carries its severity colour as a left rail
+   plus a translucent backing tint. Each `.sec-sev-*` class sets the local
+   --sev / --sev-bg / --sev-border custom properties that the tinted elements
+   read, so one class recolours a whole card. Pairs with tokens.css / app.css;
+   only adds classes scoped to this mode (sec-*).
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Severity palette — critical→crit, high→warn, medium→info, low→dim. */
+.sec-sev-critical { --sev: var(--crit); --sev-bg: var(--crit-bg); --sev-border: rgba(255, 69, 58, 0.34); }
+.sec-sev-high     { --sev: var(--warn); --sev-bg: var(--warn-bg); --sev-border: rgba(255, 159, 10, 0.34); }
+.sec-sev-medium   { --sev: var(--info); --sev-bg: var(--info-bg); --sev-border: rgba(110, 168, 254, 0.34); }
+.sec-sev-low      { --sev: var(--text-dim); --sev-bg: rgba(255, 255, 255, 0.045); --sev-border: var(--border); }
+
+/* ── Layout ───────────────────────────────────────────────────────────────*/
+.sec { display: flex; height: 100%; width: 100%; min-height: 0; font-size: 12px; }
+
+/* ── Findings list (left column) ──────────────────────────────────────────*/
+.sec-list {
+  width: 340px; flex: none; min-height: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto; display: flex; flex-direction: column;
+  background: rgba(12, 18, 29, 0.4);
+}
+
+/* Sticky header: title + Scan now + the severity summary stay pinned while
+   the findings scroll beneath (mirrors the organizer's sticky scope rows). */
+.sec-list-top {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 13px 12px 10px;
+  background: linear-gradient(180deg, var(--bg) 78%, transparent);
+  backdrop-filter: blur(6px);
+}
+.sec-list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sec-list-title {
+  font-family: var(--font-display); font-size: 14px; font-weight: 700; letter-spacing: 0.3px;
+}
+.sec-scan { flex: none; }
+.sec-scanning { font-size: 12px; color: var(--text-dim); padding: 2px 2px 4px; }
+
+/* Severity summary — count badges / stat tiles, tabular figures. */
+.sec-counts { display: flex; gap: 6px; flex-wrap: wrap; }
+.sec-count {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 46px; padding: 4px 10px;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1;
+  color: var(--sev); background: var(--sev-bg);
+  border: 1px solid var(--sev-border); border-radius: var(--r-pill);
+}
+
+/* Findings — severity-tinted cards. */
+.sec-findings { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 18px; }
+.sec-finding {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 11px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--sev); cursor: pointer;
+  transition: background .13s ease, border-color .13s ease,
+              transform .05s ease, box-shadow .15s ease;
+}
+.sec-finding:hover { background: var(--surface-3); border-color: var(--border-strong); }
+.sec-finding:active { transform: translateY(0.5px); }
+.sec-finding.selected {
+  background: var(--sev-bg); border-color: var(--sev-border);
+  border-left-color: var(--sev); box-shadow: var(--sh-2);
+}
+
+.sec-sev-dot {
+  width: 8px; height: 8px; min-width: 8px; flex: none; margin-top: 4px;
+  border-radius: 50%; background: var(--sev);
+  box-shadow: 0 0 8px -1px var(--sev);
+}
+.sec-finding-main { flex: 1; min-width: 0; }
+.sec-finding-title {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sec-finding-sub {
+  margin-top: 2px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Clean state — positive signal, reserves mint for the primary action. */
+.sec-clean {
+  margin: 4px 12px; padding: 12px 14px; border-radius: var(--r-md);
+  color: var(--ok); background: var(--ok-bg); border: 1px solid rgba(48, 209, 88, 0.28);
+  font-size: 12px; text-align: center;
+}
+
+/* ── Detail pane (right column) ───────────────────────────────────────────*/
+.sec-detail {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 18px 20px;
+  display: flex; flex-direction: column;
+}
+.sec-detail-empty { margin: auto; color: var(--text-mute); font-size: 13px; text-align: center; }
+
+.sec-detail-card {
+  align-self: stretch; width: 100%; max-width: 760px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--sev); border-radius: var(--r-lg);
+  box-shadow: var(--sh-2); padding: 18px 20px;
+}
+.sec-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.sec-detail-title {
+  margin: 0; font-family: var(--font-display); font-size: 18px; font-weight: 700;
+  letter-spacing: 0.2px; color: var(--text); word-break: break-word;
+}
+.sec-detail-desc { color: var(--text-dim); font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
+
+.sec-field { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.sec-field strong {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase;
+  color: var(--text-mute); font-family: var(--font-ui);
+}
+.sec-field code {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: var(--r-sm); word-break: break-word;
+}
+/* Matched text carries the finding's severity colour. */
+.sec-field code.sec-matched-code {
+  color: var(--sev); background: var(--sev-bg); border-color: var(--sev-border);
+}
+
+.sec-snippet {
+  margin-bottom: 14px; padding: 12px 14px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.sec-actions { display: flex; gap: 8px; flex-wrap: wrap; }

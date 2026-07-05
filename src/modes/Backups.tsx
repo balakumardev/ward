@@ -6,6 +6,7 @@ import type {
   PushResult,
   ScanResult,
 } from '../api';
+import '../styles/backups.css';
 
 export interface BackupsApi {
   backupStatus: () => Promise<BackupStatus>;
@@ -158,150 +159,147 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
   const scheduledInterval = createMemo(() => status()?.schedulerInterval ?? null);
 
   return (
-    <div data-testid="backups-mode" style={{ padding: '16px', 'font-size': '12px' }}>
-      <h2 style={{ 'font-size': '14px', margin: '0 0 12px' }}>Backups</h2>
+    <div class="bk" data-testid="backups-mode">
+      <div class="bk-header">
+        <h2 class="bk-title">Backups</h2>
+      </div>
 
       <Show when={status()} fallback={
-        <div data-testid="backups-loading" style={{ color: 'var(--text-dim)' }}>Loading backup status…</div>
+        <div class="bk-loading" data-testid="backups-loading">Loading backup status…</div>
       }>
         {(s) => (
-          <div style={{ display: 'grid', gap: '14px', 'grid-template-columns': '1fr', 'max-width': '780px' }}>
-            {/* Status panel */}
-            <section
-              data-testid="backups-status-panel"
-              style={{ background: 'var(--surface-2)', padding: '12px', 'border-radius': 'var(--radius)' }}
-            >
-              <div style={{ 'font-weight': 600, 'margin-bottom': '6px' }}>Status</div>
-              <table style={{ width: '100%', 'border-collapse': 'collapse' }}>
-                <tbody>
-                  <tr>
-                    <td style={cellLabel}>Repo</td>
-                    <td style={cellValue}>
-                      {s().hasRepo
-                        ? <span data-testid="backups-repo-present" style={{ color: 'var(--ok)' }}>present (~/.ward-backups/)</span>
-                        : <span data-testid="backups-repo-missing" style={{ color: 'var(--warn)' }}>not yet initialized</span>}
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={cellLabel}>Last commit</td>
-                    <td style={cellValue}>
-                      <span data-testid="backups-last-commit">{shortSha(s().lastCommit)}</span>
-                      {' · '}
-                      <span style={{ color: 'var(--text-dim)' }}>{fmtDate(s().lastCommitAt)}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={cellLabel}>Remote</td>
-                    <td style={cellValue}>
-                      <Show when={s().remoteUrl} fallback={<span style={{ color: 'var(--text-dim)' }}>none</span>}>
-                        {(u) => <code data-testid="backups-remote">{u()}</code>}
-                      </Show>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style={cellLabel}>Scheduler</td>
-                    <td style={cellValue}>
-                      <Show when={s().schedulerInstalled} fallback={
-                        <span data-testid="backups-scheduler-not-installed" style={{ color: 'var(--text-dim)' }}>
-                          not installed
-                        </span>
-                      }>
-                        <span data-testid="backups-scheduler-installed" style={{ color: 'var(--ok)' }}>
-                          installed · {s().schedulerInterval}s
-                        </span>
-                      </Show>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+          <div class="bk-grid rise" data-testid="backups-panel">
+            {/* Status card */}
+            <section class="bk-card bk-status" data-testid="backups-status-panel">
+              <div class="bk-card-head">
+                <span class="bk-card-title">Status</span>
+              </div>
+              <div class="bk-fields">
+                <div class="bk-field">
+                  <span class="bk-field-label">Repo</span>
+                  <span class="bk-field-value">
+                    {s().hasRepo
+                      ? <span class="badge badge-ok" data-testid="backups-repo-present">present (~/.ward-backups/)</span>
+                      : <span class="badge badge-warn" data-testid="backups-repo-missing">not yet initialized</span>}
+                  </span>
+                </div>
+                <div class="bk-field">
+                  <span class="bk-field-label">Last commit</span>
+                  <span class="bk-field-value">
+                    <span class="bk-sha" data-testid="backups-last-commit">{shortSha(s().lastCommit)}</span>
+                    {' · '}
+                    <span class="bk-date">{fmtDate(s().lastCommitAt)}</span>
+                  </span>
+                </div>
+                <div class="bk-field">
+                  <span class="bk-field-label">Remote</span>
+                  <span class="bk-field-value">
+                    <Show when={s().remoteUrl} fallback={<span class="bk-muted">none</span>}>
+                      {(u) => <code class="bk-mono" data-testid="backups-remote">{u()}</code>}
+                    </Show>
+                  </span>
+                </div>
+                <div class="bk-field">
+                  <span class="bk-field-label">Scheduler</span>
+                  <span class="bk-field-value">
+                    <Show when={s().schedulerInstalled} fallback={
+                      <span class="bk-not-installed" data-testid="backups-scheduler-not-installed">
+                        not installed
+                      </span>
+                    }>
+                      <span class="badge badge-ok" data-testid="backups-scheduler-installed">
+                        installed · {s().schedulerInterval}s
+                      </span>
+                    </Show>
+                  </span>
+                </div>
+              </div>
             </section>
 
             {/* Run / Sync / Push */}
-            <section style={{ background: 'var(--surface-2)', padding: '12px', 'border-radius': 'var(--radius)' }}>
-              <div style={{ 'font-weight': 600, 'margin-bottom': '8px' }}>Manual backup</div>
-              <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
-                <button data-testid="backups-btn-run" disabled={busy() !== null} onClick={runBackup} style={btnPrimary}>
+            <section class="bk-card">
+              <div class="bk-card-head">
+                <span class="bk-card-title">Manual backup</span>
+              </div>
+              <div class="bk-actions">
+                <button class="btn btn-primary" data-testid="backups-btn-run" disabled={busy() !== null} onClick={runBackup}>
                   Run backup
                 </button>
-                <button data-testid="backups-btn-sync" disabled={busy() !== null} onClick={syncBackup} style={btnStyle}>
+                <button class="btn btn-primary" data-testid="backups-btn-sync" disabled={busy() !== null} onClick={syncBackup}>
                   Sync (commit)
                 </button>
-                <button
-                  data-testid="backups-btn-push"
-                  disabled={busy() !== null}
-                  onClick={pushBackup}
-                  style={{ ...btnStyle, background: 'var(--accent)', color: '#000' }}
-                >
+                <button class="btn btn-ghost" data-testid="backups-btn-push" disabled={busy() !== null} onClick={pushBackup}>
                   Push
                 </button>
               </div>
-              <div style={{ 'font-size': '10px', color: 'var(--text-dim)', 'margin-top': '6px' }}>
+              <div class="bk-hint">
                 Push is the only network action — requires an explicit click.
               </div>
             </section>
 
             {/* Remote URL */}
-            <section style={{ background: 'var(--surface-2)', padding: '12px', 'border-radius': 'var(--radius)' }}>
-              <div style={{ 'font-weight': 600, 'margin-bottom': '8px' }}>Remote</div>
-              <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+            <section class="bk-card">
+              <div class="bk-card-head">
+                <span class="bk-card-title">Remote</span>
+              </div>
+              <div class="bk-form-row">
                 <input
+                  class="bk-input"
                   data-testid="backups-remote-input"
                   type="text"
                   placeholder="git@github.com:you/ward-backups.git"
                   value={remoteDraft()}
                   onInput={(e) => setRemoteDraft(e.currentTarget.value)}
-                  style={inputStyle}
                 />
-                <button data-testid="backups-remote-set" disabled={busy() !== null} onClick={setRemote} style={btnStyle}>
+                <button class="btn btn-ghost" data-testid="backups-remote-set" disabled={busy() !== null} onClick={setRemote}>
                   Set remote
                 </button>
               </div>
               <Show when={s().remoteUrl}>
-                <div style={{ 'font-size': '10px', color: 'var(--text-dim)', 'margin-top': '6px' }}>
-                  Current: <code>{s().remoteUrl}</code>
+                <div class="bk-hint">
+                  Current: <code class="bk-mono">{s().remoteUrl}</code>
                 </div>
               </Show>
             </section>
 
             {/* Scheduler */}
-            <section
-              data-testid="backups-scheduler-panel"
-              style={{ background: 'var(--surface-2)', padding: '12px', 'border-radius': 'var(--radius)' }}
-            >
-              <div style={{ 'font-weight': 600, 'margin-bottom': '8px' }}>Scheduler (launchd)</div>
-              <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
-                <label style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+            <section class="bk-card" data-testid="backups-scheduler-panel">
+              <div class="bk-card-head">
+                <span class="bk-card-title">Scheduler (launchd)</span>
+              </div>
+              <div class="bk-form-row">
+                <label class="bk-label">
                   Interval (sec):
                   <input
+                    class="bk-input bk-input-num"
                     data-testid="backups-interval-input"
                     type="number"
                     min={MIN_INTERVAL_SECONDS}
                     max={MAX_INTERVAL_SECONDS}
                     value={intervalDraft()}
                     onInput={(e) => setIntervalDraft(Number(e.currentTarget.value) || MIN_INTERVAL_SECONDS)}
-                    style={{ ...inputStyle, width: '110px' }}
                   />
                 </label>
                 <button
+                  class="btn btn-ghost"
                   data-testid="backups-scheduler-install"
                   disabled={busy() !== null}
                   onClick={installScheduler}
-                  style={btnStyle}
                 >
                   Install
                 </button>
                 <button
+                  class="btn btn-danger"
                   data-testid="backups-scheduler-remove"
                   disabled={busy() !== null || !s().schedulerInstalled}
                   onClick={removeScheduler}
-                  style={{ ...btnStyle, background: 'var(--crit)', color: '#fff' }}
                 >
                   Remove
                 </button>
               </div>
-              <div style={{ 'font-size': '10px', color: 'var(--text-dim)', 'margin-top': '6px' }}>
+              <div class="bk-hint">
                 Valid range: {MIN_INTERVAL_SECONDS}s–{MAX_INTERVAL_SECONDS}s. Label:{' '}
-                <code>dev.balakumar.ward.backup</code>{' · '}
+                <code class="bk-mono">dev.balakumar.ward.backup</code>{' · '}
                 <Show when={scheduledInterval()} fallback={null}>
                   {(n) => <span>Currently runs every {n()}s.</span>}
                 </Show>
@@ -310,13 +308,13 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
 
             {/* Bus / error / info */}
             <Show when={busy()}>
-              <div data-testid="backups-busy" style={{ color: 'var(--text-dim)' }}>{busy()}…</div>
+              <div class="bk-msg bk-msg-busy" data-testid="backups-busy">{busy()}…</div>
             </Show>
             <Show when={error()}>
-              <div data-testid="backups-error" style={{ color: 'var(--crit)' }}>{error()}</div>
+              <div class="bk-msg bk-msg-err" data-testid="backups-error">{error()}</div>
             </Show>
             <Show when={info()}>
-              <div data-testid="backups-info" style={{ color: 'var(--ok)' }}>{info()}</div>
+              <div class="bk-msg bk-msg-ok" data-testid="backups-info">{info()}</div>
             </Show>
           </div>
         )}
@@ -324,34 +322,3 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
     </div>
   );
 }
-
-const cellLabel = {
-  padding: '4px 6px', color: 'var(--text-dim)', width: '140px', 'vertical-align': 'top',
-} as const;
-const cellValue = {
-  padding: '4px 6px',
-} as const;
-const btnStyle = {
-  padding: '4px 12px',
-  'font-size': '11px',
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
-  'border-radius': 'var(--radius)',
-  cursor: 'pointer',
-} as const;
-const btnPrimary = {
-  ...btnStyle,
-  background: 'var(--accent)',
-  color: '#000',
-} as const;
-const inputStyle = {
-  flex: '1 1 240px',
-  padding: '4px 8px',
-  'font-size': '11px',
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
-  'border-radius': 'var(--radius)',
-  'min-width': '240px',
-} as const;

@@ -1,6 +1,7 @@
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import type { BudgetItem, Scope, ScanResult } from '../api';
 import { api } from '../api';
+import '../styles/budget.css';
 
 /** Plan 06 — Context Budget mode.
  *
@@ -67,11 +68,11 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
   });
 
   return (
-    <div data-testid="budget-mode" style={{ padding: '16px', 'font-size': '12px' }}>
-      <header style={{ display: 'flex', 'align-items': 'baseline', 'justify-content': 'space-between', 'margin-bottom': '12px' }}>
+    <div data-testid="budget-mode" class="bud-mode">
+      <header class="bud-header">
         <div>
-          <h2 style={{ margin: '0 0 4px', 'font-size': '14px' }}>Context Budget — {props.scope.label}</h2>
-          <div data-testid="budget-method" style={{ color: 'var(--text-dim)', 'font-size': '11px' }}>
+          <h2 class="bud-title">Context Budget — {props.scope.label}</h2>
+          <div data-testid="budget-method" class="bud-method">
             <Show when={budget()} fallback="Computing…">
               {(b) => (
                 <span>{b().measured ? 'measured (real tokenizer)' : 'estimated (bytes/4)'} · 200K context model</span>
@@ -79,12 +80,11 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
             </Show>
           </div>
         </div>
-        <button data-testid="budget-recompute" onClick={() => refetch()}
-          style={{ padding: '4px 10px', 'font-size': '11px' }}>Recompute</button>
+        <button data-testid="budget-recompute" class="btn btn-ghost bud-recompute" onClick={() => refetch()}>Recompute</button>
       </header>
 
       <Show when={budget()} fallback={
-        <div data-testid="budget-loading" style={{ color: 'var(--text-dim)', padding: '16px 0' }}>Computing context budget…</div>
+        <div data-testid="budget-loading" class="bud-loading">Computing context budget…</div>
       }>
         {(b) => {
           const total = b().used;
@@ -97,6 +97,12 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
             : total >= maxOutAt ? 'var(--warn)'
             : total >= warnAt ? '#ff9f0a'
             : 'var(--ok)';
+          // Presentation-only state derived from the identical thresholds
+          // above: healthy gets the mint→teal gradient, warn/crit their
+          // solid ramps. (var(--warn) and #ff9f0a are the same orange.)
+          const fillState = fillColor === 'var(--crit)' ? 'crit'
+            : fillColor === 'var(--ok)' ? 'ok'
+            : 'warn';
 
           const SYSTEM_ROW: Array<{ key: string; label: string; tokens: number; measured?: boolean }> = [
             { key: 'system', label: 'System (always loaded)', tokens: b().systemLoaded, measured: false },
@@ -109,103 +115,94 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
           return (
             <>
               {/* METER */}
-              <section data-testid="budget-meter" style={{
-                background: 'var(--surface-2)', 'border-radius': 'var(--radius)',
-                padding: '12px', 'margin-bottom': '14px',
-              }}>
-                <div style={{ display: 'flex', 'justify-content': 'space-between', 'margin-bottom': '6px' }}>
-                  <span style={{ 'font-weight': 600 }}>Used</span>
-                  <span data-testid="budget-used">
-                    {fmt(total)} / {fmt(limit)} <span style={{ color: 'var(--text-dim)' }}>({fillPct}%)</span>
-                  </span>
+              <section data-testid="budget-meter" class="bud-card bud-meter">
+                <div class="bud-meter-top">
+                  <div>
+                    <div class="bud-eyebrow">Used</div>
+                    <div data-testid="budget-used" class="bud-readout">
+                      {fmt(total)} / {fmt(limit)} <span class="bud-pct">({fillPct}%)</span>
+                    </div>
+                  </div>
+                  <Show
+                    when={b().measured}
+                    fallback={<span class="badge badge-warn bud-badge">estimated</span>}
+                  >
+                    <span class="badge badge-ok bud-badge">measured</span>
+                  </Show>
                 </div>
-                <div data-testid="budget-bar-track" style={{
-                  position: 'relative', height: '14px',
-                  background: 'rgba(255,255,255,0.06)', 'border-radius': '7px', overflow: 'hidden',
-                }}>
-                  <div data-testid="budget-bar-fill" style={{
-                    position: 'absolute', left: '0', top: '0', bottom: '0',
-                    width: `${fillPct}%`, background: fillColor, transition: 'width 200ms',
-                  }} />
+                <div data-testid="budget-bar-track" class="bud-track">
+                  <div
+                    data-testid="budget-bar-fill"
+                    classList={{ 'bud-fill': true, ok: fillState === 'ok', warn: fillState === 'warn', crit: fillState === 'crit' }}
+                    style={{ width: `${fillPct}%` }}
+                  />
                   {/* Warning threshold marker */}
-                  <div title="warning threshold" style={{
-                    position: 'absolute', top: '-2px', bottom: '-2px',
-                    left: `${pct(limit - b().warningThreshold, limit)}%`, width: '2px', background: '#ff9f0a',
-                  }} />
+                  <div class="bud-marker warn" title="warning threshold" style={{ left: `${pct(limit - b().warningThreshold, limit)}%` }} />
                   {/* Max-output reservation marker */}
-                  <div title="max output reservation" style={{
-                    position: 'absolute', top: '-2px', bottom: '-2px',
-                    left: `${pct(limit - b().maxOutput, limit)}%`, width: '2px', background: 'var(--crit)',
-                  }} />
+                  <div class="bud-marker crit" title="max output reservation" style={{ left: `${pct(limit - b().maxOutput, limit)}%` }} />
                 </div>
-                <div style={{ display: 'flex', gap: '12px', 'margin-top': '6px', 'font-size': '11px', color: 'var(--text-dim)' }}>
-                  <span><span style={{ color: '#ff9f0a' }}>▌</span> warn @ {fmt(warnAt)}</span>
-                  <span><span style={{ color: 'var(--crit)' }}>▌</span> max-out @ {fmt(maxOutAt)}</span>
+                <div class="bud-legend">
+                  <span><span class="glyph" style={{ color: '#ff9f0a' }}>▌</span> warn @ {fmt(warnAt)}</span>
+                  <span><span class="glyph" style={{ color: 'var(--crit)' }}>▌</span> max-out @ {fmt(maxOutAt)}</span>
                   <span>autocompact @ {fmt(compactAt)}</span>
                 </div>
               </section>
 
               {/* COMPONENT BREAKDOWN */}
-              <section data-testid="budget-breakdown" style={{ 'margin-bottom': '14px' }}>
-                <h3 style={{ 'font-size': '12px', margin: '0 0 6px', color: 'var(--text-dim)' }}>Where the tokens come from</h3>
-                <table style={{ width: '100%', 'border-collapse': 'collapse' }}>
-                  <thead>
-                    <tr style={{ 'text-align': 'left', color: 'var(--text-dim)', 'font-size': '11px' }}>
-                      <th style={{ padding: '4px 8px' }}>Component</th>
-                      <th style={{ padding: '4px 8px', 'text-align': 'right' }}>Tokens</th>
-                      <th style={{ padding: '4px 8px', 'text-align': 'right' }}>Share</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={SYSTEM_ROW}>
-                      {(row) => (
-                        <tr data-testid={`budget-row-system-${row.key}`}>
-                          <td style={{ padding: '4px 8px' }}>{row.label}</td>
-                          <td style={{ padding: '4px 8px', 'text-align': 'right' }}>{fmt(row.tokens)}</td>
-                          <td style={{ padding: '4px 8px', 'text-align': 'right', color: 'var(--text-dim)' }}>
-                            {pct(row.tokens, total)}%
-                          </td>
-                        </tr>
-                      )}
-                    </For>
-                    <For each={always}>
-                      {(group) => (
-                        <tr data-testid={`budget-row-always-${group.category}`}>
-                          <td style={{ padding: '4px 8px' }}>{CATEGORY_LABELS[group.category] ?? group.category} ({group.items.length})</td>
-                          <td style={{ padding: '4px 8px', 'text-align': 'right' }}>{fmt(group.total)}</td>
-                          <td style={{ padding: '4px 8px', 'text-align': 'right', color: 'var(--text-dim)' }}>
-                            {pct(group.total, total)}%
-                          </td>
-                        </tr>
-                      )}
-                    </For>
-                    <tr style={{ 'border-top': '1px solid var(--border)' }}>
-                      <td style={{ padding: '6px 8px', 'font-weight': 600 }}>Total used</td>
-                      <td data-testid="budget-total" style={{ padding: '6px 8px', 'text-align': 'right', 'font-weight': 600 }}>{fmt(total)}</td>
-                      <td style={{ padding: '6px 8px', 'text-align': 'right' }}>100%</td>
-                    </tr>
-                  </tbody>
-                </table>
+              <section data-testid="budget-breakdown" class="bud-card bud-breakdown">
+                <h3 class="bud-section-title">Where the tokens come from</h3>
+                <div class="bud-bd-list">
+                  <div class="bud-bd-headrow">
+                    <span>Component</span>
+                    <span class="bud-bd-head-num">Tokens</span>
+                    <span class="bud-bd-head-share">Share</span>
+                  </div>
+                  <For each={SYSTEM_ROW}>
+                    {(row) => (
+                      <div data-testid={`budget-row-system-${row.key}`} class="bud-bd-row">
+                        <span class="bud-bd-label">{row.label}</span>
+                        <span class="bud-bd-num">{fmt(row.tokens)}</span>
+                        <span class="bud-bd-share">
+                          <span class="bud-prop"><span class="bud-prop-fill" style={{ width: `${pct(row.tokens, total)}%` }} /></span>
+                          <span class="bud-bd-pct">{pct(row.tokens, total)}%</span>
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                  <For each={always}>
+                    {(group) => (
+                      <div data-testid={`budget-row-always-${group.category}`} class="bud-bd-row">
+                        <span class="bud-bd-label">{CATEGORY_LABELS[group.category] ?? group.category} ({group.items.length})</span>
+                        <span class="bud-bd-num">{fmt(group.total)}</span>
+                        <span class="bud-bd-share">
+                          <span class="bud-prop"><span class="bud-prop-fill" style={{ width: `${pct(group.total, total)}%` }} /></span>
+                          <span class="bud-bd-pct">{pct(group.total, total)}%</span>
+                        </span>
+                      </div>
+                    )}
+                  </For>
+                  <div class="bud-bd-row bud-bd-total">
+                    <span class="bud-bd-label">Total used</span>
+                    <span data-testid="budget-total" class="bud-bd-num">{fmt(total)}</span>
+                    <span class="bud-bd-share"><span class="bud-bd-pct">100%</span></span>
+                  </div>
+                </div>
               </section>
 
               {/* DETAIL LIST */}
-              <section data-testid="budget-detail">
-                <h3 style={{ 'font-size': '12px', margin: '0 0 6px', color: 'var(--text-dim)' }}>Files &amp; items</h3>
+              <section data-testid="budget-detail" class="bud-card bud-detail">
+                <h3 class="bud-section-title">Files &amp; items</h3>
                 <Show when={b().claudeMdFiles.length > 0}>
-                  <div style={{ 'margin-bottom': '8px' }}>
-                    <div style={{ 'font-weight': 500, 'margin-bottom': '4px' }}>CLAUDE.md</div>
+                  <div class="bud-sub">
+                    <div class="bud-sub-title">CLAUDE.md</div>
                     <For each={b().claudeMdFiles}>
                       {(f) => (
-                        <div data-testid="budget-claudemd-file" style={{
-                          display: 'flex', 'justify-content': 'space-between', gap: '8px',
-                          padding: '4px 8px', background: 'var(--surface-2)', 'border-radius': 'var(--radius)',
-                          'margin-bottom': '4px',
-                        }}>
-                          <span style={{ 'min-width': 0, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
-                            <code>{f.name}</code> <span style={{ color: 'var(--text-dim)' }}>· {f.path}</span>
+                        <div data-testid="budget-claudemd-file" class="bud-file-row">
+                          <span class="bud-file-name">
+                            <code>{f.name}</code> <span class="bud-file-path">· {f.path}</span>
                           </span>
-                          <span style={{ 'white-space': 'nowrap' }}>
-                            <strong>{fmt(f.tokens)}</strong> <span style={{ color: 'var(--text-dim)' }}>{f.measured ? 'measured' : 'estimated'}</span>
+                          <span class="bud-file-meta">
+                            <strong>{fmt(f.tokens)}</strong> <span classList={{ 'bud-tag': true, measured: f.measured, estimated: !f.measured }}>{f.measured ? 'measured' : 'estimated'}</span>
                           </span>
                         </div>
                       )}
@@ -213,34 +210,24 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
                   </div>
                 </Show>
                 <Show when={always.length > 0}>
-                  <div>
-                    <div style={{ 'font-weight': 500, 'margin-bottom': '4px' }}>Always-loaded items</div>
+                  <div class="bud-sub">
+                    <div class="bud-sub-title">Always-loaded items</div>
                     <For each={always}>
                       {(group) => (
-                        <div data-testid={`budget-group-${group.category}`} style={{ 'margin-bottom': '8px' }}>
-                          <div
-                            onClick={() => toggle(`g-${group.category}`)}
-                            style={{
-                              cursor: 'pointer', padding: '4px 8px',
-                              background: 'var(--surface-2)', 'border-radius': 'var(--radius)',
-                              display: 'flex', 'justify-content': 'space-between',
-                            }}
-                          >
-                            <span>
-                              {expanded().has(`g-${group.category}`) ? '▾' : '▸'} {CATEGORY_LABELS[group.category] ?? group.category} ({group.items.length})
+                        <div data-testid={`budget-group-${group.category}`} class="bud-group">
+                          <div class="bud-group-head" onClick={() => toggle(`g-${group.category}`)}>
+                            <span class="bud-group-name">
+                              <span class="bud-caret">{expanded().has(`g-${group.category}`) ? '▾' : '▸'}</span> {CATEGORY_LABELS[group.category] ?? group.category} ({group.items.length})
                             </span>
-                            <span><strong>{fmt(group.total)}</strong></span>
+                            <span class="bud-group-total">{fmt(group.total)}</span>
                           </div>
                           <Show when={expanded().has(`g-${group.category}`)}>
                             <For each={group.items}>
                               {(it) => (
-                                <div data-testid="budget-item-row" style={{
-                                  display: 'flex', 'justify-content': 'space-between', gap: '8px',
-                                  padding: '3px 8px 3px 24px', color: 'var(--text-dim)',
-                                }}>
-                                  <span style={{ 'min-width': 0, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{it.name}</span>
-                                  <span style={{ 'white-space': 'nowrap' }}>
-                                    <strong style={{ color: 'var(--text)' }}>{fmt(it.tokens)}</strong> {it.measured ? 'measured' : 'estimated'}
+                                <div data-testid="budget-item-row" class="bud-item-row">
+                                  <span class="bud-item-name">{it.name}</span>
+                                  <span class="bud-item-meta">
+                                    <strong>{fmt(it.tokens)}</strong> <span classList={{ 'bud-tag': true, measured: it.measured, estimated: !it.measured }}>{it.measured ? 'measured' : 'estimated'}</span>
                                   </span>
                                 </div>
                               )}
@@ -252,7 +239,7 @@ export function Budget(props: { scan: ScanResult; scope: Scope }) {
                   </div>
                 </Show>
                 <Show when={b().claudeMdFiles.length === 0 && always.length === 0}>
-                  <div data-testid="budget-empty" style={{ color: 'var(--text-dim)', padding: '8px' }}>
+                  <div data-testid="budget-empty" class="bud-empty">
                     No always-loaded items or CLAUDE.md files in this scope.
                   </div>
                 </Show>
@@ -272,33 +259,25 @@ export function BudgetWithPicker(props: { scan: ScanResult; initialScopeId?: str
   const [scopeId, setScopeId] = createSignal(props.initialScopeId ?? props.scan.scopes[0]?.id ?? '');
   const scope = createMemo(() => props.scan.scopes.find(s => s.id === scopeId()));
   return (
-    <div style={{ display: 'flex', height: '100%', 'font-size': '12px' }}>
-      <aside style={{
-        width: '210px', 'border-right': '1px solid var(--border)',
-        padding: '8px', 'overflow-y': 'auto', background: 'var(--surface-2)',
-      }}>
-        <div style={{ 'font-size': '11px', color: 'var(--text-dim)', 'margin-bottom': '6px' }}>Scope</div>
+    <div class="bud-shell">
+      <aside class="bud-scopes">
+        <div class="bud-eyebrow bud-scopes-title">Scope</div>
         <For each={props.scan.scopes}>
           {(s) => (
             <div
               data-testid="budget-scope-row"
               data-scope-id={s.id}
               onClick={() => setScopeId(s.id)}
-              style={{
-                padding: '5px 8px', margin: '2px 0', 'border-radius': 'var(--radius)',
-                cursor: 'pointer',
-                background: scopeId() === s.id ? 'rgba(48,209,88,0.14)' : 'transparent',
-                color: scopeId() === s.id ? 'var(--accent)' : 'var(--text)',
-              }}
+              classList={{ 'bud-scope-row': true, active: scopeId() === s.id }}
             >
               {s.label}
             </div>
           )}
         </For>
       </aside>
-      <main style={{ flex: 1, 'overflow-y': 'auto' }}>
+      <main class="bud-main">
         <Show when={scope()} fallback={
-          <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Select a scope to view its context budget.</div>
+          <div class="bud-pick-empty">Select a scope to view its context budget.</div>
         }>
           {(s) => <Budget scan={props.scan} scope={s()} />}
         </Show>

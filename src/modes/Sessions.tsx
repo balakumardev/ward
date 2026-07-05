@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import '../styles/sessions.css';
 import type {
   Conversation,
   CostBreakdown,
@@ -170,20 +171,14 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
   }
 
   return (
-    <div data-testid="sessions-mode" style={{ display: 'flex', height: '100%', 'font-size': '12px' }}>
+    <div data-testid="sessions-mode" class="sx-sessions">
       {/* LEFT — session list */}
-      <aside
-        data-testid="sessions-list"
-        style={{
-          width: '260px', 'border-right': '1px solid var(--border)',
-          padding: '8px', 'overflow-y': 'auto', background: 'var(--surface-2)',
-        }}
-      >
-        <div style={{ 'font-size': '11px', color: 'var(--text-dim)', 'margin-bottom': '6px' }}>
+      <aside data-testid="sessions-list" class="sx-list">
+        <div class="sx-list-head">
           Sessions ({sessionItems().length})
         </div>
         <Show when={sessionItems().length > 0} fallback={
-          <div data-testid="sessions-empty" style={{ color: 'var(--text-dim)', padding: '8px' }}>
+          <div data-testid="sessions-empty" class="sx-empty">
             No session files found under <code>~/.claude/projects/</code>.
           </div>
         }>
@@ -193,17 +188,12 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                 data-testid="sessions-row"
                 data-path={item.path}
                 onClick={() => openSelected(item.path)}
-                style={{
-                  padding: '6px 8px', margin: '2px 0', 'border-radius': 'var(--radius)',
-                  cursor: 'pointer',
-                  background: selectedPath() === item.path ? 'rgba(48,209,88,0.14)' : 'transparent',
-                  color: selectedPath() === item.path ? 'var(--accent)' : 'var(--text)',
-                }}
+                classList={{ 'sx-row': true, 'is-selected': selectedPath() === item.path }}
               >
-                <div style={{ 'font-weight': 500, 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
+                <div class="sx-row-name">
                   {item.name}
                 </div>
-                <div style={{ 'font-size': '10px', color: 'var(--text-dim)', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
+                <div class="sx-row-sub">
                   {item.description || item.path.split('/').slice(-2).join('/')}
                 </div>
               </div>
@@ -213,64 +203,61 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
       </aside>
 
       {/* MIDDLE — conversation viewer */}
-      <main
-        data-testid="sessions-viewer"
-        style={{ flex: 1, 'overflow-y': 'auto', padding: '12px 16px' }}
-      >
+      <main data-testid="sessions-viewer" class="sx-viewer">
         <Show when={selectedPath()} fallback={
-          <div style={{ color: 'var(--text-dim)' }}>Pick a session from the left.</div>
+          <div class="sx-hint">Pick a session from the left.</div>
         }>
           {/* Toolbar */}
-          <div style={{ display: 'flex', gap: '8px', 'margin-bottom': '10px', 'flex-wrap': 'wrap', 'align-items': 'center' }}>
+          <div class="sx-toolbar">
             <button
               data-testid="sessions-btn-open"
+              class="btn btn-ghost"
               disabled={busy() !== null}
               onClick={() => openSelected(selectedPath())}
-              style={btnStyle}
             >
               Open
             </button>
             <button
               data-testid="sessions-btn-cost"
+              class="btn btn-ghost"
               disabled={busy() !== null}
               onClick={recomputeCost}
-              style={btnStyle}
             >
               Cost
             </button>
             <button
               data-testid="sessions-btn-distill"
+              class="btn btn-primary"
               disabled={busy() !== null}
               onClick={distillSelected}
-              style={{ ...btnStyle, background: 'var(--accent)', color: '#000' }}
             >
               Distill
             </button>
             <button
               data-testid="sessions-btn-trim"
+              class="btn sx-btn-warn"
               disabled={busy() !== null}
               onClick={trimSelected}
-              style={{ ...btnStyle, background: '#ff9f0a', color: '#000' }}
             >
               Trim
             </button>
             <Show when={trimInfo()}>
               <button
                 data-testid="sessions-btn-undo"
+                class="btn btn-danger"
                 disabled={busy() !== null}
                 onClick={undoTrim}
-                style={{ ...btnStyle, background: 'var(--crit)', color: '#fff' }}
               >
                 Undo Trim
               </button>
             </Show>
             <Show when={busy()}>
-              <span data-testid="sessions-busy" style={{ color: 'var(--text-dim)' }}>
+              <span data-testid="sessions-busy" class="sx-busy">
                 {busy()}…
               </span>
             </Show>
             <Show when={error()}>
-              <span data-testid="sessions-error" style={{ color: 'var(--crit)' }}>
+              <span data-testid="sessions-error" class="sx-error">
                 {error()}
               </span>
             </Show>
@@ -278,22 +265,16 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
 
           <Show when={distillResult()} fallback={null}>
             {(r) => (
-              <section
-                data-testid="sessions-distill-result"
-                style={{ 'margin-bottom': '12px', background: 'var(--surface-2)', padding: '10px', 'border-radius': 'var(--radius)' }}
-              >
-                <div style={{ 'font-weight': 600, 'margin-bottom': '6px' }}>
+              <section data-testid="sessions-distill-result" class="sx-distill">
+                <div class="sx-distill-title">
                   Distilled · {fmtBytes(r().originalBytes)} → {fmtBytes(r().cleanedBytes)}
-                  {' '}<span style={{ color: 'var(--ok)' }}>(-{r().reductionPct.toFixed(1)}%)</span>
+                  {' '}<span class="sx-reduction">(-{r().reductionPct.toFixed(1)}%)</span>
                 </div>
-                <div style={{ 'font-size': '11px', color: 'var(--text-dim)', 'margin-bottom': '8px' }}>
+                <div class="sx-distill-meta">
                   Backup: <code>{r().backupPath}</code><br />
                   Cleaned: <code>{r().cleanedPath}</code>
                 </div>
-                <pre
-                  data-testid="sessions-distill-index"
-                  style={{ 'white-space': 'pre-wrap', 'font-size': '11px', background: 'var(--surface)', padding: '8px', 'border-radius': 'var(--radius)', 'max-height': '240px', 'overflow-y': 'auto' }}
-                >
+                <pre data-testid="sessions-distill-index" class="sx-distill-index">
                   {r().indexMd}
                 </pre>
               </section>
@@ -302,38 +283,41 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
 
           <Show when={conversation()} fallback={
             <Show when={!busy()} fallback={
-              <div style={{ color: 'var(--text-dim)' }}>Loading conversation…</div>
+              <div class="sx-hint">Loading conversation…</div>
             }>
-              <div style={{ color: 'var(--text-dim)' }}>No conversation loaded. Click Open.</div>
+              <div class="sx-hint">No conversation loaded. Click Open.</div>
             </Show>
           }>
             {(c) => (
-              <div data-testid="sessions-records">
-                <h2 style={{ 'font-size': '13px', 'margin': '0 0 8px' }}>
+              <div data-testid="sessions-records" class="sx-records">
+                <h2 class="sx-convo-head">
                   {c().sessionId} · {c().records.length} records
                 </h2>
                 <For each={c().records}>
                   {(rec, i) => {
                     const s = recordSummary(rec);
                     const isAssistant = rec.kind === 'assistant';
+                    const isUser = rec.kind === 'user';
+                    const isMeta = !isAssistant && !isUser;
                     return (
                       <div
                         data-testid={`sessions-record-${i()}`}
                         data-kind={rec.kind}
-                        style={{
-                          'margin-bottom': '8px', padding: '8px 10px',
-                          'border-left': '3px solid ' + (isAssistant ? 'var(--accent)' : 'var(--border)'),
-                          background: 'var(--surface-2)', 'border-radius': 'var(--radius)',
+                        classList={{
+                          'sx-msg': true,
+                          'sx-msg--assistant': isAssistant,
+                          'sx-msg--user': isUser,
+                          'sx-msg--meta': isMeta,
                         }}
                       >
-                        <div style={{ 'font-size': '10px', color: 'var(--text-dim)', 'margin-bottom': '2px' }}>
-                          #{i() + 1} · {s.label}
+                        <div class="sx-msg-head">
+                          <span class="sx-msg-idx">#{i() + 1}</span>{' · '}<span class="sx-msg-role">{s.label}</span>
                           <Show when={recordHasUsage(rec)}>
-                            <span> · in={fmtTokens((rec as Extract<SessionRecord, { kind: 'assistant' }>).usage!.inputTokens)}
+                            <span class="sx-msg-usage"> · in={fmtTokens((rec as Extract<SessionRecord, { kind: 'assistant' }>).usage!.inputTokens)}
                               {' '}out={fmtTokens((rec as Extract<SessionRecord, { kind: 'assistant' }>).usage!.outputTokens)}</span>
                           </Show>
                         </div>
-                        <div style={{ 'white-space': 'pre-wrap' }}>{s.sub || '(empty)'}</div>
+                        <div class="sx-msg-body">{s.sub || '(empty)'}</div>
                       </div>
                     );
                   }}
@@ -345,69 +329,62 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
       </main>
 
       {/* RIGHT — cost panel */}
-      <aside
-        data-testid="sessions-cost-panel"
-        style={{
-          width: '320px', 'border-left': '1px solid var(--border)',
-          padding: '12px', 'overflow-y': 'auto', background: 'var(--surface-2)',
-        }}
-      >
-        <div style={{ 'font-size': '11px', color: 'var(--text-dim)', 'margin-bottom': '8px' }}>
+      <aside data-testid="sessions-cost-panel" class="sx-cost">
+        <div class="sx-cost-head">
           Cost breakdown
         </div>
         <Show when={cost()} fallback={
-          <div data-testid="sessions-cost-empty" style={{ color: 'var(--text-dim)', 'font-size': '11px' }}>
+          <div data-testid="sessions-cost-empty" class="sx-cost-empty">
             Click <strong>Cost</strong> to compute per-model token usage + estimated USD.
           </div>
         }>
           {(b) => (
-            <div data-testid="sessions-cost-result">
-              <div
-                data-testid="sessions-cost-total"
-                style={{ 'font-size': '16px', 'font-weight': 600, 'margin-bottom': '6px' }}
-              >
+            <div data-testid="sessions-cost-result" class="sx-in">
+              <div data-testid="sessions-cost-total" class="sx-cost-total">
                 {fmtUsd(b().estimatedCostUsd)}
-                <span style={{ 'font-size': '10px', color: 'var(--text-dim)', 'margin-left': '6px' }}>
+                <span class="sx-cost-est-label">
                   estimated
                 </span>
               </div>
               <Show when={b().estimatedRecords > 0}>
-                <div style={{ 'font-size': '10px', color: '#ff9f0a', 'margin-bottom': '8px' }}>
+                <div class="sx-cost-warn">
                   ⚠ {b().estimatedRecords} record(s) used the fallback price
                 </div>
               </Show>
-              <table style={{ width: '100%', 'border-collapse': 'collapse', 'font-size': '11px' }}>
-                <thead>
-                  <tr style={{ color: 'var(--text-dim)', 'text-align': 'left' }}>
-                    <th style={{ padding: '3px 6px' }}>Model</th>
-                    <th style={{ padding: '3px 6px', 'text-align': 'right' }}>In</th>
-                    <th style={{ padding: '3px 6px', 'text-align': 'right' }}>Out</th>
-                    <th style={{ padding: '3px 6px', 'text-align': 'right' }}>$</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={b().perModel}>
-                    {(row) => (
-                      <tr data-testid="sessions-cost-row" data-model={row.model}>
-                        <td style={{ padding: '3px 6px', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis', 'max-width': '140px' }}>
-                          {row.model.replace(/^claude-/, '')}
-                        </td>
-                        <td style={{ padding: '3px 6px', 'text-align': 'right' }}>{fmtTokens(row.inputTokens)}</td>
-                        <td style={{ padding: '3px 6px', 'text-align': 'right' }}>{fmtTokens(row.outputTokens)}</td>
-                        <td style={{ padding: '3px 6px', 'text-align': 'right' }}>{fmtUsd(row.costUsd)}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-                <tfoot>
-                  <tr style={{ 'border-top': '1px solid var(--border)' }}>
-                    <td style={{ padding: '4px 6px', 'font-weight': 600 }}>Total</td>
-                    <td style={{ padding: '4px 6px', 'text-align': 'right' }}>{fmtTokens(b().totalInputTokens)}</td>
-                    <td style={{ padding: '4px 6px', 'text-align': 'right' }}>{fmtTokens(b().totalOutputTokens)}</td>
-                    <td style={{ padding: '4px 6px', 'text-align': 'right' }}>{fmtUsd(b().estimatedCostUsd)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+              <div class="sx-cost-card">
+                <table class="sx-cost-table">
+                  <thead>
+                    <tr>
+                      <th>Model</th>
+                      <th>In</th>
+                      <th>Out</th>
+                      <th>$</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={b().perModel}>
+                      {(row) => (
+                        <tr data-testid="sessions-cost-row" data-model={row.model}>
+                          <td>
+                            {row.model.replace(/^claude-/, '')}
+                          </td>
+                          <td>{fmtTokens(row.inputTokens)}</td>
+                          <td>{fmtTokens(row.outputTokens)}</td>
+                          <td class="sx-cost-usd">{fmtUsd(row.costUsd)}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td>Total</td>
+                      <td>{fmtTokens(b().totalInputTokens)}</td>
+                      <td>{fmtTokens(b().totalOutputTokens)}</td>
+                      <td class="sx-cost-usd">{fmtUsd(b().estimatedCostUsd)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
         </Show>
@@ -415,13 +392,3 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
     </div>
   );
 }
-
-const btnStyle = {
-  padding: '4px 12px',
-  'font-size': '11px',
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
-  'border-radius': 'var(--radius)',
-  cursor: 'pointer',
-};

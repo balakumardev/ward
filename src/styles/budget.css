@@ -1,0 +1,202 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Ward — Context Budget mode. "Security Console" visual language.
+   Mode-scoped classes for Budget.tsx (imported at the top of that file).
+   Pairs with tokens.css + app.css and reuses .micro/.badge/.btn where they
+   fit. The usage meter is the hero: a large gradient bar with threshold
+   markers; below it a token breakdown with inline proportion bars, then
+   tidy sub-lists of CLAUDE.md files and always-loaded items.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Shell (BudgetWithPicker: scope rail + main) ───────────────────────── */
+.bud-shell { display: flex; height: 100%; min-height: 0; font-size: 12px; }
+
+.bud-scopes {
+  width: 210px; flex: none; overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: rgba(12, 18, 29, 0.4);
+  padding: 14px 10px;
+}
+.bud-scopes-title { padding: 0 8px 8px; }
+.bud-scope-row {
+  position: relative; padding: 7px 10px; margin: 1px 0;
+  border-radius: var(--r-sm); cursor: pointer; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .13s ease, color .13s ease;
+}
+.bud-scope-row:hover { background: rgba(255, 255, 255, 0.035); color: var(--text); }
+.bud-scope-row.active { background: var(--accent-bg); color: var(--accent); font-weight: 500; }
+.bud-scope-row.active::before {
+  content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-line);
+}
+
+.bud-main { flex: 1; min-width: 0; overflow-y: auto; }
+.bud-pick-empty { padding: 20px; color: var(--text-dim); }
+
+/* ── Mode container ────────────────────────────────────────────────────── */
+.bud-mode { padding: 18px 20px; font-size: 12px; }
+
+.bud-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 16px;
+}
+.bud-title {
+  margin: 0 0 5px; font-family: var(--font-display);
+  font-size: 18px; font-weight: 700; letter-spacing: 0.2px; line-height: 1.2;
+}
+.bud-method { color: var(--text-dim); font-size: 11px; }
+.bud-recompute { flex: none; }
+.bud-loading { color: var(--text-dim); padding: 20px 4px; }
+
+/* Small non-uppercase eyebrow label (keeps source casing verbatim). */
+.bud-eyebrow {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-mute);
+}
+/* Shared tabular-mono readout style. */
+.tnum { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ── Cards ─────────────────────────────────────────────────────────────── */
+.bud-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--sh-2);
+  padding: 16px 18px; margin-bottom: 14px;
+}
+
+/* ── Meter (hero) ──────────────────────────────────────────────────────── */
+.bud-meter { background: linear-gradient(180deg, var(--surface), var(--surface-2)); }
+.bud-meter-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 14px; margin-bottom: 14px;
+}
+.bud-readout {
+  margin-top: 4px; color: var(--text);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 27px; font-weight: 600; letter-spacing: 0.4px; line-height: 1.1;
+}
+.bud-pct { font-size: 15px; font-weight: 500; color: var(--text-dim); }
+.bud-badge { flex: none; margin-top: 3px; }
+
+.bud-track {
+  position: relative; height: 24px; overflow: hidden;
+  border-radius: var(--r-pill); background: var(--surface-2);
+  border: 1px solid var(--border); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.bud-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; border-radius: inherit;
+  transition: width .25s ease, background .25s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.bud-fill.ok { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.bud-fill.warn { background: linear-gradient(90deg, var(--warn), #ffbf5a); }
+.bud-fill.crit { background: linear-gradient(90deg, var(--crit), #ff7a70); }
+
+.bud-marker { position: absolute; top: 0; bottom: 0; width: 2px; }
+.bud-marker.warn { background: #ff9f0a; box-shadow: 0 0 6px rgba(255, 159, 10, 0.7); }
+.bud-marker.crit { background: var(--crit); box-shadow: 0 0 6px rgba(255, 69, 58, 0.7); }
+
+.bud-legend {
+  display: flex; flex-wrap: wrap; gap: 14px; margin-top: 11px;
+  font-size: 11px; color: var(--text-dim);
+}
+.bud-legend .glyph { font-family: var(--font-mono); }
+
+/* ── Section titles ────────────────────────────────────────────────────── */
+.bud-section-title {
+  margin: 0 0 12px; font-family: var(--font-display);
+  font-size: 12px; font-weight: 600; letter-spacing: 0.2px; color: var(--text-dim);
+}
+
+/* ── Breakdown (where the tokens come from) ────────────────────────────── */
+.bud-bd-list { display: flex; flex-direction: column; }
+.bud-bd-headrow, .bud-bd-row {
+  display: grid; grid-template-columns: 1fr 92px 128px;
+  align-items: center; gap: 12px; padding: 7px 8px;
+}
+.bud-bd-headrow {
+  padding-bottom: 7px; margin-bottom: 2px; border-bottom: 1px solid var(--border);
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-mute);
+}
+.bud-bd-head-num, .bud-bd-head-share { text-align: right; }
+.bud-bd-row { border-radius: var(--r-sm); transition: background .12s ease; }
+.bud-bd-row:hover { background: rgba(255, 255, 255, 0.03); }
+.bud-bd-label {
+  color: var(--text); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bud-bd-num {
+  text-align: right; color: var(--text); font-size: 12px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.bud-bd-share { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
+.bud-prop {
+  width: 54px; height: 5px; flex: none; overflow: hidden;
+  border-radius: 3px; background: rgba(255, 255, 255, 0.07);
+}
+.bud-prop-fill {
+  display: block; height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.bud-bd-pct {
+  min-width: 46px; text-align: right; color: var(--text-dim); font-size: 11px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.bud-bd-total {
+  margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--border-strong);
+  border-radius: 0;
+}
+.bud-bd-total:hover { background: transparent; }
+.bud-bd-total .bud-bd-label { font-weight: 700; }
+.bud-bd-total .bud-bd-num { font-weight: 700; }
+.bud-bd-total .bud-bd-pct { color: var(--text); font-weight: 600; }
+
+/* ── Detail (files & items) ────────────────────────────────────────────── */
+.bud-sub { margin-bottom: 14px; }
+.bud-sub:last-child { margin-bottom: 0; }
+.bud-sub-title { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--text); }
+
+.bud-file-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; margin-bottom: 4px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: border-color .12s ease;
+}
+.bud-file-row:hover { border-color: var(--border-strong); }
+.bud-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bud-file-name code {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text);
+  background: rgba(255, 255, 255, 0.05); padding: 1px 5px; border-radius: 4px;
+}
+.bud-file-path { color: var(--text-mute); font-family: var(--font-mono); font-size: 10.5px; }
+
+.bud-file-meta, .bud-item-meta {
+  flex: none; white-space: nowrap;
+  display: inline-flex; align-items: baseline; gap: 7px;
+}
+.bud-file-meta strong, .bud-item-meta strong {
+  color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+
+.bud-group { margin-bottom: 6px; }
+.bud-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; border-radius: var(--r-sm); cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: background .12s ease, border-color .12s ease;
+}
+.bud-group-head:hover { background: var(--surface-3); border-color: var(--border-strong); }
+.bud-group-name { display: inline-flex; align-items: center; gap: 7px; color: var(--text); font-weight: 500; }
+.bud-caret { display: inline-block; width: 10px; color: var(--text-mute); font-size: 10px; }
+.bud-group-total { color: var(--text); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.bud-item-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 5px 10px 5px 26px; color: var(--text-dim);
+}
+.bud-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bud-tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2px; color: var(--text-mute); }
+.bud-tag.measured { color: var(--ok); }
+.bud-tag.estimated { color: var(--text-dim); }
+
+.bud-empty { color: var(--text-dim); padding: 10px 4px; }

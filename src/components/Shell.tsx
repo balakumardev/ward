@@ -10,14 +10,14 @@ export function Shell(props: {
   children: JSX.Element;
 }) {
   return (
-    <div style={{ display: 'flex', height: '100vh' }}>
+    <div class="shell">
       <Sidebar
         active={props.active}
         onSelect={props.onSelect}
         harness={props.harness}
         onSelectHarness={props.onSelectHarness}
       />
-      <main style={{ flex: 1, overflow: 'auto' }}>{props.children}</main>
+      <main class="shell-main">{props.children}</main>
     </div>
   );
 }

@@ -19,6 +19,9 @@ node_modules/
 # Brainstorming companion (if ever run from here)
 .superpowers/
 
+# Chrome DevTools MCP persistent profile (only when not using --isolated)
+.chrome-debug/
+
 # Local env
 .env
 .env.local

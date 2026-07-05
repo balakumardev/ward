@@ -1,14 +1,16 @@
+import '../styles/security.css';
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
 import type { Finding, Severity, HarnessItem, RestoreInfo } from '../api';
 import { api } from '../api';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low'];
-const SEVERITY_COLORS: Record<Severity, string> = {
-  critical: 'var(--danger)',
-  high: '#ff8c42',
-  medium: 'var(--warning)',
-  low: 'var(--text-dim)',
+/** severity → tint class (defined in security.css); sets --sev/--sev-bg. */
+const SEV_CLASS: Record<Severity, string> = {
+  critical: 'sec-sev-critical',
+  high: 'sec-sev-high',
+  medium: 'sec-sev-medium',
+  low: 'sec-sev-low',
 };
 
 export interface SecurityApi {
@@ -84,78 +86,67 @@ export function Security(props: {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%', 'font-size': '12px' }}>
+    <div class="sec">
       {/* LEFT — findings grouped by severity */}
-      <aside data-testid="security-list"
-        style={{ width: '340px', 'border-right': '1px solid var(--border)', 'overflow-y': 'auto', padding: '8px' }}>
-        <div style={{ display: 'flex', 'align-items': 'center', 'justify-content': 'space-between', 'margin-bottom': '8px' }}>
-          <div style={{ 'font-weight': 600 }}>Findings</div>
-          <button data-testid="security-scan-now" onClick={() => refetch()}
-            style={{ padding: '2px 8px', 'font-size': '11px' }}>Scan now</button>
+      <aside class="sec-list" data-testid="security-list">
+        <div class="sec-list-top">
+          <div class="sec-list-head">
+            <div class="sec-list-title">Findings</div>
+            <button class="btn btn-primary sec-scan" data-testid="security-scan-now" onClick={() => refetch()}>Scan now</button>
+          </div>
+          <Show when={scan()} fallback={<div class="sec-scanning">Scanning…</div>}>
+            {(result) => (
+              <div class="sec-counts" data-testid="security-counts">
+                <span class="sec-count sec-sev-critical">● {result().severityCounts.critical}</span>
+                <span class="sec-count sec-sev-high">● {result().severityCounts.high}</span>
+                <span class="sec-count sec-sev-medium">● {result().severityCounts.medium}</span>
+                <span class="sec-count sec-sev-low">● {result().severityCounts.low}</span>
+              </div>
+            )}
+          </Show>
         </div>
-        <Show when={scan()} fallback={<div>Scanning…</div>}>
-          {(result) => (
-            <div data-testid="security-counts" style={{ display: 'flex', gap: '8px', 'font-size': '11px', 'margin-bottom': '8px', 'flex-wrap': 'wrap' }}>
-              <span style={{ color: SEVERITY_COLORS.critical }}>● {result().severityCounts.critical}</span>
-              <span style={{ color: SEVERITY_COLORS.high }}>● {result().severityCounts.high}</span>
-              <span style={{ color: SEVERITY_COLORS.medium }}>● {result().severityCounts.medium}</span>
-              <span style={{ color: SEVERITY_COLORS.low }}>● {result().severityCounts.low}</span>
-            </div>
-          )}
-        </Show>
-        <For each={sortedFindings()}>
-          {(f) => (
-            <div
-              data-testid="security-finding-row"
-              data-rule-id={f.ruleId}
-              onClick={() => setSelected(f.id)}
-              style={{
-                padding: '6px 8px',
-                'border-radius': 'var(--radius)',
-                cursor: 'pointer',
-                'margin-bottom': '4px',
-                background: selected() === f.id ? 'rgba(48,209,88,0.14)' : 'transparent',
-                display: 'flex', gap: '6px', 'align-items': 'flex-start',
-              }}
-            >
-              <span data-testid="severity-dot" style={{ 'min-width': '8px', 'min-height': '8px', 'border-radius': '50%', background: SEVERITY_COLORS[f.severity], 'margin-top': '4px' }} />
-              <div style={{ flex: 1, 'min-width': 0 }}>
-                <div style={{ 'font-weight': 500, 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
-                  {f.ruleId} · {f.sourceName}
-                </div>
-                <div style={{ color: 'var(--text-dim)', 'font-size': '11px', 'white-space': 'nowrap', overflow: 'hidden', 'text-overflow': 'ellipsis' }}>
-                  {f.matchedText}
+        <div class="sec-findings">
+          <For each={sortedFindings()}>
+            {(f) => (
+              <div
+                data-testid="security-finding-row"
+                data-rule-id={f.ruleId}
+                classList={{ 'sec-finding': true, [SEV_CLASS[f.severity]]: true, selected: selected() === f.id }}
+                onClick={() => setSelected(f.id)}
+              >
+                <span class="sec-sev-dot" data-testid="severity-dot" />
+                <div class="sec-finding-main">
+                  <div class="sec-finding-title">{f.ruleId} · {f.sourceName}</div>
+                  <div class="sec-finding-sub">{f.matchedText}</div>
                 </div>
               </div>
-            </div>
-          )}
-        </For>
-        <Show when={scan() && sortedFindings().length === 0}>
-          <div data-testid="security-no-findings" style={{ color: 'var(--accent)', padding: '8px' }}>No findings — your MCP setup looks clean.</div>
-        </Show>
+            )}
+          </For>
+          <Show when={scan() && sortedFindings().length === 0}>
+            <div class="sec-clean" data-testid="security-no-findings">No findings — your MCP setup looks clean.</div>
+          </Show>
+        </div>
       </aside>
 
       {/* RIGHT — detail pane */}
-      <main data-testid="security-detail" style={{ flex: 1, padding: '12px', 'overflow-y': 'auto' }}>
-        <Show when={selectedFinding()} fallback={<div style={{ color: 'var(--text-dim)' }}>Select a finding to view details.</div>}>
+      <main class="sec-detail" data-testid="security-detail">
+        <Show when={selectedFinding()} fallback={<div class="sec-detail-empty">Select a finding to view details.</div>}>
           {(f) => (
-            <div>
-              <h2 style={{ 'margin-top': 0 }}>{f().ruleId} — {f().name}</h2>
-              <div style={{ color: 'var(--text-dim)', 'margin-bottom': '8px' }}>{f().description}</div>
-              <div data-testid="security-source" style={{ 'font-size': '11px', 'margin-bottom': '12px' }}>
+            <div classList={{ 'sec-detail-card': true, rise: true, [SEV_CLASS[f().severity]]: true }}>
+              <div class="sec-detail-head">
+                <h2 class="sec-detail-title">{f().ruleId} — {f().name}</h2>
+              </div>
+              <div class="sec-detail-desc">{f().description}</div>
+              <div class="sec-field" data-testid="security-source">
                 <strong>Source:</strong> <code>{f().sourceName}</code>
               </div>
-              <div data-testid="security-snippet" style={{
-                padding: '8px', background: 'var(--surface-2)', 'border-radius': 'var(--radius)',
-                'font-family': 'monospace', 'white-space': 'pre-wrap', 'word-break': 'break-word',
-                'margin-bottom': '12px',
-              }}>{f().context}</div>
-              <div data-testid="security-matched" style={{ 'margin-bottom': '12px' }}>
-                <strong>Matched:</strong> <code style={{ color: SEVERITY_COLORS[f().severity] }}>{f().matchedText}</code>
+              <div class="sec-snippet" data-testid="security-snippet">{f().context}</div>
+              <div class="sec-field" data-testid="security-matched">
+                <strong>Matched:</strong> <code class="sec-matched-code">{f().matchedText}</code>
               </div>
-              <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-                <button data-testid="security-rejudge" onClick={() => rejudge()} style={{ padding: '4px 10px', 'font-size': '11px' }}>Re-judge</button>
-                <button data-testid="security-accept-baseline" onClick={() => acceptBaseline(f())} style={{ padding: '4px 10px', 'font-size': '11px' }}>Accept baseline</button>
+              <div class="sec-actions">
+                <button class="btn btn-ghost" data-testid="security-rejudge" onClick={() => rejudge()}>Re-judge</button>
+                <button class="btn" data-testid="security-accept-baseline" onClick={() => acceptBaseline(f())}>Accept baseline</button>
               </div>
             </div>
           )}

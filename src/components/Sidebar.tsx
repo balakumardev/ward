@@ -22,47 +22,47 @@ export function Sidebar(props: {
   onSelectHarness: (id: HarnessId) => void;
 }) {
   return (
-    <nav
-      data-testid="sidebar"
-      style={{
-        width: '210px', background: 'var(--surface-2)',
-        'border-right': '1px solid var(--border)', padding: '10px 8px',
-      }}
-    >
-      <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', margin: '0 6px 8px' }}>
-        <span style={{ 'font-size': '11px', color: 'var(--text-dim)' }}>Harness</span>
+    <nav class="sidebar" data-testid="sidebar">
+      <div class="brand">
+        <div class="brand-mark">◆</div>
+        <div>
+          <div class="brand-name">Ward</div>
+          <div class="brand-tag">Config Command Center</div>
+          <div class="brand-scope">Claude Code · Codex</div>
+        </div>
+      </div>
+
+      <div class="side-group">
+        <div class="micro">Harness</div>
         <select
+          class="harness-select"
           data-testid="harness-select"
           value={props.harness}
           onChange={(e) => props.onSelectHarness(e.currentTarget.value as HarnessId)}
-          style={{
-            'font-size': '12px',
-            padding: '2px 6px',
-            'border-radius': 'var(--radius)',
-            border: '1px solid var(--border)',
-            background: 'var(--surface)',
-            color: 'var(--text)',
-          }}
         >
           <For each={HARNESSES}>
-            {(h) => <option value={h.id}>{h.icon} {h.label}</option>}
+            {(h) => <option value={h.id}>{h.icon}  {h.label}</option>}
           </For>
         </select>
       </div>
-      <For each={MODES}>
-        {(m) => (
-          <div
-            onClick={() => props.onSelect(m.id)}
-            style={{
-              padding: '5px 8px', margin: '3px 0', 'border-radius': 'var(--radius)', cursor: 'pointer',
-              background: props.active === m.id ? 'rgba(48,209,88,0.14)' : 'transparent',
-              color: props.active === m.id ? 'var(--accent)' : 'var(--text)',
-            }}
-          >
-            {m.icon} <span>{m.label}</span>
-          </div>
-        )}
-      </For>
+
+      <div class="modes">
+        <For each={MODES}>
+          {(m) => (
+            <div
+              classList={{ mode: true, active: props.active === m.id }}
+              onClick={() => props.onSelect(m.id)}
+            >
+              <span class="mode-icon">{m.icon}</span>
+              <span class="mode-label">{m.label}</span>
+            </div>
+          )}
+        </For>
+      </div>
+
+      <div class="sidebar-foot">
+        <div class="k">{props.harness === 'codex' ? '~/.codex' : '~/.claude'}</div>
+      </div>
     </nav>
   );
 }
