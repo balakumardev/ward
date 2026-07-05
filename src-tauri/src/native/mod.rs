@@ -12,6 +12,7 @@
 //! other two have unit tests that exercise the core logic.
 
 pub mod autostart;
+pub mod lifecycle;
 pub mod notify;
 pub mod tray;
 pub mod watch;

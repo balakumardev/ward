@@ -253,6 +253,7 @@ pub fn run() {
                         let _ = app_handle.emit("scan-now", ());
                     }
                     "quit" => {
+                        crate::native::lifecycle::mark_quitting();
                         app_handle.exit(0);
                     }
                     "open" | _ => {
@@ -267,6 +268,18 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Close-to-tray (Plan 13): the red button / ⌘W hides the
+            // window to the menu bar; only a genuine quit closes it.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if crate::native::lifecycle::should_hide_on_close(
+                    crate::native::lifecycle::is_quitting(),
+                ) {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::scan,
@@ -301,8 +314,13 @@ pub fn run() {
             commands::autostart_status,
             commands::autostart_set
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                crate::native::lifecycle::mark_quitting();
+            }
+        });
 }
 
 /// Holds the tray icon alive for the lifetime of the app. We use a
