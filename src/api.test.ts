@@ -202,6 +202,55 @@ test('backupSetRemote passes url', async () => {
   expect(invoke).toHaveBeenCalledWith('backup_set_remote', { url: 'git@github.com:me/ward.git' });
 });
 
+// ── Plan 15: menu-bar glance (usage / autostart / native status) ──
+
+test('usageSnapshot passes harness', async () => {
+  invoke.mockResolvedValue({
+    harness: 'claude',
+    block: {
+      tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 },
+      costUsd: 0, isActive: false,
+    },
+    week: {
+      tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 },
+      costUsd: 0, isActive: false,
+    },
+    source: 'local', available: false, generatedAt: '',
+  });
+  const r = await api.usageSnapshot('claude');
+  expect(invoke).toHaveBeenCalledWith('usage_snapshot', { harness: 'claude' });
+  expect(r.harness).toBe('claude');
+});
+
+test('autostartStatus calls invoke with no args', async () => {
+  invoke.mockResolvedValue(true);
+  const r = await api.autostartStatus();
+  expect(invoke).toHaveBeenCalledWith('autostart_status', undefined);
+  expect(r).toBe(true);
+});
+
+test('autostartSet passes enabled', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.autostartSet(true);
+  expect(invoke).toHaveBeenCalledWith('autostart_set', { enabled: true });
+});
+
+test('nativeUpdateStatus passes critical + optional lastScanAt', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.nativeUpdateStatus(2, '2026-07-05T00:00:00Z');
+  expect(invoke).toHaveBeenCalledWith('native_update_status', {
+    critical: 2, lastScanAt: '2026-07-05T00:00:00Z',
+  });
+
+  // Second call without lastScanAt should pass undefined.
+  invoke.mockReset();
+  invoke.mockResolvedValue(undefined);
+  await api.nativeUpdateStatus(0);
+  expect(invoke).toHaveBeenCalledWith('native_update_status', {
+    critical: 0, lastScanAt: undefined,
+  });
+});
+
 // ── Tauri runtime detection ────────────────────────────────────────────
 
 test('invoke rejects with TauriUnavailableError when not running inside a Tauri webview', async () => {

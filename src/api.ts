@@ -257,6 +257,37 @@ export interface GitStatus {
   clean: boolean;
 }
 
+// ── Plan 14 — Usage engine ──────────────────────────────────────────────
+export interface TokenTotals {
+  input: number;
+  output: number;
+  cacheCreation: number;
+  cacheRead: number;
+  total: number;
+}
+
+export type UsageSource = 'local' | 'rateLimits';
+
+export interface UsageWindow {
+  tokens: TokenTotals;
+  costUsd: number;
+  percent?: number;      // 0..1 when known (Codex, or Claude w/ configured limit)
+  resetsAt?: string;
+  resetsInSecs?: number;
+  isActive: boolean;
+  startedAt?: string;
+  planType?: string;
+}
+
+export interface UsageSnapshot {
+  harness: string;
+  block: UsageWindow;    // current 5-hour window
+  week: UsageWindow;     // weekly window
+  source: UsageSource;
+  available: boolean;
+  generatedAt: string;
+}
+
 export const api = {
   scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
@@ -314,4 +345,11 @@ export const api = {
     invokeOrThrow<void>('backup_scheduler_install', { intervalSeconds }),
   backupSchedulerRemove: () => invokeOrThrow<void>('backup_scheduler_remove'),
   backupSetRemote: (url: string) => invokeOrThrow<void>('backup_set_remote', { url }),
+
+  // Plan 14/15 — usage engine + native shell.
+  usageSnapshot: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot', { harness }),
+  autostartStatus: () => invokeOrThrow<boolean>('autostart_status'),
+  autostartSet: (enabled: boolean) => invokeOrThrow<void>('autostart_set', { enabled }),
+  nativeUpdateStatus: (critical: number, lastScanAt?: string) =>
+    invokeOrThrow<void>('native_update_status', { critical, lastScanAt }),
 };
