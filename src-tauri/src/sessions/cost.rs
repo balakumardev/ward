@@ -17,17 +17,17 @@ use crate::sessions::parse::{Conversation, SessionRecord};
 
 /// All values are USD per **million** tokens.
 #[derive(Debug, Clone, Copy)]
-struct ModelPrice {
-    input_per_mtok: f64,
-    output_per_mtok: f64,
-    cache_read_multiplier: f64,
-    cache_write_multiplier: f64,
+pub(crate) struct ModelPrice {
+    pub(crate) input_per_mtok: f64,
+    pub(crate) output_per_mtok: f64,
+    pub(crate) cache_read_multiplier: f64,
+    pub(crate) cache_write_multiplier: f64,
 }
 
 /// Return the pricing row for `model`. Falls back to a conservative
 /// Sonnet-4 estimate for unknown models so the UI never produces an
 /// "unknown model" error — it just labels the breakdown "estimated".
-fn price_for(model: &str) -> ModelPrice {
+pub(crate) fn price_for(model: &str) -> ModelPrice {
     // Match the longest-known family first so `claude-opus-4-1-20250514`
     // resolves to the Opus 4.1 row, not a generic Claude 4 entry.
     const OPUS_4_1: ModelPrice = ModelPrice {
@@ -200,7 +200,7 @@ fn is_known_model(model: &str) -> bool {
     model.contains("opus") || model.contains("sonnet") || model.contains("haiku")
 }
 
-fn cost_for(u: &crate::sessions::parse::Usage, p: ModelPrice) -> f64 {
+pub(crate) fn cost_for(u: &crate::sessions::parse::Usage, p: ModelPrice) -> f64 {
     let input_cost = u.input_tokens as f64 * p.input_per_mtok / 1_000_000.0;
     let output_cost = u.output_tokens as f64 * p.output_per_mtok / 1_000_000.0;
     let cache_read_cost = u.cache_read.unwrap_or(0) as f64
