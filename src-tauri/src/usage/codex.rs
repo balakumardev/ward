@@ -8,6 +8,7 @@
 //! authoritative `used_percent` / `resets_at` / `plan_type`. No network.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -48,7 +49,7 @@ fn base_dirs() -> Vec<PathBuf> {
     dirs::home_dir().map(|h| vec![h.join(".codex")]).unwrap_or_default()
 }
 
-fn collect_rollouts(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_rollouts(dir: &Path, out: &mut Vec<PathBuf>, cutoff: SystemTime) {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -56,11 +57,16 @@ fn collect_rollouts(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in rd.flatten() {
         let p = entry.path();
         if p.is_dir() {
-            collect_rollouts(&p, out);
+            collect_rollouts(&p, out, cutoff);
         } else if p.extension().and_then(|e| e.to_str()) == Some("jsonl")
             && p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with("rollout-")).unwrap_or(false)
         {
-            out.push(p);
+            // Skip rollouts untouched in the last ~8 days: no event of theirs can
+            // land in the current 5h block or the rolling weekly window.
+            match entry.metadata() {
+                Ok(md) if !super::file_is_recent(&md, cutoff) => continue,
+                _ => out.push(p),
+            }
         }
     }
 }
@@ -92,9 +98,10 @@ fn parse_rate_limits(rl: &Value) -> Option<RateLimits> {
 /// from every rollout file under `base/sessions`, sorted by timestamp.
 pub(crate) fn collect_events_from(base: &Path) -> Vec<Event> {
     let mut files = Vec::new();
-    collect_rollouts(&base.join("sessions"), &mut files);
+    let cutoff = super::recent_cutoff(SystemTime::now());
+    collect_rollouts(&base.join("sessions"), &mut files, cutoff);
     // archived sessions too, if present
-    collect_rollouts(&base.join("archived_sessions"), &mut files);
+    collect_rollouts(&base.join("archived_sessions"), &mut files, cutoff);
     files.sort();
 
     let mut events: Vec<Event> = Vec::new();
@@ -304,6 +311,21 @@ mod tests {
         std::env::remove_var("CODEX_HOME");
         assert!(!snap.available);
         assert_eq!(snap.harness, "codex");
+    }
+
+    #[test]
+    fn collect_skips_rollouts_older_than_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let line = tc_line("2026-07-05T00:00:01.000Z", 100, 80, 20, 0, 5.0, 1778067464, 10.0, 1778305419);
+        write_rollout(base, "2026/07/05", "rollout-2026-07-05T00-00-00-recent.jsonl", &format!("{line}\n"));
+        write_rollout(base, "2026/05/14", "rollout-2026-05-14T00-00-00-old.jsonl", &format!("{line}\n"));
+        let old_path = base.join("sessions").join("2026/05/14").join("rollout-2026-05-14T00-00-00-old.jsonl");
+        let thirty_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        std::fs::File::options().write(true).open(&old_path).unwrap().set_modified(thirty_days_ago).unwrap();
+
+        let events = collect_events_from(base);
+        assert_eq!(events.len(), 1, "rollout untouched for 30 days is skipped");
     }
 
     #[test]

@@ -7,7 +7,31 @@ pub mod blocks;
 pub mod claude;
 pub mod codex;
 
+use std::time::{Duration, SystemTime};
+
 use serde::{Deserialize, Serialize};
+
+/// Session files older than this are skipped when reconstructing usage: the
+/// current 5-hour block and the rolling 7-day week can only reference recent
+/// files. 8 days = the 7-day week plus a day of slack for clock/timezone skew.
+/// Heavy Claude users accumulate thousands of session files; without this the
+/// popover re-read every one on each open (the menu-bar lag the user hit).
+pub(crate) const RECENT_WINDOW_SECS: u64 = 8 * 24 * 60 * 60;
+
+/// The mtime floor for [`file_is_recent`]: files modified before this are
+/// skipped. `now` is threaded in (not read here) so every caller in one scan
+/// shares a single clock and tests stay deterministic. Saturates at the UNIX
+/// epoch (an 8-day subtraction never underflows, but be safe).
+pub(crate) fn recent_cutoff(now: SystemTime) -> SystemTime {
+    now.checked_sub(Duration::from_secs(RECENT_WINDOW_SECS)).unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// True if `meta`'s modification time is at or after `cutoff`. A file whose
+/// mtime can't be read is KEPT (returns `true`): we never drop a file we can't
+/// stat — correct totals matter more than the perf shortcut.
+pub(crate) fn file_is_recent(meta: &std::fs::Metadata, cutoff: SystemTime) -> bool {
+    meta.modified().map(|m| m >= cutoff).unwrap_or(true)
+}
 
 /// Token counts for a window. `total` is input+output+cache (what the UI shows).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -146,6 +170,22 @@ mod tests {
     #[test]
     fn source_rate_limits_serializes_camel() {
         assert_eq!(serde_json::to_string(&UsageSource::RateLimits).unwrap(), "\"rateLimits\"");
+    }
+
+    #[test]
+    fn file_is_recent_filters_on_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let recent = dir.path().join("recent.txt");
+        std::fs::write(&recent, "x").unwrap();
+        let old = dir.path().join("old.txt");
+        std::fs::write(&old, "x").unwrap();
+        // Backdate `old` to 30 days ago (well outside the 8-day window).
+        let thirty_days_ago = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+        std::fs::File::options().write(true).open(&old).unwrap().set_modified(thirty_days_ago).unwrap();
+
+        let cutoff = recent_cutoff(SystemTime::now());
+        assert!(file_is_recent(&std::fs::metadata(&recent).unwrap(), cutoff), "just-written file is recent");
+        assert!(!file_is_recent(&std::fs::metadata(&old).unwrap(), cutoff), "30-day-old file is filtered out");
     }
 
     #[test]

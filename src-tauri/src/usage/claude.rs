@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -45,8 +46,10 @@ fn base_dirs() -> Vec<PathBuf> {
     out
 }
 
-/// Recursively collect `*.jsonl` under `dir` into `out` (sorted by the caller).
-fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Recursively collect `*.jsonl` under `dir` into `out` (sorted by the caller),
+/// skipping files last modified before `cutoff` — a file untouched in the last
+/// ~8 days can hold no entry inside the current 5h block or the rolling week.
+fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, cutoff: SystemTime) {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -54,9 +57,12 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in rd.flatten() {
         let p = entry.path();
         if p.is_dir() {
-            collect_jsonl(&p, out);
+            collect_jsonl(&p, out, cutoff);
         } else if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            out.push(p);
+            match entry.metadata() {
+                Ok(md) if !super::file_is_recent(&md, cutoff) => continue,
+                _ => out.push(p),
+            }
         }
     }
 }
@@ -64,7 +70,8 @@ fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Parse + dedup all usage entries under one base dir's `projects/`.
 pub(crate) fn parse_entries_from(base: &Path) -> Vec<Entry> {
     let mut files = Vec::new();
-    collect_jsonl(&base.join("projects"), &mut files);
+    let cutoff = super::recent_cutoff(SystemTime::now());
+    collect_jsonl(&base.join("projects"), &mut files, cutoff);
     files.sort();
 
     let mut seen: HashSet<String> = HashSet::new();
@@ -258,6 +265,22 @@ mod tests {
         write_session(base, "b.jsonl", &body);
         let entries = parse_entries_from(base);
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn parse_skips_files_older_than_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        // Two files with distinct valid assistant lines; only the recent-mtime
+        // one survives once the old file is backdated past the 8-day window.
+        write_session(base, "recent.jsonl", &format!("{}\n", assistant_line("2026-07-05T10:00:00.000Z", "recent", "claude-sonnet-4-5", 10, 2, 0, 0)));
+        write_session(base, "old.jsonl", &format!("{}\n", assistant_line("2026-07-05T10:00:00.000Z", "old", "claude-sonnet-4-5", 10, 2, 0, 0)));
+        let old_path = base.join("projects").join("proj").join("old.jsonl");
+        let thirty_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        std::fs::File::options().write(true).open(&old_path).unwrap().set_modified(thirty_days_ago).unwrap();
+
+        let entries = parse_entries_from(base);
+        assert_eq!(entries.len(), 1, "file untouched for 30 days is skipped");
     }
 
     #[test]
