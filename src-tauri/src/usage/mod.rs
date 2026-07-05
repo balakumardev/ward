@@ -4,6 +4,7 @@
 //! `usage_snapshot(harness)` (Task 4) dispatches to `claude` / `codex`.
 
 pub mod blocks;
+pub mod cache;
 pub mod claude;
 pub mod codex;
 pub mod live;

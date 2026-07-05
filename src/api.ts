@@ -353,6 +353,8 @@ export const api = {
 
   // Plan 14/15 — usage engine + native shell.
   usageSnapshot: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot', { harness }),
+  // Plan 17 — last-known cached snapshot for instant cache-first popover paint.
+  usageCached: (harness: string) => invokeOrThrow<UsageSnapshot | null>('usage_cached', { harness }),
   // Plan 16 — live Claude usage (gated network call; Claude only).
   usageSnapshotLive: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot_live', { harness }),
   liveUsageEnabled: () => invokeOrThrow<boolean>('live_usage_enabled'),

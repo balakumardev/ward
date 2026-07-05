@@ -157,6 +157,11 @@ export default function Popover() {
   const [liveEnabled, setLiveEnabled] = createSignal(false);
   const [claudeError, setClaudeError] = createSignal<string | null>(null);
   const [autostart, setAutostart] = createSignal<boolean>(false);
+  // Plan 17 — last-known snapshot from the local usage cache, painted instantly
+  // on mount so the popover never opens with empty gauges while the (possibly
+  // slow) live/local refresh runs in the background (stale-while-revalidate).
+  const [cachedClaude, setCachedClaude] = createSignal<UsageSnapshot | undefined>(undefined);
+  const [cachedCodex, setCachedCodex] = createSignal<UsageSnapshot | undefined>(undefined);
 
   // Size the tray popover window to its content so nothing scrolls (native
   // menu-bar behavior). Measure-then-resize: read the rendered content height
@@ -236,6 +241,12 @@ export default function Popover() {
       ro.observe(popEl);
       onCleanup(() => ro?.disconnect());
     }
+    // Cache-first paint (Plan 17): show the last-known gauges immediately from
+    // the local usage cache while the resources below refresh in the background.
+    // This is a cache READ only — it never triggers the gated live network call,
+    // so the opt-in and no-silent-poll invariants are untouched.
+    void api.usageCached('claude').then((s) => { if (s) setCachedClaude(s); }).catch(() => {});
+    void api.usageCached('codex').then((s) => { if (s) setCachedCodex(s); }).catch(() => {});
     try {
       setAutostart(await api.autostartStatus());
     } catch {
@@ -289,7 +300,7 @@ export default function Popover() {
               id={h.id}
               label={h.label}
               icon={h.icon}
-              snap={claude()}
+              snap={claude() ?? cachedClaude()}
               nowMs={nowMs()}
               error={claudeError() ?? undefined}
               optInMode={claudeOptIn()}
@@ -297,7 +308,7 @@ export default function Popover() {
               onRetry={retryLive}
             />
           ) : (
-            <HarnessRow id={h.id} label={h.label} icon={h.icon} snap={codex()} nowMs={nowMs()} />
+            <HarnessRow id={h.id} label={h.label} icon={h.icon} snap={codex() ?? cachedCodex()} nowMs={nowMs()} />
           )
         }
       </For>

@@ -552,11 +552,29 @@ pub fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), WardErr
 /// until the parse returned. The pure logic in `crate::usage` stays sync.
 #[tauri::command]
 pub async fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
-    tauri::async_runtime::spawn_blocking(move || crate::usage::usage_snapshot(&harness))
-        .await
-        .map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("usage snapshot task failed: {e}"))
-        })?
+    tauri::async_runtime::spawn_blocking(move || {
+        let snap = crate::usage::usage_snapshot(&harness)?;
+        // Write-through (Plan 17): keep the on-disk cache warm so the next
+        // popover open paints the previous gauges instantly. Only cache a
+        // usable snapshot; a cache-write failure must never fail the command.
+        if snap.available {
+            let _ = crate::usage::cache::write_entry(&harness, &snap);
+        }
+        Ok(snap)
+    })
+    .await
+    .map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("usage snapshot task failed: {e}"))
+    })?
+}
+
+/// Plan 17 — last-known cached usage snapshot for a harness, read from
+/// `~/.ward/usage-cache.json`. A tiny local JSON read (sync is fine), so the
+/// popover paints the previous gauges instantly on open while a fresh snapshot
+/// loads in the background. `None` if nothing has been cached yet.
+#[tauri::command]
+pub fn usage_cached(harness: String) -> Option<crate::usage::UsageSnapshot> {
+    crate::usage::cache::cached_snapshot(&harness)
 }
 
 // ── Live usage (Plan 16) ─────────────────────────────────────────────────
@@ -572,7 +590,15 @@ pub async fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapsh
 #[tauri::command]
 pub async fn usage_snapshot_live(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
     tauri::async_runtime::spawn_blocking(move || match harness.as_str() {
-        "claude" => crate::usage::live::snapshot(),
+        "claude" => {
+            let snap = crate::usage::live::snapshot()?;
+            // Write-through (Plan 17): warm the cache with the live gauges so a
+            // re-open paints them instantly instead of re-hitting the network.
+            if snap.available {
+                let _ = crate::usage::cache::write_entry("claude", &snap);
+            }
+            Ok(snap)
+        }
         other => Err(WardError::HarnessUnavailable(format!("live usage unsupported for {other}"))),
     })
     .await

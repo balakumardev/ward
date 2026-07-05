@@ -23,6 +23,7 @@ vi.mock('../api', async () => {
         available: true,
         generatedAt: '2026-07-05T16:16:00Z',
       })),
+      usageCached: vi.fn(() => Promise.resolve(null)),
       autostartStatus: vi.fn(() => Promise.resolve(true)),
       autostartSet: vi.fn(() => Promise.resolve()),
     },

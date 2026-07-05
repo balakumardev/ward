@@ -282,6 +282,13 @@ export class MockStore {
     return clone(liveSnapshotFor(harness));
   }
 
+  // Plan 17 — last-known cached snapshot for instant cache-first paint. Seeded
+  // so dev:mock opens the popover with gauges already visible: Claude shows the
+  // live snapshot (dev:mock defaults live-enabled), Codex the local one.
+  usageCached(harness: string) {
+    return clone(harness === 'claude' ? liveSnapshotFor(harness) : usageSnapshotFor(harness));
+  }
+
   liveUsageEnabled(): boolean {
     return this.liveEnabled;
   }

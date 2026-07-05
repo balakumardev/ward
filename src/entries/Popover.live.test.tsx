@@ -25,6 +25,7 @@ vi.mock('../api', async () => {
     isTauri: () => true,
     api: {
       usageSnapshot: vi.fn((harness: string) => Promise.resolve(localSnap(harness))),
+      usageCached: vi.fn(() => Promise.resolve(null)),
       usageSnapshotLive: h.usageSnapshotLive,
       liveUsageEnabled: vi.fn(() => Promise.resolve(h.liveEnabledValue)),
       setLiveUsageEnabled: h.setLiveUsageEnabled,

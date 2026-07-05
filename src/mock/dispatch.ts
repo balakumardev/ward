@@ -58,8 +58,11 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'backup_set_remote': store.setRemote(args.url); return null;
     case 'backup_log': await delay(60); return store.backupLog(args.n ?? 20);
 
-    // ── Usage engine + native shell (Plan 14/15/16) ──
+    // ── Usage engine + native shell (Plan 14/15/16/17) ──
     case 'usage_snapshot': await delay(120); return store.usageSnapshot(args.harness ?? 'claude');
+    // Plan 17 — cache read is instant (no artificial delay): it's the fast path
+    // the popover paints from while the slower snapshot above refreshes.
+    case 'usage_cached': return store.usageCached(args.harness ?? 'claude');
     case 'usage_snapshot_live': await delay(150); return store.usageSnapshotLive(args.harness ?? 'claude');
     case 'live_usage_enabled': return store.liveUsageEnabled();
     case 'set_live_usage_enabled': store.setLiveUsageEnabled(!!args.enabled); return null;

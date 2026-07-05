@@ -21,6 +21,7 @@ vi.mock('../api', async () => {
       // Codex is the local probe we count. Claude is left opted-out
       // (liveUsageEnabled=false) so it stays in opt-in mode and issues no fetch.
       usageSnapshot: vi.fn((harness: string) => Promise.resolve(emptySnap(harness))),
+      usageCached: vi.fn(() => Promise.resolve(null)),
       liveUsageEnabled: vi.fn(() => Promise.resolve(false)),
       autostartStatus: vi.fn(() => Promise.resolve(false)),
       autostartSet: vi.fn(() => Promise.resolve()),
