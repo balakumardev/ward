@@ -1,5 +1,37 @@
 import { invoke } from '@tauri-apps/api/core';
 
+/** True when this page is loaded inside a Tauri webview (the native
+ *  app). False when running under Vite's bare browser preview — in
+ *  that case `invoke` would silently hang. Callers should branch on
+ *  this and render an explanatory placeholder instead of waiting
+ *  forever on "Scanning…". */
+export function isTauri(): boolean {
+  return typeof (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== 'undefined';
+}
+
+/** Friendly error thrown when an `invoke` call is made outside the
+ *  Tauri webview. Surfaced in the UI instead of a generic hang. */
+export class TauriUnavailableError extends Error {
+  constructor(cmd: string) {
+    super(
+      `Ward command '${cmd}' requires the Tauri runtime. ` +
+      `This browser preview cannot reach the Rust backend. ` +
+      `Launch the native app with \`npm run tauri dev\` for full functionality.`,
+    );
+    this.name = 'TauriUnavailableError';
+  }
+}
+
+/** Thin wrapper around `@tauri-apps/api/core::invoke` that throws a
+ *  descriptive error when the page isn't running inside a Tauri
+ *  webview. Use this for any code path the UI must surface
+ *  gracefully — Solid's `createResource` will catch the throw and
+ *  expose it via `resource.error`. */
+function invokeOrThrow<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) return Promise.reject(new TauriUnavailableError(cmd));
+  return invoke<T>(cmd, args);
+}
+
 export interface Capabilities {
   contextBudget: boolean; mcpControls: boolean; mcpPolicy: boolean;
   mcpSecurity: boolean; sessions: boolean; effective: boolean; backup: boolean;
@@ -226,60 +258,60 @@ export interface GitStatus {
 }
 
 export const api = {
-  scan: (harness: string) => invoke<ScanResult>('scan', { harness }),
-  readFileContent: (path: string) => invoke<string>('read_file_content', { path }),
+  scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
+  readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
   listDestinations: (harness: string, item: HarnessItem) =>
-    invoke<Destination[]>('list_destinations', { harness, item }),
+    invokeOrThrow<Destination[]>('list_destinations', { harness, item }),
   moveItem: (harness: string, item: HarnessItem, destScopeId: string) =>
-    invoke<RestoreInfo>('move_item', { harness, item, destScopeId }),
+    invokeOrThrow<RestoreInfo>('move_item', { harness, item, destScopeId }),
   deleteItem: (harness: string, item: HarnessItem) =>
-    invoke<RestoreInfo>('delete_item', { harness, item }),
+    invokeOrThrow<RestoreInfo>('delete_item', { harness, item }),
   restore: (harness: string, info: RestoreInfo) =>
-    invoke<void>('restore', { harness, info }),
+    invokeOrThrow<void>('restore', { harness, info }),
   saveFile: (path: string, content: string) =>
-    invoke<void>('save_file', { path, content }),
+    invokeOrThrow<void>('save_file', { path, content }),
   bulk: (harness: string, items: HarnessItem[], op: string, destScopeId?: string) =>
-    invoke<RestoreInfo[]>('bulk', { harness, items, op, destScopeId }),
+    invokeOrThrow<RestoreInfo[]>('bulk', { harness, items, op, destScopeId }),
   bulkRestore: (harness: string, infos: RestoreInfo[]) =>
-    invoke<void>('bulk_restore', { harness, infos }),
+    invokeOrThrow<void>('bulk_restore', { harness, infos }),
 
   // Plan 04 — MCP controls.
   mcpGetDisabled: (projectPath: string) =>
-    invoke<string[]>('mcp_get_disabled', { projectPath }),
+    invokeOrThrow<string[]>('mcp_get_disabled', { projectPath }),
   mcpSetDisabled: (projectPath: string, list: string[]) =>
-    invoke<RestoreInfo>('mcp_set_disabled', { projectPath, list }),
-  mcpGetPolicy: () => invoke<McpPolicy>('mcp_get_policy'),
+    invokeOrThrow<RestoreInfo>('mcp_set_disabled', { projectPath, list }),
+  mcpGetPolicy: () => invokeOrThrow<McpPolicy>('mcp_get_policy'),
   mcpSetPolicy: (policy: McpPolicy) =>
-    invoke<RestoreInfo>('mcp_set_policy', { policy }),
+    invokeOrThrow<RestoreInfo>('mcp_set_policy', { policy }),
   mcpCheckPolicy: (serverName: string, serverConfig: unknown, policy: McpPolicy) =>
-    invoke<PolicyVerdict>('mcp_check_policy', { serverName, serverConfig, policy }),
+    invokeOrThrow<PolicyVerdict>('mcp_check_policy', { serverName, serverConfig, policy }),
 
   // Plan 05 — Security scanner.
   securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>
-    invoke<ScanResultSec>('security_scan', { harness, items, runJudge }),
+    invokeOrThrow<ScanResultSec>('security_scan', { harness, items, runJudge }),
   securityBaselineCheck: (scan: ScanResultSec) =>
-    invoke<BaselineDiff[]>('security_baseline_check', { scan }),
+    invokeOrThrow<BaselineDiff[]>('security_baseline_check', { scan }),
   securityBaselineAccept: (server: string, findings: string[]) =>
-    invoke<void>('security_baseline_accept', { server, findings }),
+    invokeOrThrow<void>('security_baseline_accept', { server, findings }),
 
   // Plan 06 — Context Budget.
   contextBudget: (harness: string, scopeId: string) =>
-    invoke<BudgetBreakdown>('context_budget', { harness, scopeId }),
+    invokeOrThrow<BudgetBreakdown>('context_budget', { harness, scopeId }),
 
   // Plan 07 — Sessions mode.
-  sessionPreview: (path: string) => invoke<Conversation>('session_preview', { path }),
-  sessionCost: (path: string) => invoke<CostBreakdown>('session_cost', { path }),
-  sessionDistill: (path: string) => invoke<DistillResult>('session_distill', { path }),
-  sessionTrim: (path: string) => invoke<RestoreInfo>('session_trim', { path }),
+  sessionPreview: (path: string) => invokeOrThrow<Conversation>('session_preview', { path }),
+  sessionCost: (path: string) => invokeOrThrow<CostBreakdown>('session_cost', { path }),
+  sessionDistill: (path: string) => invokeOrThrow<DistillResult>('session_distill', { path }),
+  sessionTrim: (path: string) => invokeOrThrow<RestoreInfo>('session_trim', { path }),
 
   // Plan 08 — Backup Center.
-  backupStatus: () => invoke<BackupStatus>('backup_status'),
+  backupStatus: () => invokeOrThrow<BackupStatus>('backup_status'),
   backupRun: (scan: ScanResult, remoteUrl?: string | null) =>
-    invoke<ExportReport>('backup_run', { scan, remoteUrl: remoteUrl ?? null }),
-  backupSync: () => invoke<CommitInfo>('backup_sync'),
-  backupPush: () => invoke<PushResult>('backup_push'),
+    invokeOrThrow<ExportReport>('backup_run', { scan, remoteUrl: remoteUrl ?? null }),
+  backupSync: () => invokeOrThrow<CommitInfo>('backup_sync'),
+  backupPush: () => invokeOrThrow<PushResult>('backup_push'),
   backupSchedulerInstall: (intervalSeconds: number) =>
-    invoke<void>('backup_scheduler_install', { intervalSeconds }),
-  backupSchedulerRemove: () => invoke<void>('backup_scheduler_remove'),
-  backupSetRemote: (url: string) => invoke<void>('backup_set_remote', { url }),
+    invokeOrThrow<void>('backup_scheduler_install', { intervalSeconds }),
+  backupSchedulerRemove: () => invokeOrThrow<void>('backup_scheduler_remove'),
+  backupSetRemote: (url: string) => invokeOrThrow<void>('backup_set_remote', { url }),
 };

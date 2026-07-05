@@ -1,11 +1,24 @@
-import { vi, test, expect, beforeEach } from 'vitest';
+import { vi, test, expect, beforeEach, afterEach } from 'vitest';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
-import { api } from './api';
+import { api, TauriUnavailableError } from './api';
 
-beforeEach(() => invoke.mockReset());
+// The api wrapper short-circuits when `window.__TAURI_INTERNALS__` is
+// missing (the real guard for "is this page running inside a Tauri
+// webview?"). Tests that want to exercise the invoke path opt into
+// "Tauri mode" by assigning the global before each test, then restore
+// the original value after.
+let originalInternals: unknown;
+beforeEach(() => {
+  invoke.mockReset();
+  originalInternals = (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+});
+afterEach(() => {
+  (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = originalInternals;
+});
 
 test('scan calls invoke with harness arg', async () => {
   invoke.mockResolvedValue({ harnessId: 'claude', categories: [], scopes: [], items: [], capabilities: {} });
@@ -91,9 +104,12 @@ test('mcpSetDisabled passes projectPath + list', async () => {
 test('mcpGetPolicy passes no args', async () => {
   invoke.mockResolvedValue({ allowlist: [], denylist: [] });
   await api.mcpGetPolicy();
-  // invoke is called with just the command name; no payload object.
+  // invoke is called with the command name + undefined args slot
+  // (the wrapper always passes the second argument; Tauri ignores
+  // `undefined` and treats it the same as omitting args).
   expect(invoke).toHaveBeenCalledTimes(1);
   expect(invoke.mock.calls[0][0]).toBe('mcp_get_policy');
+  expect(invoke.mock.calls[0][1]).toBeUndefined();
 });
 
 test('mcpSetPolicy passes policy', async () => {
@@ -137,7 +153,7 @@ test('backupStatus calls invoke with no args', async () => {
     schedulerInstalled: false, schedulerInterval: null, remoteUrl: null,
   });
   await api.backupStatus();
-  expect(invoke).toHaveBeenCalledWith('backup_status');
+  expect(invoke).toHaveBeenCalledWith('backup_status', undefined);
 });
 
 test('backupRun passes scan + optional remoteUrl', async () => {
@@ -159,13 +175,13 @@ test('backupRun passes scan + optional remoteUrl', async () => {
 test('backupSync passes no args', async () => {
   invoke.mockResolvedValue({ committed: true, sha: 'deadbeef', message: 'm', committedAt: null });
   await api.backupSync();
-  expect(invoke).toHaveBeenCalledWith('backup_sync');
+  expect(invoke).toHaveBeenCalledWith('backup_sync', undefined);
 });
 
 test('backupPush passes no args', async () => {
   invoke.mockResolvedValue({ pushed: false, reason: 'no remote configured', remoteUrl: null });
   await api.backupPush();
-  expect(invoke).toHaveBeenCalledWith('backup_push');
+  expect(invoke).toHaveBeenCalledWith('backup_push', undefined);
 });
 
 test('backupSchedulerInstall passes intervalSeconds', async () => {
@@ -177,11 +193,24 @@ test('backupSchedulerInstall passes intervalSeconds', async () => {
 test('backupSchedulerRemove passes no args', async () => {
   invoke.mockResolvedValue(undefined);
   await api.backupSchedulerRemove();
-  expect(invoke).toHaveBeenCalledWith('backup_scheduler_remove');
+  expect(invoke).toHaveBeenCalledWith('backup_scheduler_remove', undefined);
 });
 
 test('backupSetRemote passes url', async () => {
   invoke.mockResolvedValue(undefined);
   await api.backupSetRemote('git@github.com:me/ward.git');
   expect(invoke).toHaveBeenCalledWith('backup_set_remote', { url: 'git@github.com:me/ward.git' });
+});
+
+// ── Tauri runtime detection ────────────────────────────────────────────
+
+test('invoke rejects with TauriUnavailableError when not running inside a Tauri webview', async () => {
+  // Remove the guard installed in beforeEach to simulate the bare
+  // Vite browser preview (no Tauri runtime).
+  delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  invoke.mockClear();
+
+  await expect(api.scan('claude')).rejects.toBeInstanceOf(TauriUnavailableError);
+  // `invoke` must NOT have been called — the wrapper short-circuits.
+  expect(invoke).not.toHaveBeenCalled();
 });

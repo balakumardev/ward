@@ -1,4 +1,4 @@
-import { createResource, createSignal, Show } from 'solid-js';
+import { createResource, createSignal, Match, Show, Switch } from 'solid-js';
 import { Shell } from './components/Shell';
 import type { HarnessId } from './components/Sidebar';
 import { Organizer } from './modes/Organizer';
@@ -7,7 +7,7 @@ import { Security } from './modes/Security';
 import { BudgetWithPicker } from './modes/Budget';
 import { Sessions } from './modes/Sessions';
 import { Backups } from './modes/Backups';
-import { api } from './api';
+import { api, isTauri, TauriUnavailableError } from './api';
 import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
 export default function App() {
@@ -93,7 +93,40 @@ export default function App() {
       onSelectHarness={setHarness}
     >
       <Show when={scan()} fallback={
-        <div data-testid="scan-loading" style={{ padding: '16px' }}>Scanning…</div>
+        // Solid's `createResource.state` distinguishes pending, errored,
+        // and resolved. When the page is running under the bare Vite
+        // dev server (no Tauri), `invoke` throws synchronously and the
+        // resource enters the "errored" state — that's the path the
+        // browser preview always takes. When it's running inside the
+        // Tauri webview the resource resolves normally. The
+        // placeholder below also covers the brief pending window.
+        <div data-testid="scan-status" style={{ padding: '24px', 'max-width': '720px' }}>
+          <Switch fallback={
+            <div style={{ color: 'var(--text-dim)' }}>Scanning…</div>
+          }>
+            <Match when={!isTauri()}>
+              <div data-testid="scan-no-tauri" style={{ background: 'var(--surface)', border: '1px solid var(--border)', 'border-radius': 'var(--radius)', padding: '16px' }}>
+                <div style={{ 'font-size': '13px', color: 'var(--accent)', 'margin-bottom': '8px' }}>⚠ Browser preview only</div>
+                <p style={{ margin: '0 0 12px', color: 'var(--text)', 'font-size': '13px', 'line-height': '1.5' }}>
+                  You're viewing the Ward frontend in a regular browser. The Rust backend isn't reachable from here,
+                  so <code>invoke()</code> calls hang instead of returning real data.
+                </p>
+                <p style={{ margin: '0', color: 'var(--text-dim)', 'font-size': '12px', 'line-height': '1.5' }}>
+                  Run <code style={{ background: 'var(--bg)', padding: '2px 6px', 'border-radius': '4px' }}>npm run tauri dev</code> from a real terminal to launch the native macOS app with full functionality
+                  (real <code>~/.claude</code> scan, MCP introspection, security scanner, etc.).
+                </p>
+              </div>
+            </Match>
+            <Match when={scan.error && (scan.error as Error) instanceof TauriUnavailableError}>
+              <div data-testid="scan-error-tauri-missing" style={{ color: 'var(--danger)' }}>{String(scan.error)}</div>
+            </Match>
+            <Match when={scan.error}>
+              <div data-testid="scan-error" style={{ color: 'var(--danger)' }}>
+                Scan failed: {String(scan.error)}
+              </div>
+            </Match>
+          </Switch>
+        </div>
       }>
         {(result) => (
           <Show when={mode() === 'organizer'} fallback={
