@@ -32,6 +32,17 @@ export function secsUntil(resetsAt: string | undefined, nowMs: number): number |
   return Math.max(0, Math.floor((ms - nowMs) / 1000));
 }
 
+/** Popover window sizing bounds (logical px). Width is fixed at 320. */
+export const POPOVER_MIN_H = 120;
+export const POPOVER_MAX_H = 600;
+
+/** Clamp a measured content height into the window's allowed range.
+ *  Non-finite / non-positive (e.g. jsdom `scrollHeight === 0`) → MIN. */
+export function clampPopoverHeight(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) return POPOVER_MIN_H;
+  return Math.min(POPOVER_MAX_H, Math.max(POPOVER_MIN_H, Math.ceil(raw)));
+}
+
 /** Extract a displayable message from a rejected invoke (Tauri serializes
  *  WardError to `{kind, message}`); strip the internal prefix. */
 function errMsg(e: unknown): string {
@@ -147,6 +158,29 @@ export default function Popover() {
   const [claudeError, setClaudeError] = createSignal<string | null>(null);
   const [autostart, setAutostart] = createSignal<boolean>(false);
 
+  // Size the tray popover window to its content so nothing scrolls (native
+  // menu-bar behavior). Measure-then-resize: read the rendered content height
+  // and set the window height, clamped to [MIN, MAX]. Beyond MAX the .pop
+  // container scrolls internally (CSS safety net). No-ops outside Tauri.
+  let popEl: HTMLDivElement | undefined;
+  let ro: ResizeObserver | undefined;
+  let lastFitH = 0;
+  async function fitWindow() {
+    if (!isTauri() || !popEl) return;
+    const h = clampPopoverHeight(popEl.scrollHeight);
+    if (h === lastFitH) return; // avoid redundant setSize churn
+    lastFitH = h;
+    try {
+      const [{ getCurrentWindow }, { LogicalSize }] = await Promise.all([
+        import('@tauri-apps/api/window'),
+        import('@tauri-apps/api/dpi'),
+      ]);
+      await getCurrentWindow().setSize(new LogicalSize(320, h));
+    } catch {
+      /* non-Tauri window API — ignore */
+    }
+  }
+
   // Claude: live (gated network) when opted in under Tauri, else local/preview.
   // The resource is keyed on `liveEnabled` so opting in refetches immediately.
   async function fetchClaude(enabled: boolean): Promise<UsageSnapshot | undefined> {
@@ -194,6 +228,14 @@ export default function Popover() {
   }
 
   onMount(async () => {
+    // Keep the window fitted to content as usage data / opt-in state render in.
+    // ResizeObserver fires once on observe, so the hidden window is already the
+    // right height before the first tray-click shows it.
+    if (popEl && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => void fitWindow());
+      ro.observe(popEl);
+      onCleanup(() => ro?.disconnect());
+    }
     try {
       setAutostart(await api.autostartStatus());
     } catch {
@@ -235,7 +277,7 @@ export default function Popover() {
   const claudeOptIn = () => isTauri() && !liveEnabled();
 
   return (
-    <div class="pop" data-testid="popover">
+    <div class="pop" data-testid="popover" ref={popEl}>
       <header class="pop-head">
         <span class="pop-title">Ward</span>
         <button class="pop-refresh" title="Refresh" onClick={() => refetchAll()} data-testid="pop-refresh">⟳</button>

@@ -29,7 +29,21 @@ vi.mock('../api', async () => {
   };
 });
 
-import Popover, { secsUntil } from './Popover';
+import Popover, { secsUntil, clampPopoverHeight, POPOVER_MIN_H, POPOVER_MAX_H } from './Popover';
+
+describe('clampPopoverHeight', () => {
+  it('clamps to [MIN, MAX] and ceils fractional heights', () => {
+    expect(clampPopoverHeight(420.2)).toBe(421); // mid → ceil
+    expect(clampPopoverHeight(POPOVER_MAX_H + 250)).toBe(POPOVER_MAX_H); // tall content → clamp + internal scroll
+    expect(clampPopoverHeight(10)).toBe(POPOVER_MIN_H); // tiny → floor
+  });
+
+  it('falls back to MIN for non-finite / non-positive input (jsdom scrollHeight === 0)', () => {
+    expect(clampPopoverHeight(0)).toBe(POPOVER_MIN_H);
+    expect(clampPopoverHeight(-5)).toBe(POPOVER_MIN_H);
+    expect(clampPopoverHeight(Number.NaN)).toBe(POPOVER_MIN_H);
+  });
+});
 
 describe('Popover', () => {
   beforeEach(() => vi.clearAllMocks());
