@@ -16,6 +16,7 @@ import type {
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
+  usageSnapshotFor,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -41,6 +42,7 @@ export class MockStore {
   private backup: BackupStatus;
   private undoLog = new Map<string, () => void>();
   private undoSeq = 0;
+  private autostartEnabled = true;
 
   constructor() {
     this.claude = JSON.parse(scanClaudeRaw) as ScanResult;
@@ -247,5 +249,22 @@ export class MockStore {
 
   setRemote(url: string): void {
     this.backup.remoteUrl = url;
+  }
+
+  // ── Usage engine + native shell (Plan 14/15) ──
+  usageSnapshot(harness: string) {
+    return clone(usageSnapshotFor(harness));
+  }
+
+  autostartStatus(): boolean {
+    return this.autostartEnabled;
+  }
+
+  autostartSet(enabled: boolean): void {
+    this.autostartEnabled = enabled;
+  }
+
+  nativeUpdateStatus(): void {
+    // no-op in the mock (native badge/tooltip has no browser surface)
   }
 }

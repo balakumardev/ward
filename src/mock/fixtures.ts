@@ -12,6 +12,7 @@
 import type {
   ScanResult, ScanResultSec, Finding, ServerSummary, DupFinding, BaselineDiff,
   BudgetBreakdown, Conversation, CostBreakdown, DistillResult, BackupStatus,
+  UsageSnapshot,
 } from '../api';
 
 // ── Codex harness scan ────────────────────────────────────────────────────
@@ -167,4 +168,41 @@ export function distillFor(path: string): DistillResult {
 // ── Backups ───────────────────────────────────────────────────────────────
 export function initialBackupStatus(): BackupStatus {
   return { hasRepo: false, lastCommit: null, lastCommitAt: null, schedulerInstalled: false, schedulerInterval: null, remoteUrl: null };
+}
+
+// ── Usage engine (Plan 14/15) ───────────────────────────────────────────────
+// Deterministic per-harness usage snapshot backing the glance popover in
+// `dev:mock`. Codex reports a percent-of-limit (source `rateLimits`); Claude
+// reports token/cost only (source `local`), so the popover's two shapes are
+// both exercisable in the browser preview.
+export function usageSnapshotFor(harness: string): UsageSnapshot {
+  if (harness === 'codex') {
+    return {
+      harness: 'codex',
+      block: {
+        tokens: { input: 210_000, output: 12_000, cacheCreation: 0, cacheRead: 188_000, total: 410_000 },
+        costUsd: 1.05, percent: 0.31, resetsAt: '2026-07-05T19:00:00Z', resetsInSecs: 9_840,
+        isActive: true, startedAt: '2026-07-05T14:00:00Z', planType: 'plus',
+      },
+      week: {
+        tokens: { input: 1_400_000, output: 90_000, cacheCreation: 0, cacheRead: 1_100_000, total: 2_590_000 },
+        costUsd: 7.4, percent: 0.17, resetsAt: '2026-07-11T00:00:00Z', resetsInSecs: 500_000,
+        isActive: true, startedAt: '2026-07-04T00:00:00Z', planType: 'plus',
+      },
+      source: 'rateLimits', available: true, generatedAt: '2026-07-05T16:16:00Z',
+    };
+  }
+  return {
+    harness: 'claude',
+    block: {
+      tokens: { input: 820_000, output: 64_000, cacheCreation: 120_000, cacheRead: 240_000, total: 1_244_000 },
+      costUsd: 4.18, resetsAt: '2026-07-05T19:00:00Z', resetsInSecs: 9_660,
+      isActive: true, startedAt: '2026-07-05T14:00:00Z',
+    },
+    week: {
+      tokens: { input: 12_000_000, output: 900_000, cacheCreation: 1_800_000, cacheRead: 3_700_000, total: 18_400_000 },
+      costUsd: 63.2, isActive: true, startedAt: '2026-06-28T00:00:00Z',
+    },
+    source: 'local', available: true, generatedAt: '2026-07-05T16:16:00Z',
+  };
 }

@@ -57,6 +57,12 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'backup_scheduler_remove': store.schedulerRemove(); return null;
     case 'backup_set_remote': store.setRemote(args.url); return null;
 
+    // ── Usage engine + native shell (Plan 14/15) ──
+    case 'usage_snapshot': await delay(120); return store.usageSnapshot(args.harness ?? 'claude');
+    case 'autostart_status': return store.autostartStatus();
+    case 'autostart_set': store.autostartSet(!!args.enabled); return null;
+    case 'native_update_status': store.nativeUpdateStatus(); return null;
+
     default:
       throw new Error(`[ward-mock] unhandled command: ${cmd}`);
   }
