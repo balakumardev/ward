@@ -226,3 +226,39 @@
   0%, 100% { opacity: 1; transform: scale(1); }
   50%      { opacity: 0.35; transform: scale(0.7); }
 }
+
+/* ── History list ───────────────────────────────────────────────────────── */
+.bk-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bk-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  transition: background .13s ease;
+}
+.bk-history-row:hover { background: rgba(255, 255, 255, 0.025); }
+.bk-history-sha { flex: none; }
+.bk-history-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.bk-history-meta {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

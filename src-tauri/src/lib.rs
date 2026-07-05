@@ -337,6 +337,7 @@ pub fn run() {
             commands::backup_sync,
             commands::backup_push,
             commands::backup_set_remote,
+            commands::backup_log,
             commands::backup_scheduler_install,
             commands::backup_scheduler_remove,
             commands::autostart_status,

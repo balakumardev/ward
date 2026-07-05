@@ -487,6 +487,27 @@ pub fn backup_set_remote(url: String) -> Result<(), WardError> {
     git_ops::set_remote(&repo, url.trim())
 }
 
+/// `backup_log` — the last `n` commits in the backup repo, newest first.
+/// Powers the history list in the Backups page.
+#[tauri::command]
+pub fn backup_log(n: usize) -> Result<Vec<git_ops::GitLogEntry>, WardError> {
+    let repo = backup_repo_root()?;
+    backup_log_impl(&repo, n)
+}
+
+/// Core of `backup_log`, split out so it's unit-testable against a temp
+/// repo (the command itself resolves the real `~/.ward-backups/`).
+///
+/// An absent repo or a commit-less repo is empty history, NOT an error —
+/// `git log` exits non-zero on a repo with zero commits, so we guard on
+/// `last_commit()` (which already tolerates that) before calling `log()`.
+fn backup_log_impl(repo: &Path, n: usize) -> Result<Vec<git_ops::GitLogEntry>, WardError> {
+    if !repo.join(".git").exists() || git_ops::last_commit(repo)?.is_none() {
+        return Ok(Vec::new());
+    }
+    git_ops::log(repo, n)
+}
+
 #[tauri::command]
 pub fn backup_scheduler_install(interval_seconds: u32) -> Result<(), WardError> {
     sched_ops::validate_interval(interval_seconds)?;
@@ -575,6 +596,39 @@ pub fn native_update_status(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn backup_log_impl_empty_then_lists_newest_first() {
+        use crate::backup::git as g;
+        // Separate temp dirs for the repo and the export source so the
+        // source tree is never itself inside the repo.
+        let repo_root = tempfile::tempdir().unwrap();
+        let src_root = tempfile::tempdir().unwrap();
+        let repo = repo_root.path();
+        let src = src_root.path();
+
+        // No .git yet → empty history, no error.
+        assert!(backup_log_impl(repo, 20).unwrap().is_empty());
+
+        g::init(repo, "ward", "ward@local").unwrap();
+        // Initialized but commit-less → still empty + Ok (a raw `git log`
+        // would error here; backup_log_impl must not).
+        assert!(backup_log_impl(repo, 20).unwrap().is_empty());
+
+        // Two commits, newest last.
+        fs::write(src.join("a"), "1").unwrap();
+        g::export_to_repo(src, repo).unwrap();
+        g::commit(repo, "one").unwrap();
+        fs::write(src.join("a"), "2").unwrap();
+        g::export_to_repo(src, repo).unwrap();
+        g::commit(repo, "two").unwrap();
+
+        let log = backup_log_impl(repo, 20).unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].subject, "two");
+        assert_eq!(log[1].subject, "one");
+        assert_ne!(log[0].sha, log[1].sha);
+    }
 
     #[test]
     fn scan_impl_returns_claude_result() {

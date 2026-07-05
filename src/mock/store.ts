@@ -12,7 +12,7 @@ import scanClaudeRaw from './fixtures/scan-claude.json?raw';
 import type {
   ScanResult, HarnessItem, Destination, RestoreInfo, McpPolicy, PolicyVerdict,
   ScanResultSec, BaselineDiff, BudgetBreakdown, Conversation, CostBreakdown,
-  DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult,
+  DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult, GitLogEntry,
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
@@ -253,6 +253,20 @@ export class MockStore {
 
   setRemote(url: string): void {
     this.backup.remoteUrl = url;
+  }
+
+  // A few realistic sample commits so the Backups history section is
+  // populated in dev:mock and in vitest. Newest first, mirroring the real
+  // `git log` order.
+  backupLog(n = 20): GitLogEntry[] {
+    const samples: GitLogEntry[] = [
+      { sha: '9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b', subject: 'backup: ward (claude) 2026-07-05T09:20:00Z', author: 'ward', committedAt: '2026-07-05T09:20:00Z' },
+      { sha: '1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d', subject: 'backup: ward sync 2026-07-05T04:00:00Z', author: 'ward', committedAt: '2026-07-05T04:00:00Z' },
+      { sha: 'f0e1d2c3b4a596877869504b3c2d1e0f9a8b7c6d', subject: 'backup: ward (claude) 2026-07-04T22:10:00Z', author: 'ward', committedAt: '2026-07-04T22:10:00Z' },
+      { sha: '7c6b5a4938271605f4e3d2c1b0a9f8e7d6c5b4a3', subject: 'backup: ward sync 2026-07-04T16:00:00Z', author: 'ward', committedAt: '2026-07-04T16:00:00Z' },
+      { sha: '3e2d1c0b9a8f7e6d5c4b3a2918070f6e5d4c3b2a', subject: 'backup: ward (claude) 2026-07-04T09:00:00Z', author: 'ward', committedAt: '2026-07-04T09:00:00Z' },
+    ];
+    return samples.slice(0, Math.max(0, n));
   }
 
   // ── Usage engine + native shell (Plan 14/15) ──

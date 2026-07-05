@@ -202,6 +202,15 @@ test('backupSetRemote passes url', async () => {
   expect(invoke).toHaveBeenCalledWith('backup_set_remote', { url: 'git@github.com:me/ward.git' });
 });
 
+test('backupLog passes n', async () => {
+  invoke.mockResolvedValue([
+    { sha: 'deadbeef', subject: 'backup: ward', author: 'ward', committedAt: '2026-07-05T09:20:00Z' },
+  ]);
+  const r = await api.backupLog(20);
+  expect(invoke).toHaveBeenCalledWith('backup_log', { n: 20 });
+  expect(r[0].sha).toBe('deadbeef');
+});
+
 // ── Plan 15: menu-bar glance (usage / autostart / native status) ──
 
 test('usageSnapshot passes harness', async () => {

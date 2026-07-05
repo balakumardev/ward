@@ -1,8 +1,9 @@
-import { createMemo, createResource, createSignal, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import type {
   BackupStatus,
   CommitInfo,
   ExportReport,
+  GitLogEntry,
   PushResult,
   ScanResult,
 } from '../api';
@@ -16,6 +17,7 @@ export interface BackupsApi {
   backupSchedulerInstall: (intervalSeconds: number) => Promise<void>;
   backupSchedulerRemove: () => Promise<void>;
   backupSetRemote: (url: string) => Promise<void>;
+  backupLog: (n: number) => Promise<GitLogEntry[]>;
 }
 
 const MIN_INTERVAL_SECONDS = 300;
@@ -36,8 +38,27 @@ function shortSha(sha: string | null): string {
   return sha.length > 10 ? sha.slice(0, 10) : sha;
 }
 
+/** Compact "time ago" for the history rows. Falls back to the raw ISO
+ *  string if it can't be parsed. */
+function fmtRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.round(months / 12)}y ago`;
+}
+
 export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
   const [status, { refetch: refetchStatus }] = createResource(() => props.api.backupStatus());
+  const [history, { refetch: refetchHistory }] = createResource(() => props.api.backupLog(20));
 
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -56,6 +77,7 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
       const r = await props.api.backupRun(props.scan, null);
       setInfo(`Exported ${r.filesCopied} file(s), ${r.bytesCopied} bytes to ~/.ward-backups/.`);
       await refetchStatus();
+      await refetchHistory();
     } catch (e) {
       setError(String((e as Error).message ?? e));
     } finally {
@@ -75,6 +97,7 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
         setInfo('Nothing to commit (working tree clean).');
       }
       await refetchStatus();
+      await refetchHistory();
     } catch (e) {
       setError(String((e as Error).message ?? e));
     } finally {
@@ -310,6 +333,36 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
                   {(n) => <span>Currently runs every {n()}s.</span>}
                 </Show>
               </div>
+            </section>
+
+            {/* History */}
+            <section class="bk-card bk-history" data-testid="backups-history">
+              <div class="bk-card-head">
+                <span class="bk-card-title">History</span>
+              </div>
+              <Show
+                when={(history() ?? []).length > 0}
+                fallback={
+                  <div class="bk-hint" data-testid="backups-history-empty">
+                    No backups yet — run a backup to start the history.
+                  </div>
+                }
+              >
+                <ul class="bk-history-list">
+                  <For each={history()}>
+                    {(e) => (
+                      <li class="bk-history-row" data-testid="backups-history-row">
+                        <code class="bk-sha bk-history-sha">{shortSha(e.sha)}</code>
+                        <span class="bk-history-subject" title={e.subject}>{e.subject}</span>
+                        <span class="bk-history-meta">
+                          {e.author}{' · '}
+                          <span class="bk-date">{fmtRelative(e.committedAt)}</span>
+                        </span>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
             </section>
 
             {/* Bus / error / info */}

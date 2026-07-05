@@ -349,6 +349,7 @@ export const api = {
     invokeOrThrow<void>('backup_scheduler_install', { intervalSeconds }),
   backupSchedulerRemove: () => invokeOrThrow<void>('backup_scheduler_remove'),
   backupSetRemote: (url: string) => invokeOrThrow<void>('backup_set_remote', { url }),
+  backupLog: (n: number) => invokeOrThrow<GitLogEntry[]>('backup_log', { n }),
 
   // Plan 14/15 — usage engine + native shell.
   usageSnapshot: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot', { harness }),

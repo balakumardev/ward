@@ -83,6 +83,7 @@ export default function App() {
     backupSchedulerInstall: (secs: number) => api.backupSchedulerInstall(secs),
     backupSchedulerRemove: () => api.backupSchedulerRemove(),
     backupSetRemote: (url: string) => api.backupSetRemote(url),
+    backupLog: (n: number) => api.backupLog(n),
   };
 
   return (

@@ -56,6 +56,7 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'backup_scheduler_install': store.schedulerInstall(args.intervalSeconds); return null;
     case 'backup_scheduler_remove': store.schedulerRemove(); return null;
     case 'backup_set_remote': store.setRemote(args.url); return null;
+    case 'backup_log': await delay(60); return store.backupLog(args.n ?? 20);
 
     // ── Usage engine + native shell (Plan 14/15/16) ──
     case 'usage_snapshot': await delay(120); return store.usageSnapshot(args.harness ?? 'claude');
