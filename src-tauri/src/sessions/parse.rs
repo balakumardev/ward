@@ -1,11 +1,24 @@
-//! Streaming JSONL parser for Claude Code session files.
+//! Streaming JSONL parser for Claude Code **and** Codex CLI session files.
 //!
-//! Each line of a session `.jsonl` is a JSON object whose top-level
-//! `type` discriminates the record. The interesting records for the UI
-//! are `user`, `assistant`, `ai-title`, `system`, and `queue-operation`;
-//! everything else (e.g. `attachment`, `progress`, `pr-link`,
-//! `file-history-snapshot`, `custom-title`) is preserved as `Other` so
-//! the conversation viewer can still display its presence.
+//! Each line of a session `.jsonl` is a JSON object. The format is
+//! auto-detected per line: a top-level `payload` object means a Codex
+//! `rollout-*.jsonl` line (`response_item` / `event_msg` / `session_meta`);
+//! otherwise it's a Claude Code line whose top-level `type` discriminates
+//! the record.
+//!
+//! For Claude the interesting records are `user`, `assistant`, `ai-title`,
+//! `system`, and `queue-operation`; everything else (e.g. `attachment`,
+//! `progress`, `pr-link`, `file-history-snapshot`, `custom-title`) is
+//! preserved as `Other`. For Codex the transcript comes from
+//! `response_item` payloads (message / reasoning / function_call /
+//! function_call_output); `event_msg` records duplicate them and are
+//! preserved as `Other`.
+//!
+//! User/assistant turns are arrays of typed **content blocks** — plain
+//! text is only one kind. `ContentBlock` models them all (text, thinking,
+//! tool_use, tool_result, image) so the viewer can render tool calls,
+//! results, and reasoning distinctly instead of collapsing everything to a
+//! single (often empty) string.
 //!
 //! Parsing streams the file line-by-line via `BufReader::lines()` so
 //! 100MB+ session files do not blow up memory. Single-line parse is
@@ -177,6 +190,15 @@ fn classify(v: Value) -> SessionRecord {
             return SessionRecord::Other { record_type: "non-object".into() }
         }
     };
+    let ts = obj
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .map(str::to_string);
+    // Codex rollout lines carry a top-level `payload` object (and no
+    // Claude-style `message` envelope). Route them to the Codex classifier.
+    if obj.contains_key("payload") {
+        return classify_codex(obj, ts);
+    }
     let record_type = obj
         .get("type")
         .and_then(|t| t.as_str())
@@ -188,10 +210,6 @@ fn classify(v: Value) -> SessionRecord {
         .and_then(|r| r.as_str())
         .unwrap_or("");
     let content = message.and_then(|m| m.get("content"));
-    let ts = obj
-        .get("timestamp")
-        .and_then(|t| t.as_str())
-        .map(str::to_string);
 
     match (record_type.as_str(), role) {
         ("user", "user") => {
@@ -237,6 +255,159 @@ fn classify(v: Value) -> SessionRecord {
                 .unwrap_or(false),
         },
         _ => SessionRecord::Other { record_type },
+    }
+}
+
+// ── Codex classifier ───────────────────────────────────────────────────
+//
+// Codex `rollout-*.jsonl` lines look like
+//   {"type":"response_item"|"event_msg"|"session_meta","timestamp":"…",
+//    "payload":{ … }}
+// There is no `message`/`role` envelope. The canonical transcript lives
+// in `response_item` payloads:
+//   - message            → user/assistant text (payload.content[].text)
+//   - reasoning          → thinking (payload.summary[].text)
+//   - function_call      → tool call (name + arguments)
+//   - function_call_output → tool result (output)
+// `event_msg` records (agent_message/user_message/token_count/…) DUPLICATE
+// the response_item transcript, so mapping them to `Other` avoids doubling
+// every turn.
+
+fn classify_codex(obj: &serde_json::Map<String, Value>, ts: Option<String>) -> SessionRecord {
+    let record_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+    let payload = obj.get("payload").and_then(|p| p.as_object());
+    let ptype = payload
+        .and_then(|p| p.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+
+    // Only `response_item` payloads are conversation turns. Everything else
+    // (event_msg duplicates, session_meta, turn_context, compacted) is
+    // envelope/telemetry — preserved as Other for an honest record count.
+    if record_type != "response_item" {
+        return SessionRecord::Other { record_type: record_type.to_string() };
+    }
+
+    match ptype {
+        "message" => {
+            let role = payload
+                .and_then(|p| p.get("role"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("");
+            let blocks = parse_codex_message_blocks(payload.and_then(|p| p.get("content")));
+            let content = flatten_blocks(&blocks);
+            // role is user/assistant/developer; only assistant is the model.
+            if role == "assistant" {
+                SessionRecord::Assistant { content, blocks, model: None, ts, usage: None }
+            } else {
+                SessionRecord::User { content, blocks, ts }
+            }
+        }
+        "reasoning" => {
+            let text = codex_reasoning_text(payload);
+            let blocks = if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![ContentBlock::Thinking { text: text.clone() }]
+            };
+            SessionRecord::Assistant { content: text, blocks, model: None, ts, usage: None }
+        }
+        "function_call" | "custom_tool_call" => {
+            let name = payload
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("tool")
+                .to_string();
+            // `function_call` carries a JSON-string `arguments`;
+            // `custom_tool_call` carries a raw-string `input`.
+            let raw = payload.and_then(|p| p.get("arguments").or_else(|| p.get("input")));
+            let input_summary = summarize_codex_args(raw);
+            let block = ContentBlock::ToolUse { name: name.clone(), input_summary: input_summary.clone() };
+            SessionRecord::Assistant {
+                content: tool_use_label(&name, &input_summary),
+                blocks: vec![block],
+                model: None,
+                ts,
+                usage: None,
+            }
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let output = payload
+                .and_then(|p| p.get("output"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            SessionRecord::User {
+                content: output.clone(),
+                blocks: vec![ContentBlock::ToolResult { content: output }],
+                ts,
+            }
+        }
+        // Non-turn response items (web_search_call, ghost_snapshot, …).
+        _ => SessionRecord::Other { record_type: format!("response_item:{ptype}") },
+    }
+}
+
+/// Codex `message.content` is an array of `input_text` / `output_text`
+/// blocks (both carry `.text`); a bare string is tolerated too.
+fn parse_codex_message_blocks(content: Option<&Value>) -> Vec<ContentBlock> {
+    match content {
+        Some(Value::String(s)) => vec![ContentBlock::Text { text: s.clone() }],
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|b| {
+                b.get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|s| ContentBlock::Text { text: s.to_string() })
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Codex reasoning text lives in `summary[].text` (`.content` is usually
+/// null / encrypted). Falls back to `content[].text` if present.
+fn codex_reasoning_text(payload: Option<&serde_json::Map<String, Value>>) -> String {
+    let p = match payload {
+        Some(p) => p,
+        None => return String::new(),
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(arr) = p.get("summary").and_then(|v| v.as_array()) {
+        for b in arr {
+            if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                parts.push(t.to_string());
+            }
+        }
+    }
+    if parts.is_empty() {
+        if let Some(arr) = p.get("content").and_then(|v| v.as_array()) {
+            for b in arr {
+                if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                    parts.push(t.to_string());
+                }
+            }
+        }
+    }
+    parts.join("\n")
+}
+
+/// Summarize a Codex tool call's arguments. `function_call.arguments` is a
+/// JSON *string* — parse it and reuse `summarize_input`; `custom_tool_call.
+/// input` is a raw string — collapse and truncate it.
+fn summarize_codex_args(raw: Option<&Value>) -> String {
+    match raw {
+        Some(Value::String(s)) => {
+            if let Ok(v) = serde_json::from_str::<Value>(s) {
+                let sum = summarize_input(Some(&v));
+                if !sum.is_empty() {
+                    return sum;
+                }
+            }
+            one_line_truncate(s, 80)
+        }
+        Some(v) => summarize_input(Some(v)),
+        None => String::new(),
     }
 }
 
@@ -712,6 +883,156 @@ mod tests {
         assert!(j.contains("\"inputSummary\":\"/tmp/x\""));
         let img = serde_json::to_string(&ContentBlock::Image).unwrap();
         assert_eq!(img, "{\"type\":\"image\"}");
+    }
+
+    // ── Codex transcript golden tests (Commit C) ─────────────────────
+    // Codex rollout lines carry a top-level `payload` (no `message`/`role`
+    // envelope). Text lives at payload.content[].text (input_text/
+    // output_text); reasoning at payload.summary[].text; tools at
+    // function_call / function_call_output. Shapes are verbatim from real
+    // ~/.codex/sessions/**/rollout-*.jsonl files. Before the Codex path
+    // these all classified as `Other` (transcript 100% empty).
+
+    #[test]
+    fn parse_codex_message_user() {
+        let line = r#"{"type":"response_item","timestamp":"2025-12-29T11:18:03.838Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the login bug please"}]}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, ts } => {
+                assert_eq!(content, "Fix the login bug please");
+                assert_eq!(blocks, vec![ContentBlock::Text { text: "Fix the login bug please".into() }]);
+                assert_eq!(ts.as_deref(), Some("2025-12-29T11:18:03.838Z"));
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_message_assistant() {
+        let line = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Here is the fix you asked for."}]}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, model, usage, .. } => {
+                assert_eq!(content, "Here is the fix you asked for.");
+                assert_eq!(blocks, vec![ContentBlock::Text { text: "Here is the fix you asked for.".into() }]);
+                assert!(model.is_none());
+                assert!(usage.is_none());
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_message_developer_role_is_user() {
+        // Codex injects a `developer` role for instruction messages; it's an
+        // input turn, so it maps to User (not assistant).
+        let line = r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"AGENTS.md instructions"}]}}"#;
+        let rec = parse_line(line).unwrap();
+        assert!(matches!(rec, SessionRecord::User { .. }), "developer role -> User, got {rec:?}");
+    }
+
+    #[test]
+    fn parse_codex_reasoning() {
+        let line = r#"{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Planning the approach carefully."}],"content":null,"encrypted_content":"gAAAAABpUmO0"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, .. } => {
+                assert_eq!(content, "Planning the approach carefully.");
+                assert_eq!(blocks, vec![ContentBlock::Thinking { text: "Planning the approach carefully.".into() }]);
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_function_call() {
+        // `arguments` is a JSON *string*; we parse it and surface `command`.
+        let line = r#"{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"ls -la\",\"workdir\":\"/tmp\"}","call_id":"call_fjvl"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { content, blocks, .. } => {
+                assert_eq!(content, "shell_command: ls -la");
+                assert_eq!(blocks, vec![ContentBlock::ToolUse {
+                    name: "shell_command".into(),
+                    input_summary: "ls -la".into(),
+                }]);
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_function_call_output() {
+        let line = r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_fjvl","output":"Exit code: 0\nOutput:\nfile.txt"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::User { content, blocks, .. } => {
+                assert_eq!(content, "Exit code: 0\nOutput:\nfile.txt");
+                assert_eq!(blocks, vec![ContentBlock::ToolResult { content: "Exit code: 0\nOutput:\nfile.txt".into() }]);
+            }
+            other => panic!("expected User, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_custom_tool_call_apply_patch() {
+        // custom_tool_call `input` is a raw (non-JSON) string.
+        let line = r#"{"type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"c1","name":"apply_patch","input":"*** Begin Patch\n*** Update File: manifest.json"}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Assistant { blocks, content, .. } => {
+                assert!(content.starts_with("apply_patch: "), "got {content}");
+                assert!(matches!(&blocks[..], [ContentBlock::ToolUse { name, .. }] if name == "apply_patch"));
+            }
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_event_msg_is_meta_not_duplicate() {
+        // event_msg records DUPLICATE the response_item transcript
+        // (agent_message, user_message, token_count, …). They map to Other
+        // so the transcript is not doubled.
+        let line = r#"{"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{}}}"#;
+        let rec = parse_line(line).unwrap();
+        match rec {
+            SessionRecord::Other { record_type } => assert_eq!(record_type, "event_msg"),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_codex_session_meta_is_other() {
+        let line = r#"{"type":"session_meta","payload":{"id":"abc","cwd":"/x","cli_version":"0.77.0"}}"#;
+        let rec = parse_line(line).unwrap();
+        assert!(matches!(rec, SessionRecord::Other { .. }), "session_meta -> Other, got {rec:?}");
+    }
+
+    #[test]
+    fn parse_file_codex_rollout_populates_transcript() {
+        // End-to-end: a mixed Codex rollout yields non-empty user/assistant
+        // turns (the regression this fixes: Codex was 100% empty).
+        let dir = tempfile::tempdir().unwrap();
+        let body = "\
+{\"type\":\"session_meta\",\"payload\":{\"id\":\"x\",\"cwd\":\"/p\"}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"build it\"}]}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"think think\"}],\"content\":null}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell_command\",\"arguments\":\"{\\\"command\\\":\\\"make\\\"}\",\"call_id\":\"c\"}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"c\",\"output\":\"done\"}}\n\
+{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\"}}\n\
+{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"built ok\"}]}}\n";
+        let p = write_session(dir.path(), "rollout-x.jsonl", body);
+        let conv = parse_file(&p).unwrap();
+        // Every user/assistant record carries non-empty content.
+        let convo_turns: Vec<&SessionRecord> = conv.records.iter().filter(|r| matches!(r, SessionRecord::User { .. } | SessionRecord::Assistant { .. })).collect();
+        assert_eq!(convo_turns.len(), 5, "user prompt + reasoning + tool call + tool result + assistant reply");
+        for r in convo_turns {
+            let c = match r {
+                SessionRecord::User { content, .. } | SessionRecord::Assistant { content, .. } => content,
+                _ => unreachable!(),
+            };
+            assert!(!c.trim().is_empty(), "codex turn must not be empty: {r:?}");
+        }
     }
 
     #[test]
