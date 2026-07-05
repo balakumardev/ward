@@ -229,6 +229,11 @@ Claude `percent` stays `None` by default (we show tokens/cost + countdown honest
 - **`entries/Popover.tsx`:** on mount, `Promise.all([api.usageSnapshot('claude'), api.usageSnapshot('codex')])`; also read the latest scan's critical count (reuse the Security resource / `scan-now` event) and `api.autostartStatus()`. Renders, per harness: a labeled usage **gauge** (mint bar; `percent` when present, else a tokens/cost readout), a **reset countdown** (`resetsInSecs` ticking down, formatted `2h41m` / absolute time), and `plan_type` if present. Footer: **critical-findings** count, **Scan now** (emit `scan-now`), **Open** (show main window), and a **Launch at login** toggle (`api.autostartSet`). Subscribes to `config-changed` / `scan-now` to refresh, and cleans up on unmount (matching `Security.tsx`'s listener pattern).
 - **Styling:** new `src/styles/popover.css`, imported by the component; class-based using existing tokens (`--bg`, `--surface`, `--accent` mint, `--crit`, `--warn`, `--ok`, radii, shadows). No inline styles (so `:hover`/transitions/`::selection` work). Gauge fill color ramps ok→warn→crit by percent when a percent exists.
 - **Unavailable harness:** `available: false` renders a muted "No ~/.codex usage found" row rather than an error.
+- **Refresh model** (fresh when open, zero cost when closed):
+  - **Countdown tick** — a local `setInterval` (1 s) decrements each window's `resetsInSecs` and reformats the label with **no IPC / no file reads**. When it reaches 0, show "resetting…" and trigger exactly one snapshot refetch (the 5-hour block has rolled over).
+  - **Fetch-on-show** — the snapshot is refetched on mount and every time the popover **gains focus** (`getCurrentWindow().onFocusChanged` → `true`), so it is always current the instant it opens.
+  - **Poll-while-visible** — while focused, a 20 s poll refetches the snapshot so it stays live as you watch. The poll is **cleared on blur** (the popover also hides on blur), so nothing reads `~/.claude` / `~/.codex` in the background when the popover is closed.
+  - **Findings count** continues to refresh via the existing `config-changed` / `scan-now` events (independent of the usage poll). The tray tooltip stays findings-only — no background usage reads.
 
 ---
 
@@ -287,7 +292,7 @@ TDD, every `cargo test` / `npm test` green before a task is done (project qualit
 ### Plan 15 — Glance popover (UI)
 **Goal:** the popover window + `<Popover>` view wired to `usage_snapshot` + findings + autostart.
 **Files:** `native/popover.rs`, `native/tray.rs` (left-click toggle + positioner forwarding), `lib.rs` (positioner plugin, popover window, blur-hide), `Cargo.toml`+`package.json` (positioner), `capabilities/default.json`, `src/index.tsx` (label routing), `src/entries/Popover.tsx`, `src/styles/popover.css`, `src/mock/*` (usage fixtures).
-**Tasks:** (1) popover window + positioner + tray left-click toggle + blur-hide; (2) index label/`?view` routing; (3) `<Popover>` component + styling + live countdown; (4) wire usage + critical count + autostart toggle; (5) mock fixtures + JS tests.
+**Tasks:** (1) popover window + positioner + tray left-click toggle + blur-hide; (2) index label/`?view` routing; (3) `<Popover>` component + styling; (4) refresh model — 1 s local countdown tick, fetch-on-focus (`onFocusChanged`), 20 s poll-while-visible cleared on blur; (5) wire usage + critical count + autostart toggle; (6) mock fixtures + JS tests (incl. a countdown-ticks-down test and a poll-stops-on-blur test).
 **Gotchas:** positioner needs the `tray-icon` feature; forward `on_tray_event`; popover reuses the bundle (no second HTML); dev:mock has no native window (`?view=popover`).
 
 ---
