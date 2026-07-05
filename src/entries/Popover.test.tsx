@@ -29,10 +29,21 @@ vi.mock('../api', async () => {
   };
 });
 
-import Popover from './Popover';
+import Popover, { secsUntil } from './Popover';
 
 describe('Popover', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('secsUntil ticks down and floors at zero', () => {
+    const iso = '2026-07-05T19:00:00Z';
+    const t0 = Date.parse('2026-07-05T16:19:00Z'); // 2h41m before
+    const a = secsUntil(iso, t0);
+    const b = secsUntil(iso, t0 + 60_000);
+    expect(a).toBeGreaterThan(b!);
+    expect(b).toBe(a! - 60);
+    expect(secsUntil(iso, Date.parse('2026-07-05T20:00:00Z'))).toBe(0); // past → 0
+    expect(secsUntil(undefined, t0)).toBeNull();
+  });
 
   it('renders both harness rows with usage and a reset countdown', async () => {
     render(() => <Popover />);

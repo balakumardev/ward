@@ -22,6 +22,14 @@ function fmtCountdown(secs: number): string {
   return `${secs}s`;
 }
 
+/** Seconds until `resetsAt` (ISO) relative to `nowMs`; null if absent/unparseable. Drift-free. */
+export function secsUntil(resetsAt: string | undefined, nowMs: number): number | null {
+  if (!resetsAt) return null;
+  const ms = Date.parse(resetsAt);
+  if (Number.isNaN(ms)) return null;
+  return Math.max(0, Math.floor((ms - nowMs) / 1000));
+}
+
 async function safeUsage(harness: string): Promise<UsageSnapshot> {
   try {
     return await api.usageSnapshot(harness);
@@ -43,14 +51,9 @@ function emptyWindow(): UsageWindow {
 
 function HarnessRow(props: { id: string; label: string; icon: string; snap: UsageSnapshot | undefined; nowMs: number }) {
   const block = () => props.snap?.block;
-  // Live countdown: derive remaining from resetsInSecs captured at fetch,
-  // minus the seconds elapsed since this component's clock last ticked.
-  const remaining = () => {
-    const w = block();
-    if (!w || w.resetsInSecs == null) return null;
-    return Math.max(0, w.resetsInSecs - Math.floor((props.nowMs - startedAtRef) / 1000));
-  };
-  let startedAtRef = props.nowMs;
+  // Live countdown: derive remaining from the absolute `resetsAt` (ISO) and the
+  // ticking `nowMs`. Drift-free — re-fetches update `resetsAt`, never accumulate.
+  const remaining = () => secsUntil(block()?.resetsAt, props.nowMs);
   const pct = () => {
     const p = block()?.percent;
     return p == null ? null : Math.round(p * 100);
@@ -101,13 +104,18 @@ export default function Popover() {
   const tick = setInterval(() => setNowMs(Date.now()), 1000);
   onCleanup(() => clearInterval(tick));
 
-  const poll = setInterval(() => refetchAll(), 15000);
-  onCleanup(() => clearInterval(poll));
-
   function refetchAll() {
     void refetchClaude();
     void refetchCodex();
   }
+
+  // Focus-gated poll: the tray popover window is hidden (not destroyed) on blur,
+  // so an unconditional interval would read the user's full Claude/Codex history
+  // off disk forever. Only poll while the window is focused/visible; stop on blur.
+  let pollId: ReturnType<typeof setInterval> | undefined;
+  const startPoll = () => { if (pollId == null) pollId = setInterval(() => refetchAll(), 20000); };
+  const stopPoll = () => { if (pollId != null) { clearInterval(pollId); pollId = undefined; } };
+  onCleanup(stopPoll);
 
   onMount(async () => {
     try {
@@ -118,13 +126,15 @@ export default function Popover() {
     if (isTauri()) {
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        const un = await getCurrentWindow().onFocusChanged(({ payload }) => {
-          if (payload) refetchAll();
+        const win = getCurrentWindow();
+        if (await win.isFocused().catch(() => true)) startPoll();
+        const un = await win.onFocusChanged(({ payload }) => {
+          if (payload) { refetchAll(); startPoll(); } else { stopPoll(); }
         });
         onCleanup(un);
-      } catch {
-        /* window API unavailable — poll covers refresh */
-      }
+      } catch { startPoll(); }
+    } else {
+      startPoll();
     }
   });
 
