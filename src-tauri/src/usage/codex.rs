@@ -150,7 +150,7 @@ pub(crate) fn collect_events_from(base: &Path) -> Vec<Event> {
 
 /// Per-turn delta of cumulative totals, keyed by event timestamp. Resets to
 /// the event's own value when cumulative drops (a new session started).
-struct Delta { ts_ms: i64, input: u64, output: u64, cached: u64, model_tokens: u64 }
+struct Delta { ts_ms: i64, input: u64, output: u64, cached: u64 }
 
 fn deltas(events: &[Event]) -> Vec<Delta> {
     let mut out = Vec::with_capacity(events.len());
@@ -158,7 +158,6 @@ fn deltas(events: &[Event]) -> Vec<Delta> {
     for e in events {
         // A cumulative total lower than the previous means a new session.
         let reset = e.cumulative_total < pt;
-        let base_t = if reset { 0 } else { pt };
         let base_i = if reset { 0 } else { pi };
         let base_o = if reset { 0 } else { po };
         let base_c = if reset { 0 } else { pc };
@@ -167,7 +166,6 @@ fn deltas(events: &[Event]) -> Vec<Delta> {
             input: e.cumulative_input.saturating_sub(base_i),
             output: e.cumulative_output.saturating_sub(base_o),
             cached: e.cumulative_cached.saturating_sub(base_c),
-            model_tokens: e.cumulative_total.saturating_sub(base_t),
         });
         pt = e.cumulative_total;
         pi = e.cumulative_input;
