@@ -153,6 +153,14 @@ pub(crate) fn collect_events_from(base: &Path) -> Vec<Event> {
 struct Delta { ts_ms: i64, input: u64, output: u64, cached: u64 }
 
 fn deltas(events: &[Event]) -> Vec<Delta> {
+    // LIMITATION: every rollout's events are merged into one timestamp-sorted
+    // stream sharing a single running cumulative counter. When two sessions are
+    // active in overlapping time windows their cumulative totals interleave, so
+    // the per-turn deltas here — and the tokens/cost we later bucket from them —
+    // are only approximate for that overlap (a rise from the *other* session
+    // looks like this one's turn, and a lower total trips the reset branch). The
+    // authoritative `used_percent` comes straight from `rate_limits` and is
+    // unaffected by this bucketing.
     let mut out = Vec::with_capacity(events.len());
     let (mut pt, mut pi, mut po, mut pc) = (0u64, 0u64, 0u64, 0u64);
     for e in events {

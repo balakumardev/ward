@@ -101,15 +101,19 @@ pub(crate) fn parse_entries_from(base: &Path) -> Vec<Entry> {
                 .and_then(|i| i.as_str())
                 .or_else(|| v.get("uuid").and_then(|u| u.as_str()))
                 .map(str::to_string);
+            let ts_ms = match v.get("timestamp").and_then(|t| t.as_str()).and_then(parse_ts_ms) {
+                Some(ms) => ms,
+                None => continue,
+            };
+            // Claim the dedup id only AFTER the timestamp guard: a first-seen line
+            // with a missing/unparseable timestamp is skipped above and must not
+            // insert its id into `seen`, or it would shadow a later valid line
+            // carrying the same `message.id`.
             if let Some(k) = &key {
                 if !seen.insert(k.clone()) {
                     continue; // already counted this message
                 }
             }
-            let ts_ms = match v.get("timestamp").and_then(|t| t.as_str()).and_then(parse_ts_ms) {
-                Some(ms) => ms,
-                None => continue,
-            };
             let model = msg.get("model").and_then(|m| m.as_str()).unwrap_or("unknown").to_string();
             let usage = Usage {
                 input_tokens: usage_val.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
