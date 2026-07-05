@@ -222,6 +222,31 @@ test('usageSnapshot passes harness', async () => {
   expect(r.harness).toBe('claude');
 });
 
+test('usageSnapshotLive passes harness and returns the live source', async () => {
+  invoke.mockResolvedValue({
+    harness: 'claude',
+    block: { tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 }, costUsd: 0, percent: 0.26, isActive: true },
+    week: { tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 }, costUsd: 0, percent: 0.44, isActive: true },
+    source: 'live', available: true, generatedAt: '',
+  });
+  const r = await api.usageSnapshotLive('claude');
+  expect(invoke).toHaveBeenCalledWith('usage_snapshot_live', { harness: 'claude' });
+  expect(r.source).toBe('live');
+});
+
+test('liveUsageEnabled calls invoke with no args', async () => {
+  invoke.mockResolvedValue(false);
+  const r = await api.liveUsageEnabled();
+  expect(invoke).toHaveBeenCalledWith('live_usage_enabled', undefined);
+  expect(r).toBe(false);
+});
+
+test('setLiveUsageEnabled passes enabled', async () => {
+  invoke.mockResolvedValue(undefined);
+  await api.setLiveUsageEnabled(true);
+  expect(invoke).toHaveBeenCalledWith('set_live_usage_enabled', { enabled: true });
+});
+
 test('autostartStatus calls invoke with no args', async () => {
   invoke.mockResolvedValue(true);
   const r = await api.autostartStatus();

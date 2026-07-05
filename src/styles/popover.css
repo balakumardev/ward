@@ -49,6 +49,20 @@
 .pop-cost { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .pop-reset { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
+/* Plan 16 — one labeled window row (5h / 7d) with its gauge. */
+.pop-window { display: flex; align-items: center; gap: 8px; }
+.pop-window-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-mute);
+  width: 20px; flex: none; text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+.pop-window .pop-gauge { flex: 1; }
+
+/* Plan 16 — live opt-in blurb + live-fetch error. */
+.pop-blurb { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+.pop-error { font-size: 11px; color: var(--warn); display: flex; align-items: center; gap: 6px; }
+.pop-btn-sm { flex: none; padding: 3px 10px; font-size: 11px; }
+.pop-source { font-size: 10px; color: var(--text-mute); letter-spacing: 0.02em; }
+
 .pop-foot { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 .pop-actions { display: flex; gap: 8px; }
 .pop-btn {

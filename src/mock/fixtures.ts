@@ -206,3 +206,24 @@ export function usageSnapshotFor(harness: string): UsageSnapshot {
     source: 'local', available: true, generatedAt: '2026-07-05T16:16:00Z',
   };
 }
+
+// Plan 16 — live Claude snapshot (source `live`): real 5-hour + weekly limit
+// percentages and resets from the rate-limit endpoint, carrying no token counts.
+// Backs the popover's live gauges in the `dev:mock` preview.
+export function liveSnapshotFor(_harness: string): UsageSnapshot {
+  const empty = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 };
+  return {
+    harness: 'claude',
+    block: {
+      tokens: { ...empty }, costUsd: 0, percent: 0.26,
+      resetsAt: '2026-07-05T19:30:00Z', resetsInSecs: 12_000,
+      isActive: true, planType: 'max',
+    },
+    week: {
+      tokens: { ...empty }, costUsd: 0, percent: 0.44,
+      resetsAt: '2026-07-09T00:00:00Z', resetsInSecs: 300_000,
+      isActive: true, planType: 'max',
+    },
+    source: 'live', available: true, generatedAt: '2026-07-05T16:16:00Z',
+  };
+}

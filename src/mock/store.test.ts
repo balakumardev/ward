@@ -19,4 +19,16 @@ describe('MockStore usage + autostart', () => {
     s.autostartSet(!initial);
     expect(s.autostartStatus()).toBe(!initial);
   });
+
+  it('exposes a claude-only live snapshot, toggleable via the opt-in flag', () => {
+    const s = new MockStore();
+    expect(s.liveUsageEnabled()).toBe(true); // dev:mock defaults on
+    const live = s.usageSnapshotLive('claude');
+    expect(live.source).toBe('live');
+    expect(live.block.percent).toBeGreaterThan(0);
+    expect(live.week.percent).toBeGreaterThan(0);
+    expect(() => s.usageSnapshotLive('codex')).toThrow(); // live is Claude-only
+    s.setLiveUsageEnabled(false);
+    expect(s.liveUsageEnabled()).toBe(false);
+  });
 });

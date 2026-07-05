@@ -266,7 +266,7 @@ export interface TokenTotals {
   total: number;
 }
 
-export type UsageSource = 'local' | 'rateLimits';
+export type UsageSource = 'local' | 'rateLimits' | 'live';
 
 export interface UsageWindow {
   tokens: TokenTotals;
@@ -348,6 +348,10 @@ export const api = {
 
   // Plan 14/15 — usage engine + native shell.
   usageSnapshot: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot', { harness }),
+  // Plan 16 — live Claude usage (gated network call; Claude only).
+  usageSnapshotLive: (harness: string) => invokeOrThrow<UsageSnapshot>('usage_snapshot_live', { harness }),
+  liveUsageEnabled: () => invokeOrThrow<boolean>('live_usage_enabled'),
+  setLiveUsageEnabled: (enabled: boolean) => invokeOrThrow<void>('set_live_usage_enabled', { enabled }),
   autostartStatus: () => invokeOrThrow<boolean>('autostart_status'),
   autostartSet: (enabled: boolean) => invokeOrThrow<void>('autostart_set', { enabled }),
   nativeUpdateStatus: (critical: number, lastScanAt?: string) =>

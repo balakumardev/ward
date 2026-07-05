@@ -1,32 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor } from '@solidjs/testing-library';
 
-// Controllable focus callback so the test can drive blur/focus transitions.
+// Controllable focus callback so the test can drive focus transitions.
 let focusCb: ((e: { payload: boolean }) => void) | null = null;
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api');
+  const emptySnap = (harness: string) => ({
+    harness,
+    block: { tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 }, costUsd: 0, isActive: false },
+    week: { tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 }, costUsd: 0, isActive: false },
+    source: 'local' as const,
+    available: true,
+    generatedAt: '',
+  });
   return {
     ...actual,
-    // Run the Tauri focus-gated code path (the other Popover test uses false).
     isTauri: () => true,
     api: {
-      usageSnapshot: vi.fn((harness: string) =>
-        Promise.resolve({
-          harness,
-          block: {
-            tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 },
-            costUsd: 0,
-            resetsAt: '2026-07-05T19:00:00Z',
-            resetsInSecs: 9_660,
-            isActive: true,
-          },
-          week: { tokens: { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0 }, costUsd: 0, isActive: false },
-          source: 'local',
-          available: true,
-          generatedAt: '2026-07-05T16:16:00Z',
-        }),
-      ),
+      // Codex is the local probe we count. Claude is left opted-out
+      // (liveUsageEnabled=false) so it stays in opt-in mode and issues no fetch.
+      usageSnapshot: vi.fn((harness: string) => Promise.resolve(emptySnap(harness))),
+      liveUsageEnabled: vi.fn(() => Promise.resolve(false)),
       autostartStatus: vi.fn(() => Promise.resolve(false)),
       autostartSet: vi.fn(() => Promise.resolve()),
     },
@@ -35,7 +30,6 @@ vi.mock('../api', async () => {
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
-    isFocused: () => Promise.resolve(true),
     onFocusChanged: (cb: (e: { payload: boolean }) => void) => {
       focusCb = cb;
       return Promise.resolve(() => {});
@@ -48,7 +42,7 @@ import { api } from '../api';
 
 const calls = () => (api.usageSnapshot as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
 
-describe('Popover poll focus-gating', () => {
+describe('Popover refresh model', () => {
   beforeEach(() => {
     focusCb = null;
     vi.clearAllMocks();
@@ -57,40 +51,34 @@ describe('Popover poll focus-gating', () => {
     vi.useRealTimers();
   });
 
-  // Authentic contract: the 20s poll must run ONLY while the popover window is
-  // focused. We enable fake timers AFTER the async mount settles so the mount's
-  // dynamic-import / isFocused() promise chain resolves under real timers, then
-  // clear the mount's (real-timer) poll via a blur first — so EVERY interval we
-  // assert on below is created under fake timers and is genuinely advanceable.
-  it('polls while focused, stops on blur, resumes on focus', async () => {
+  // Authentic contract after Plan 16: there is NO silent background poll (it
+  // would fire the gated live network call on a timer). The popover fetches on
+  // mount and again whenever the window regains focus (i.e. is re-opened from
+  // the tray). We enable fake timers only AFTER the async mount settles so the
+  // dynamic-import / focus-handler promise chain resolves under real timers.
+  it('fetches on mount and on focus regain, never on a silent timer', async () => {
     render(() => <Popover />);
 
-    // Mount settles: focus handler registered + initial createResource fetch
-    // (claude + codex => 2 usageSnapshot calls). isFocused()===true armed a poll.
+    // Mount settles: focus handler registered + initial codex fetch.
     await waitFor(() => expect(focusCb).toBeTypeOf('function'));
-    await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(1));
 
-    // Blur clears the mount's real-timer poll so it cannot leak calls.
-    focusCb!({ payload: false });
-
-    // From here, every setInterval/clearInterval is faked and controllable.
     vi.useFakeTimers();
     const base = calls();
 
-    // Focus → resume: immediate refetchAll() (+2) AND a fresh 20s poll (faked).
-    focusCb!({ payload: true });
-    await vi.advanceTimersByTimeAsync(0); // flush the synchronous refetch's promises
-    const afterFocus = calls();
-    expect(afterFocus).toBeGreaterThan(base); // focus genuinely resumed fetching
-
-    // While focused, advancing one 20s interval fires the poll (refetch => +2).
-    await vi.advanceTimersByTimeAsync(20_000);
-    const afterPoll = calls();
-    expect(afterPoll).toBeGreaterThan(afterFocus); // the poll actually ran
-
-    // Blur → stop. Advancing 60s (three intervals) yields ZERO further calls.
-    focusCb!({ payload: false });
+    // No focus change: advancing a full minute must trigger ZERO fetches — the
+    // 1s countdown tick fires but never reads usage; there is no poll interval.
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(calls()).toBe(afterPoll); // poll cleared: no disk reads while hidden
+    expect(calls()).toBe(base);
+
+    // Focus regain (popover re-opened) → exactly one refetch round.
+    focusCb!({ payload: true });
+    await vi.advanceTimersByTimeAsync(0); // flush the refetch's promises
+    const afterFocus = calls();
+    expect(afterFocus).toBeGreaterThan(base);
+
+    // Still no silent poll after the focus-driven refetch.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls()).toBe(afterFocus);
   });
 });

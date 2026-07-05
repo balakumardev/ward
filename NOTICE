@@ -22,3 +22,14 @@ algorithm and pricing approach from ccusage (https://github.com/ryoppippi/ccusag
 MIT © 2025 ryoppippi) and its Rust ports ccstat (MIT) and ccusage-in-rust
 (BSD-3-Clause). No source was copied verbatim; the algorithm was reimplemented
 for Ward's data model.
+
+Ward's live usage path (src-tauri/src/usage/live.rs) reads the subscription
+5-hour and weekly limit utilization from the Anthropic API's
+`anthropic-ratelimit-unified-*` response headers. This technique is used by
+several open-source Claude usage monitors, including claude-monitor
+(https://github.com/rjwalters/claude-monitor) and CCSeva
+(https://github.com/Iamshankhadeep/ccseva), both MIT. No source was copied;
+Ward's implementation is independent. The call is gated behind an explicit
+opt-in and reads the user's own OAuth token from the macOS Keychain solely to
+authenticate the request to Anthropic; the token is never stored or transmitted
+elsewhere.

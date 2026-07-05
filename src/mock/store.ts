@@ -17,6 +17,7 @@ import type {
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
   usageSnapshotFor,
+  liveSnapshotFor,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -43,6 +44,9 @@ export class MockStore {
   private undoLog = new Map<string, () => void>();
   private undoSeq = 0;
   private autostartEnabled = true;
+  // Plan 16 — live usage opt-in. Defaults on in the mock so dev:mock shows the
+  // live Claude gauges immediately (the real app starts opted-out).
+  private liveEnabled = true;
 
   constructor() {
     this.claude = JSON.parse(scanClaudeRaw) as ScanResult;
@@ -254,6 +258,22 @@ export class MockStore {
   // ── Usage engine + native shell (Plan 14/15) ──
   usageSnapshot(harness: string) {
     return clone(usageSnapshotFor(harness));
+  }
+
+  // Plan 16 — live Claude usage (Claude only, mirrors the backend command).
+  usageSnapshotLive(harness: string) {
+    if (harness !== 'claude') {
+      throw { kind: 'harnessUnavailable', message: `live usage unsupported for ${harness}` };
+    }
+    return clone(liveSnapshotFor(harness));
+  }
+
+  liveUsageEnabled(): boolean {
+    return this.liveEnabled;
+  }
+
+  setLiveUsageEnabled(enabled: boolean): void {
+    this.liveEnabled = enabled;
   }
 
   autostartStatus(): boolean {

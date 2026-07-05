@@ -57,8 +57,11 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'backup_scheduler_remove': store.schedulerRemove(); return null;
     case 'backup_set_remote': store.setRemote(args.url); return null;
 
-    // ── Usage engine + native shell (Plan 14/15) ──
+    // ── Usage engine + native shell (Plan 14/15/16) ──
     case 'usage_snapshot': await delay(120); return store.usageSnapshot(args.harness ?? 'claude');
+    case 'usage_snapshot_live': await delay(150); return store.usageSnapshotLive(args.harness ?? 'claude');
+    case 'live_usage_enabled': return store.liveUsageEnabled();
+    case 'set_live_usage_enabled': store.setLiveUsageEnabled(!!args.enabled); return null;
     case 'autostart_status': return store.autostartStatus();
     case 'autostart_set': store.autostartSet(!!args.enabled); return null;
     case 'native_update_status': store.nativeUpdateStatus(); return null;
