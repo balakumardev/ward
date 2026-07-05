@@ -41,8 +41,6 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 # Plan 13 — launch-at-login (per-user LaunchAgent on macOS)
 tauri-plugin-autostart = "2"
-# Plan 15 — tray-anchored popover positioning
-tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]
 tempfile = "3"

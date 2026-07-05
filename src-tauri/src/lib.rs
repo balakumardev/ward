@@ -204,7 +204,6 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--start-hidden"]),
         ))
-        .plugin(tauri_plugin_positioner::init())
         .setup(|app| {
             // Menu-bar tray (Plan 10). Build it after the app is
             // initialised so the window icon is available. We hold

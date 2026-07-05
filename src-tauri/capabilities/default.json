@@ -5,7 +5,6 @@
   "windows": ["main", "popover"],
   "permissions": [
     "core:default",
-    "opener:default",
-    "positioner:default"
+    "opener:default"
   ]
 }
