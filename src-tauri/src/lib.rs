@@ -11,6 +11,7 @@ pub mod native;
 pub mod security;
 pub mod sessions;
 pub mod tokenizer;
+pub mod usage;
 
 use std::path::PathBuf;
 use std::sync::Arc;
