@@ -192,6 +192,26 @@ fn deltas(events: &[Event]) -> Vec<Delta> {
 
 /// Sum deltas whose timestamp falls in `[start_ms, end_ms]` into a window.
 fn window_from(deltas: &[Delta], start_ms: i64, end_ms: i64, percent: f64, resets_at_secs: i64, now_ms: i64, plan_type: Option<String>) -> UsageWindow {
+    let resets_at_ms = resets_at_secs * 1000;
+    // Stale / rolled-over window: the rate-limit window this payload describes has
+    // already elapsed (Codex emits no fresh payload while idle). Its stored
+    // `used_percent` and `resets_at` now describe a window that's over, so showing
+    // them would be a misleading percent against a reset in the past. Present the
+    // current (fresh) window instead: 0% used, nothing bucketed yet, and no reset
+    // clock — Codex will stamp the new window's reset on next use.
+    if now_ms >= resets_at_ms {
+        return UsageWindow {
+            tokens: TokenTotals::default(),
+            cost_usd: 0.0,
+            percent: Some(0.0),
+            resets_at: None,
+            resets_in_secs: None,
+            is_active: false,
+            started_at: None,
+            plan_type,
+        };
+    }
+
     let mut tokens = TokenTotals::default();
     for d in deltas {
         if d.ts_ms >= start_ms && d.ts_ms <= end_ms {
@@ -211,7 +231,6 @@ fn window_from(deltas: &[Delta], start_ms: i64, end_ms: i64, percent: f64, reset
         cache_write: None,
     };
     let cost = cost_for(&usage, price_for("codex"));
-    let resets_at_ms = resets_at_secs * 1000;
     UsageWindow {
         tokens,
         cost_usd: (cost * 1000.0).round() / 1000.0,
@@ -258,12 +277,18 @@ pub fn snapshot() -> Result<UsageSnapshot, WardError> {
     let block = window_from(&ds, p_start, p_end, rl.primary_percent, rl.primary_resets_at, now, rl.plan_type.clone());
     let week = window_from(&ds, s_start, s_end, rl.secondary_percent, rl.secondary_resets_at, now, rl.plan_type.clone());
 
+    // Idle: if neither window is still live (both resets are in the past), the
+    // newest Codex activity predates even the weekly window — there's nothing
+    // current to show. Report unavailable so the popover says "No usage found"
+    // rather than two misleading fresh 0% gauges with no reset clock.
+    let available = now < p_end || now < s_end;
+
     Ok(UsageSnapshot {
         harness: "codex".into(),
         block,
         week,
         source: UsageSource::RateLimits,
-        available: true,
+        available,
         generated_at,
     })
 }
@@ -367,5 +392,58 @@ mod tests {
         assert_eq!(snap.block.tokens.input, 200);
         assert_eq!(snap.block.tokens.output, 20);
         assert_eq!(snap.block.tokens.cache_read, 40);
+    }
+
+    #[test]
+    fn snapshot_idle_when_both_windows_elapsed() {
+        let _env = crate::usage::ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        // The user's real situation: last used Codex long ago, so the stored
+        // rate_limits describe windows whose resets are now in the past.
+        let now = Utc::now();
+        let p_reset = (now - chrono::Duration::days(10)).timestamp();
+        let s_reset = (now - chrono::Duration::days(3)).timestamp();
+        let t1 = (now - chrono::Duration::days(11)).to_rfc3339();
+        write_rollout(base, "2026/05/14", "rollout-2026-05-14T00-00-00-old.jsonl", &format!("{}\n", tc_line(&t1, 100, 100, 0, 0, 18.7, p_reset, 42.0, s_reset)));
+        std::env::set_var("CODEX_HOME", base);
+        let snap = snapshot().unwrap();
+        std::env::remove_var("CODEX_HOME");
+
+        // Both windows elapsed → idle → unavailable (popover shows "No usage found").
+        assert!(!snap.available, "both windows in the past → idle");
+        // Windows present as fresh, not the stale stored percent / past reset.
+        assert_eq!(snap.block.percent, Some(0.0));
+        assert!(snap.block.resets_at.is_none());
+        assert!(snap.block.resets_in_secs.is_none());
+        assert!(!snap.block.is_active);
+        assert_eq!(snap.week.percent, Some(0.0));
+        assert!(snap.week.resets_at.is_none());
+    }
+
+    #[test]
+    fn snapshot_block_elapsed_but_week_still_live() {
+        let _env = crate::usage::ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        // Used a few hours ago: the 5h block rolled over, but the weekly window
+        // is still live — the popover should stay available and show the real week.
+        let now = Utc::now();
+        let p_reset = (now - chrono::Duration::hours(2)).timestamp(); // block ended
+        let s_reset = (now + chrono::Duration::days(2)).timestamp();  // week still live
+        let t1 = (now - chrono::Duration::hours(7)).to_rfc3339();
+        write_rollout(base, "2026/07/01", "rollout-2026-07-01T00-00-00-x.jsonl", &format!("{}\n", tc_line(&t1, 500, 500, 0, 0, 55.0, p_reset, 30.0, s_reset)));
+        std::env::set_var("CODEX_HOME", base);
+        let snap = snapshot().unwrap();
+        std::env::remove_var("CODEX_HOME");
+
+        assert!(snap.available, "week still live → available");
+        // Block rolled over → fresh 0%, no past reset.
+        assert_eq!(snap.block.percent, Some(0.0));
+        assert!(snap.block.resets_at.is_none());
+        // Week is live → real percent + a future reset countdown.
+        assert!((snap.week.percent.unwrap() - 0.30).abs() < 1e-9);
+        assert!(snap.week.resets_at.is_some());
+        assert!(snap.week.resets_in_secs.unwrap() > 0);
     }
 }
