@@ -216,6 +216,10 @@ export interface BackupStatus {
   lastCommit: string | null;
   lastCommitAt: string | null;
   schedulerInstalled: boolean;
+  /** True when launchd still has the backup label loaded but its plist
+   *  file is gone (a recoverable orphan). The UI keeps Remove enabled in
+   *  this state so the user can clear the dead job. */
+  schedulerOrphaned: boolean;
   schedulerInterval: number | null;
   remoteUrl: string | null;
 }

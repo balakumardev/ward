@@ -356,6 +356,10 @@ pub struct BackupStatus {
     pub last_commit: Option<String>,
     pub last_commit_at: Option<chrono::DateTime<chrono::Utc>>,
     pub scheduler_installed: bool,
+    /// True when launchd still has the backup label loaded but its plist
+    /// file is gone (a recoverable orphan). The UI keeps Remove enabled
+    /// in this state so the user can clear the dead job.
+    pub scheduler_orphaned: bool,
     pub scheduler_interval: Option<u32>,
     pub remote_url: Option<String>,
 }
@@ -372,6 +376,7 @@ pub fn backup_status() -> Result<BackupStatus, WardError> {
     let remote_url = if has_repo { git_ops::remote_url(&repo) } else { None };
     let sched = sched_ops::status();
     let scheduler_installed = sched.installed();
+    let scheduler_orphaned = sched.orphaned();
     let scheduler_interval = match &sched {
         sched_ops::SchedulerStatus::Installed { interval_seconds } => Some(*interval_seconds),
         _ => None,
@@ -381,6 +386,7 @@ pub fn backup_status() -> Result<BackupStatus, WardError> {
         last_commit: last.as_ref().map(|l| l.sha.clone()),
         last_commit_at: last.map(|l| l.committed_at),
         scheduler_installed,
+        scheduler_orphaned,
         scheduler_interval,
         remote_url,
     })

@@ -167,7 +167,7 @@ export function distillFor(path: string): DistillResult {
 
 // ── Backups ───────────────────────────────────────────────────────────────
 export function initialBackupStatus(): BackupStatus {
-  return { hasRepo: false, lastCommit: null, lastCommitAt: null, schedulerInstalled: false, schedulerInterval: null, remoteUrl: null };
+  return { hasRepo: false, lastCommit: null, lastCommitAt: null, schedulerInstalled: false, schedulerOrphaned: false, schedulerInterval: null, remoteUrl: null };
 }
 
 // ── Usage engine (Plan 14/15) ───────────────────────────────────────────────

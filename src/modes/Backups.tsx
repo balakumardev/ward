@@ -203,9 +203,15 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
                   <span class="bk-field-label">Scheduler</span>
                   <span class="bk-field-value">
                     <Show when={s().schedulerInstalled} fallback={
-                      <span class="bk-not-installed" data-testid="backups-scheduler-not-installed">
-                        not installed
-                      </span>
+                      <Show when={s().schedulerOrphaned} fallback={
+                        <span class="bk-not-installed" data-testid="backups-scheduler-not-installed">
+                          not installed
+                        </span>
+                      }>
+                        <span class="badge badge-warn" data-testid="backups-scheduler-orphaned">
+                          orphaned — plist missing, click Remove to clear
+                        </span>
+                      </Show>
                     }>
                       <span class="badge badge-ok" data-testid="backups-scheduler-installed">
                         installed · {s().schedulerInterval}s
@@ -291,7 +297,7 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
                 <button
                   class="btn btn-danger"
                   data-testid="backups-scheduler-remove"
-                  disabled={busy() !== null || !s().schedulerInstalled}
+                  disabled={busy() !== null || (!s().schedulerInstalled && !s().schedulerOrphaned)}
                   onClick={removeScheduler}
                 >
                   Remove

@@ -50,21 +50,35 @@ pub const MAX_INTERVAL_SECONDS: u32 = 86_400;
 
 // ── SchedulerStatus ────────────────────────────────────────────────────
 
-/// What `status()` reports. `Installed` means the plist file exists
-/// AND `launchctl list` finds it; `NotInstalled` means neither; the
-/// error variant surfaces split-brain (e.g. plist deleted but launchd
-/// still has it loaded after a manual edit).
+/// What `status()` reports:
+///   - `Installed`   — plist file exists AND `launchctl list` finds it.
+///   - `NotInstalled`— neither signal present.
+///   - `Orphaned`    — launchd still has the label loaded but the plist
+///     file is gone (e.g. it was loaded from a temp path that was later
+///     cleaned up). This is a RECOVERABLE split-brain: `remove()` clears
+///     it by label, so the UI must still offer Remove.
+///   - `Error`       — the other split-brain (plist on disk but launchd
+///     doesn't know about it), or any unexpected state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum SchedulerStatus {
     Installed { interval_seconds: u32 },
     NotInstalled,
+    Orphaned,
     Error(String),
 }
 
 impl SchedulerStatus {
     pub fn installed(&self) -> bool {
         matches!(self, SchedulerStatus::Installed { .. })
+    }
+
+    /// True when launchd still knows the label but the plist file is
+    /// gone. The job is dead but stuck in the live launchd domain; the
+    /// UI uses this to keep the Remove button enabled so the user can
+    /// clear it.
+    pub fn orphaned(&self) -> bool {
+        matches!(self, SchedulerStatus::Orphaned)
     }
 }
 
@@ -195,11 +209,18 @@ pub fn install(
 ) -> Result<(), WardError> {
     validate_interval(interval_seconds)?;
     let path = plist_path();
-    write_and_load(&path, interval_seconds, ward_binary_path, scan_target)
+    write_plist(&path, interval_seconds, ward_binary_path, scan_target)?;
+    load_plist(&path)
 }
 
 /// Test-only install that points at a temp LaunchAgents dir. Returns
 /// the plist path written so tests can inspect it.
+///
+/// IMPORTANT: this deliberately writes the plist ONLY and does NOT call
+/// `load_plist`. Loading a plist from a temp path into the live per-user
+/// launchd domain (then dropping the temp dir) orphans a dead job there
+/// — which actually happened on the dev machine. Unit tests therefore
+/// exercise the filesystem half exclusively and never touch launchd.
 #[cfg(test)]
 pub fn install_at(
     root: &Path,
@@ -209,11 +230,15 @@ pub fn install_at(
 ) -> Result<PathBuf, WardError> {
     validate_interval(interval_seconds)?;
     let path = plist_path_in(root);
-    write_and_load(&path, interval_seconds, ward_binary_path, scan_target)?;
+    write_plist(&path, interval_seconds, ward_binary_path, scan_target)?;
     Ok(path)
 }
 
-fn write_and_load(
+/// Write the LaunchAgent plist XML to `path` (creating the parent dir).
+/// Pure filesystem side-effect — does NOT touch launchd. Split out from
+/// [`load_plist`] so the plist-writing path is unit-testable without
+/// mutating the live per-user launchd domain.
+fn write_plist(
     path: &Path,
     interval_seconds: u32,
     ward_binary_path: &Path,
@@ -224,9 +249,14 @@ fn write_and_load(
     }
     let xml = plist_content(interval_seconds, ward_binary_path, scan_target);
     std::fs::write(path, xml)?;
+    Ok(())
+}
 
-    // Best-effort unload — ignore errors when the agent isn't already
-    // loaded. Then load (or reload) the new plist.
+/// (Re)load the plist at `path` into launchd. This is the ONLY function
+/// in the install path that mutates the live launchd domain — keep it
+/// out of unit tests. Best-effort unload first so a reload replaces an
+/// existing job cleanly.
+fn load_plist(path: &Path) -> Result<(), WardError> {
     let _ = Command::new("launchctl").arg("unload").arg(path).output();
     let out = Command::new("launchctl").arg("load").arg(path).output()?;
     if !out.status.success() {
@@ -241,9 +271,17 @@ fn write_and_load(
 
 /// Unload the agent and delete the plist file. Tolerates an
 /// already-uninstalled state.
+///
+/// Two best-effort launchctl calls clear the job regardless of how it
+/// was installed:
+///   - `unload <path>` clears a normally-installed job (plist on disk).
+///   - `remove <label>` clears a label-only *orphan* whose backing plist
+///     path is gone — `unload` can't target that since it needs a path.
+/// Both are ignored on failure so the file delete still runs.
 pub fn remove() -> Result<(), WardError> {
     let path = plist_path();
     let _ = Command::new("launchctl").arg("unload").arg(&path).output();
+    let _ = Command::new("launchctl").arg("remove").arg(SCHEDULER_LABEL).output();
     match std::fs::remove_file(&path) {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -251,10 +289,11 @@ pub fn remove() -> Result<(), WardError> {
     }
 }
 
-/// Test-only remove at an arbitrary root.
+/// Test-only remove at an arbitrary root. Exercises ONLY the filesystem
+/// half — it never calls launchctl, so a unit test can never touch the
+/// real per-user launchd domain.
 #[cfg(test)]
 pub fn remove_at(path: &Path) -> Result<(), WardError> {
-    let _ = Command::new("launchctl").arg("unload").arg(path).output();
     match std::fs::remove_file(path) {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -278,9 +317,9 @@ pub fn status() -> SchedulerStatus {
         (true, false) => SchedulerStatus::Error(
             "plist present but launchd does not know about the agent".into(),
         ),
-        (false, true) => SchedulerStatus::Error(
-            "launchd knows about the agent but plist is missing".into(),
-        ),
+        // launchd still has the label but the backing plist is gone — a
+        // recoverable orphan the UI can clear via Remove.
+        (false, true) => SchedulerStatus::Orphaned,
     }
 }
 
@@ -303,9 +342,7 @@ pub fn status_at(path: &Path, launchctl_override: Option<bool>) -> SchedulerStat
         (true, false) => SchedulerStatus::Error(
             "plist present but launchd does not know about the agent".into(),
         ),
-        (false, true) => SchedulerStatus::Error(
-            "launchd knows about the agent but plist is missing".into(),
-        ),
+        (false, true) => SchedulerStatus::Orphaned,
     }
 }
 
@@ -427,44 +464,34 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join("fake/ward");
         let target = root.path().join("home/.claude");
-        // Fake binary — we won't try to launch it; the launchctl
-        // round-trip is what matters for the write half.
-        fs::create_dir_all(binary.parent().unwrap()).unwrap();
-        fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
-        let mut perms = fs::metadata(&binary).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&binary, perms).unwrap();
+        // `install_at` writes the plist ONLY — it never loads the job
+        // into the live per-user launchd domain, so a unit test can
+        // never orphan a dead agent there (which previously happened on
+        // the dev machine). The result is therefore deterministic:
+        // always Ok, with no launchctl-dependent fallback branch.
+        let plist = install_at(root.path(), 900, &binary, &target).unwrap();
+        assert_eq!(plist, plist_path_in(root.path()));
+        assert!(plist.exists(), "plist should exist after install_at");
+        let xml = fs::read_to_string(&plist).unwrap();
+        assert!(xml.contains("StartInterval"));
+        assert!(xml.contains("900"));
+    }
 
-        // Use install_at which won't actually hit the real launchctl
-        // on the test bin (we'd need launchd available, which it is
-        // on macOS, so we just check the plist file exists).
-        let res = install_at(
-            root.path(),
-            900,
-            &binary,
-            &target,
-        );
-
-        let plist = plist_path_in(root.path());
-        match res {
-            Ok(_) => {
-                assert!(plist.exists(), "plist should exist after install");
-                let xml = fs::read_to_string(&plist).unwrap();
-                assert!(xml.contains("StartInterval"));
-                assert!(xml.contains("900"));
-            }
-            Err(WardError::Backup(msg)) if msg.contains("launchctl") => {
-                // launchd might be unavailable in the sandbox; fall
-                // back to checking the plist file was written even if
-                // the load step failed.
-                assert!(plist.exists(), "plist should still be on disk");
-            }
-            Err(e) => panic!("unexpected error: {e}"),
-        }
+    #[test]
+    fn write_plist_writes_without_touching_launchd() {
+        // The plist-writing half of install must be exercisable with
+        // ZERO launchctl involvement. `write_plist` is the seam that
+        // isolates the filesystem side-effect from the launchd load, so
+        // unit tests never mutate the real per-user launchd domain.
+        let root = tempfile::tempdir().unwrap();
+        let path = plist_path_in(root.path());
+        let binary = Path::new("/Applications/Ward.app/Contents/MacOS/ward");
+        let target = Path::new("/Users/x/.claude");
+        write_plist(&path, 900, binary, target).unwrap();
+        assert!(path.exists());
+        let xml = fs::read_to_string(&path).unwrap();
+        assert!(xml.contains("<integer>900</integer>"));
+        assert!(xml.contains(SCHEDULER_LABEL));
     }
 
     #[test]
@@ -504,17 +531,33 @@ mod tests {
             status_at(&plist, Some(false)),
             SchedulerStatus::Error(_)
         ));
-        // launchd only ⇒ error (without disk).
+        // launchd only ⇒ orphaned (label loaded, plist gone).
         fs::remove_file(&plist).unwrap();
         assert!(matches!(
             status_at(&plist, Some(true)),
-            SchedulerStatus::Error(_)
+            SchedulerStatus::Orphaned
         ));
         // Neither ⇒ not installed.
         assert!(matches!(
             status_at(&plist, Some(false)),
             SchedulerStatus::NotInstalled
         ));
+    }
+
+    #[test]
+    fn status_reports_orphaned_when_launchd_has_label_but_plist_missing() {
+        // Split-brain the user actually hit: a job is loaded in launchd
+        // but its plist file is gone (it was loaded from a temp path that
+        // got cleaned up). This must be reported as a RECOVERABLE orphan
+        // — not collapsed to NotInstalled — so the UI can offer Remove to
+        // clear the dead job by label.
+        let root = tempfile::tempdir().unwrap();
+        let plist = plist_path_in(root.path()); // never created
+        assert!(!plist.exists());
+        let s = status_at(&plist, Some(true));
+        assert_eq!(s, SchedulerStatus::Orphaned);
+        assert!(s.orphaned(), "orphan must be flagged recoverable");
+        assert!(!s.installed(), "an orphan is not a healthy install");
     }
 
     #[test]
