@@ -3,16 +3,26 @@ import "./styles/tokens.css";
 import "./styles/app.css";
 import { render } from "solid-js/web";
 import App from "./App";
+import Popover from "./entries/Popover";
+
+/** True when this webview is the tray popover window (native label === 'popover'),
+ *  or, in dev:mock browser preview, when the URL carries ?view=popover. */
+function isPopoverWindow(): boolean {
+  if (new URLSearchParams(window.location.search).get("view") === "popover") return true;
+  const internals = (globalThis as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } }).__TAURI_INTERNALS__;
+  return internals?.metadata?.currentWindow?.label === "popover";
+}
 
 async function boot() {
-  // Dev-only: when launched via `npm run dev:mock`, install the mock Tauri
-  // bridge BEFORE mounting so `isTauri()` is true and `invoke` is wired to
-  // the mock store. Absent the flag (native `tauri dev`, production builds)
-  // this branch is dead and `./mock/*` is never fetched.
   if (import.meta.env.VITE_WARD_MOCK) {
     await import("./mock/install");
   }
-  render(() => <App />, document.getElementById("root") as HTMLElement);
+  const root = document.getElementById("root") as HTMLElement;
+  if (isPopoverWindow()) {
+    render(() => <Popover />, root);
+  } else {
+    render(() => <App />, root);
+  }
 }
 
 void boot();
