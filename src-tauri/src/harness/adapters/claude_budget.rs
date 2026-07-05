@@ -1066,8 +1066,13 @@ mod tests {
         let items: Vec<HarnessItem> = vec![];
         let b = compose("global", &items, &[], dir.path());
         let json = serde_json::to_string(&b).unwrap();
-        // Top-level camelCase fields.
-        for key in ["systemLoaded", "mcpSchemas", "alwaysLoadedItems", "autocompactBuffer", "warningThreshold"] {
+        // Top-level camelCase fields, including the new tiered ones.
+        for key in [
+            "systemLoaded", "outputStyle", "mcpSchemas", "mcpToolNames",
+            "alwaysLoadedItems", "metadataItems", "deferredItems", "deferredTotal",
+            "skillListing", "skillListingRaw", "skillBoilerplate", "agentListing",
+            "autocompactBuffer", "warningThreshold", "contextLimit",
+        ] {
             assert!(json.contains(key), "missing {key} in {json}");
         }
     }

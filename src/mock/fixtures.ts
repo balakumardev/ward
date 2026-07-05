@@ -99,28 +99,69 @@ export const securityScan: ScanResultSec = {
 
 // ── Context budget ────────────────────────────────────────────────────────
 // Deterministic per-scope variation (no Date/Math.random) so switching the
-// budget scope picker shows different — but stable — numbers.
+// budget scope picker shows different — but stable — numbers. Models the
+// real three-tier split: always-on FULL + always-on METADATA (feeding
+// `used`) vs on-invoke DEFERRED (bodies + MCP schemas + scoped rules).
 export function budgetFor(scopeId: string): BudgetBreakdown {
   const seed = Array.from(scopeId).reduce((a, c) => a + c.charCodeAt(0), 0);
-  const claudemd = 3200 + (seed % 5) * 900;
-  const mcpSchemas = 14000 + (seed % 7) * 1500;
-  const systemLoaded = 12500;
-  const systemDeferred = 8000;
-  const alwaysLoadedItems: BudgetBreakdown['alwaysLoadedItems'] = [
-    { category: 'memory', name: 'CLAUDE.md (user)', tokens: 1800, measured: true },
-    { category: 'memory', name: 'CLAUDE.md (project)', tokens: 1400, measured: true },
-    { category: 'rule', name: 'output-style', tokens: 260, measured: true },
-  ];
+  const contextLimit = 200000;
+  const systemLoaded = 18000;
+  const outputStyle = seed % 3 === 0 ? 340 : 0;
+  const systemDeferred = 7000;
+
+  // Enabled MCP servers: schemas DEFERRED, a short names line always-on.
+  const servers = 3 + (seed % 4);
+  const mcpSchemas = servers * 3100;
+  const mcpToolNames = servers > 0 ? 120 : 0;
+
+  // Ancestor CLAUDE.md files (always-on full).
   const claudeMdFiles: BudgetBreakdown['claudeMdFiles'] = [
-    { path: '/Users/balakumar/.claude/CLAUDE.md', name: 'CLAUDE.md (user)', tokens: 1800, measured: true },
-    { path: '/Users/balakumar/personal/ward/CLAUDE.md', name: 'CLAUDE.md (project)', tokens: 1400, measured: true },
+    { path: '/Users/balakumar/.claude/CLAUDE.md', name: 'CLAUDE.md', tokens: 1800, measured: true },
+    { path: '/Users/balakumar/personal/ward/.claude/CLAUDE.md', name: '.claude/CLAUDE.md', tokens: 1400, measured: true },
   ];
-  const used = systemLoaded + claudemd + mcpSchemas + alwaysLoadedItems.reduce((a, i) => a + i.tokens, 0);
+  const claudemd = 100 /* wrapper */ + claudeMdFiles.reduce((a, f) => a + f.tokens, 0);
+
+  // Always-on FULL items: unscoped rules + MEMORY.md.
+  const alwaysLoadedItems: BudgetBreakdown['alwaysLoadedItems'] = [
+    { category: 'memory', name: 'MEMORY.md', tokens: 900, measured: true },
+    { category: 'rule', name: 'commit-style', tokens: 260, measured: true },
+  ];
+
+  // Always-on METADATA: capped skill/command listing + subagent listing.
+  const skillListingRaw = 6200 + (seed % 5) * 400;
+  const skillListing = Math.min(skillListingRaw, contextLimit / 100); // 1% cap
+  const skillBoilerplate = 400;
+  const agentListing = 180;
+  const metadataItems: BudgetBreakdown['metadataItems'] = [
+    { category: 'skill', name: 'brainstorming', tokens: 42, measured: true },
+    { category: 'skill', name: 'deep-research', tokens: 55, measured: true },
+    { category: 'command', name: 'deploy', tokens: 18, measured: true },
+    { category: 'agent', name: 'reviewer', tokens: 30, measured: true },
+  ];
+
+  // DEFERRED / on-invoke: bodies + scoped rules (NOT in `used`).
+  const deferredItems: BudgetBreakdown['deferredItems'] = [
+    { category: 'skill', name: 'brainstorming', tokens: 3800, measured: true },
+    { category: 'skill', name: 'deep-research', tokens: 5200, measured: true },
+    { category: 'command', name: 'deploy', tokens: 640, measured: true },
+    { category: 'agent', name: 'reviewer', tokens: 720, measured: true },
+    { category: 'rule', name: 'python-paths', tokens: 410, measured: true },
+  ];
+  const deferredBodies = deferredItems.reduce((a, i) => a + i.tokens, 0);
+  const deferredTotal = systemDeferred + mcpSchemas + deferredBodies;
+
+  const used =
+    systemLoaded + outputStyle + mcpToolNames + claudemd +
+    skillListing + skillBoilerplate + agentListing +
+    alwaysLoadedItems.reduce((a, i) => a + i.tokens, 0);
+
   return {
-    systemLoaded, systemDeferred, mcpSchemas, claudemd,
-    claudeMdFiles, alwaysLoadedItems,
-    autocompactBuffer: 30000, maxOutput: 32000, warningThreshold: 160000,
-    measured: true, used, contextLimit: 200000,
+    systemLoaded, outputStyle, systemDeferred, mcpSchemas, mcpToolNames,
+    claudemd, claudeMdFiles,
+    skillListing, skillListingRaw, skillBoilerplate, agentListing,
+    alwaysLoadedItems, metadataItems, deferredItems, deferredTotal,
+    autocompactBuffer: 13000, maxOutput: 32000, warningThreshold: 20000,
+    measured: true, used, contextLimit,
   };
 }
 

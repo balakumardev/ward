@@ -133,16 +133,21 @@ test('mcpCheckPolicy passes name + config + policy', async () => {
 
 test('contextBudget passes harness + scopeId', async () => {
   invoke.mockResolvedValue({
-    systemLoaded: 18000, systemDeferred: 7000,
-    mcpSchemas: 0, claudemd: 100, claudeMdFiles: [],
-    alwaysLoadedItems: [], autocompactBuffer: 13000,
+    systemLoaded: 18000, outputStyle: 0, systemDeferred: 7000,
+    mcpSchemas: 3100, mcpToolNames: 120, claudemd: 100, claudeMdFiles: [],
+    skillListing: 0, skillListingRaw: 0, skillBoilerplate: 0, agentListing: 0,
+    alwaysLoadedItems: [], metadataItems: [], deferredItems: [],
+    deferredTotal: 10100, autocompactBuffer: 13000,
     maxOutput: 32000, warningThreshold: 20000,
-    measured: false, used: 18100, contextLimit: 200000,
+    measured: false, used: 18220, contextLimit: 200000,
   });
   const r = await api.contextBudget('claude', 'global');
   expect(invoke).toHaveBeenCalledWith('context_budget', { harness: 'claude', scopeId: 'global' });
-  expect(r.used).toBe(18100);
+  expect(r.used).toBe(18220);
   expect(r.contextLimit).toBe(200000);
+  // MCP schemas are DEFERRED, not part of always-on `used`.
+  expect(r.deferredTotal).toBe(10100);
+  expect(r.mcpToolNames).toBe(120);
 });
 
 // ── Plan 08: Backup Center ──

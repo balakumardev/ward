@@ -200,3 +200,45 @@
 .bud-tag.estimated { color: var(--text-dim); }
 
 .bud-empty { color: var(--text-dim); padding: 10px 4px; }
+
+/* ── Deferred figure on the meter legend ───────────────────────────────── */
+.bud-legend-defer {
+  margin-left: auto; color: var(--text-mute);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+
+/* ── "capped from" note under the always-on breakdown ──────────────────── */
+.bud-note {
+  margin-top: 10px; padding: 7px 10px; border-radius: var(--r-sm);
+  background: rgba(255, 159, 10, 0.08); border: 1px solid rgba(255, 159, 10, 0.25);
+  color: var(--warn); font-size: 11px;
+}
+
+/* ── On-invoke / deferred panel ────────────────────────────────────────── */
+.bud-deferred {
+  /* Visually distinct from the always-on cards: dimmer, dashed accent so
+     it never reads as "counted in the meter". */
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border-style: dashed;
+}
+.bud-defer-lede {
+  margin: -4px 0 12px; color: var(--text-dim); font-size: 11px; line-height: 1.5;
+}
+.bud-defer-lede code {
+  font-family: var(--font-mono); font-size: 10.5px;
+  background: rgba(255, 255, 255, 0.05); padding: 1px 4px; border-radius: 4px;
+}
+/* Deferred proportion bars + totals use a cooler, muted ramp. */
+.bud-prop-fill.defer { background: linear-gradient(90deg, #5a7fb0, #6f9bd0); }
+.bud-group-total.defer { color: var(--text-dim); }
+
+/* ── always-on / on-invoke sub-list tags ───────────────────────────────── */
+.bud-sub-tag {
+  margin-left: 8px; padding: 1px 7px; border-radius: var(--r-pill);
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.4px;
+  text-transform: uppercase; vertical-align: middle;
+}
+.bud-sub-tag.on { color: var(--accent); background: var(--accent-bg); }
+.bud-sub-tag.off {
+  color: #9fc0e8; background: rgba(111, 155, 208, 0.14);
+}

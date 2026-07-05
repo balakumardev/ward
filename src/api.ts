@@ -114,14 +114,43 @@ export interface ScanResultSec {
   judgeUsed: boolean;
 }
 
-/** Plan 06 — Context Budget breakdown for a single scope. */
+/** Plan 06 — Context Budget breakdown for a single scope.
+ *
+ *  Three tiers of what Claude Code actually loads:
+ *  - Always-on FULL: system + CLAUDE.md + unscoped rules + MEMORY.md +
+ *    active output style (these + the metadata scalars below sum to `used`).
+ *  - Always-on METADATA: the capped skill/command listing, subagent
+ *    listing, and MCP tool-names line.
+ *  - Deferred / on-invoke: skill/command/agent bodies, MCP tool schemas,
+ *    and `paths:`-scoped rules (surfaced via `deferredTotal`, NOT `used`). */
 export interface BudgetBreakdown {
   systemLoaded: number;
+  /** Active non-default output style, folded into system overhead. */
+  outputStyle: number;
   systemDeferred: number;
+  /** MCP tool schemas — DEFERRED (part of `deferredTotal`, not `used`). */
   mcpSchemas: number;
+  /** Always-on MCP tool-names line (0 when no enabled server). */
+  mcpToolNames: number;
   claudemd: number;
   claudeMdFiles: BudgetFile[];
+  /** Capped skill+command listing (`"name": description`). */
+  skillListing: number;
+  /** Uncapped listing total (so the UI can show "capped from N"). */
+  skillListingRaw: number;
+  /** `<available_skills>` boilerplate (0 when no skill/command). */
+  skillBoilerplate: number;
+  /** Subagent listing (`name: description`). */
+  agentListing: number;
+  /** Full-content always-on items: unscoped rules + MEMORY.md. */
   alwaysLoadedItems: BudgetItem[];
+  /** Metadata rows behind skillListing/agentListing (skills, commands,
+   *  agents) — display only; the capped scalars feed `used`. */
+  metadataItems: BudgetItem[];
+  /** On-invoke bodies + scoped rules — NOT part of `used`. */
+  deferredItems: BudgetItem[];
+  /** systemDeferred + mcpSchemas + Σ deferredItems. */
+  deferredTotal: number;
   autocompactBuffer: number;
   maxOutput: number;
   warningThreshold: number;
@@ -129,10 +158,10 @@ export interface BudgetBreakdown {
    *  bytes/4 heuristic was used. The UI surfaces this as "measured" vs
    *  "estimated". */
   measured: boolean;
-  /** Total tokens used by always-loaded + system overhead (what the meter
-   *  fills toward). */
+  /** Total ALWAYS-ON tokens (system overhead + metadata listings +
+   *  full always-on items). What the meter fills toward. */
   used: number;
-  /** Model's full context window (200K for Claude Sonnet/Opus). */
+  /** Model's full context window (200K default; scales for 1M models). */
   contextLimit: number;
 }
 export interface BudgetFile {
