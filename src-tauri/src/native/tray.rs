@@ -60,17 +60,22 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, WardError> {
             let _ = app.emit("tray_action", event.id().0.clone());
         })
         .on_tray_icon_event(|tray, event| {
-            // Let the positioner cache the tray-icon rect for TrayCenter anchoring.
-            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
-            if let TrayIconEvent::Click { button, button_state, .. } = event {
+            if let TrayIconEvent::Click { button, button_state, position, .. } = event {
                 if matches!(button, MouseButton::Left) && matches!(button_state, MouseButtonState::Up) {
                     let app = tray.app_handle();
                     if let Some(win) = app.get_webview_window("popover") {
                         if win.is_visible().unwrap_or(false) {
                             let _ = win.hide();
                         } else {
-                            use tauri_plugin_positioner::{Position, WindowExt};
-                            let _ = win.move_window(Position::TrayCenter);
+                            // Anchor the popover just under the tray icon, centered on
+                            // the click point (screen coordinates). We position manually
+                            // rather than via tauri-plugin-positioner, whose TrayCenter
+                            // path calls `current_monitor().unwrap()` on the still-hidden
+                            // window and panics with `None` on macOS.
+                            let w = win.outer_size().map(|s| s.width as f64).unwrap_or(320.0);
+                            let x = (position.x - w / 2.0).max(0.0) as i32;
+                            let y = (position.y + 24.0) as i32;
+                            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
                             let _ = win.show();
                             let _ = win.set_focus();
                         }
