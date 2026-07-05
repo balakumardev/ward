@@ -545,9 +545,18 @@ pub fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), WardErr
 // ── Usage engine (Plan 14) ───────────────────────────────────────────────
 
 /// Plan 14 — local usage snapshot (tokens/cost/reset) for a harness.
+///
+/// The session-file parse is blocking I/O, so it runs on a worker thread via
+/// `spawn_blocking`: every Tauri command runs on the main/UI thread, and a
+/// synchronous body here would stall the event loop (and the tray popover)
+/// until the parse returned. The pure logic in `crate::usage` stays sync.
 #[tauri::command]
-pub fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
-    crate::usage::usage_snapshot(&harness)
+pub async fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
+    tauri::async_runtime::spawn_blocking(move || crate::usage::usage_snapshot(&harness))
+        .await
+        .map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::Other, format!("usage snapshot task failed: {e}"))
+        })?
 }
 
 // ── Live usage (Plan 16) ─────────────────────────────────────────────────
@@ -555,12 +564,19 @@ pub fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, Wa
 /// Plan 16 — live Claude usage via the gated Anthropic rate-limit endpoint.
 /// Claude only; requires the live opt-in sentinel + Keychain access. This makes
 /// a network call and reads the OAuth token, so it runs only on user action.
+///
+/// The blocking Keychain read + network round-trip run on a worker thread via
+/// `spawn_blocking` for the same reason as [`usage_snapshot`]: keep the event
+/// loop responsive so the popover paints immediately instead of freezing for
+/// the whole 2–3 s round-trip.
 #[tauri::command]
-pub fn usage_snapshot_live(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
-    match harness.as_str() {
+pub async fn usage_snapshot_live(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
+    tauri::async_runtime::spawn_blocking(move || match harness.as_str() {
         "claude" => crate::usage::live::snapshot(),
         other => Err(WardError::HarnessUnavailable(format!("live usage unsupported for {other}"))),
-    }
+    })
+    .await
+    .map_err(|e| WardError::Live(format!("live usage task failed: {e}")))?
 }
 
 /// Plan 16 — is the live (network) usage path opted in?
