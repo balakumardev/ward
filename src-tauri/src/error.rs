@@ -14,6 +14,8 @@ pub enum WardError {
     Backup(String),
     #[error("autostart error: {0}")]
     Autostart(String),
+    #[error("live usage error: {0}")]
+    Live(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -29,6 +31,7 @@ enum ErrorKind {
     Git(String),
     Backup(String),
     Autostart(String),
+    Live(String),
     Io(String),
 }
 
@@ -46,6 +49,7 @@ impl serde::Serialize for WardError {
             WardError::Git(_) => ErrorKind::Git(message),
             WardError::Backup(_) => ErrorKind::Backup(message),
             WardError::Autostart(_) => ErrorKind::Autostart(message),
+            WardError::Live(_) => ErrorKind::Live(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)

@@ -523,6 +523,31 @@ pub fn usage_snapshot(harness: String) -> Result<crate::usage::UsageSnapshot, Wa
     crate::usage::usage_snapshot(&harness)
 }
 
+// ── Live usage (Plan 16) ─────────────────────────────────────────────────
+
+/// Plan 16 — live Claude usage via the gated Anthropic rate-limit endpoint.
+/// Claude only; requires the live opt-in sentinel + Keychain access. This makes
+/// a network call and reads the OAuth token, so it runs only on user action.
+#[tauri::command]
+pub fn usage_snapshot_live(harness: String) -> Result<crate::usage::UsageSnapshot, WardError> {
+    match harness.as_str() {
+        "claude" => crate::usage::live::snapshot(),
+        other => Err(WardError::HarnessUnavailable(format!("live usage unsupported for {other}"))),
+    }
+}
+
+/// Plan 16 — is the live (network) usage path opted in?
+#[tauri::command]
+pub fn live_usage_enabled() -> bool {
+    crate::usage::live::live_enabled()
+}
+
+/// Plan 16 — opt in/out of the live usage path (creates/removes the sentinel).
+#[tauri::command]
+pub fn set_live_usage_enabled(enabled: bool) -> Result<(), WardError> {
+    crate::usage::live::set_live_enabled(enabled)
+}
+
 // ── Native shell status (Plan 15) ────────────────────────────────────────
 
 /// Plan 15 — push the latest scan's critical count to the dock badge + tray tooltip.

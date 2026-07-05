@@ -6,6 +6,7 @@
 pub mod blocks;
 pub mod claude;
 pub mod codex;
+pub mod live;
 
 use std::time::{Duration, SystemTime};
 
@@ -55,13 +56,15 @@ impl TokenTotals {
     }
 }
 
-/// Where a window's numbers came from: reconstructed locally (Claude) or the
-/// harness's own rate-limit payload (Codex).
+/// Where a window's numbers came from: reconstructed locally from session files
+/// (Claude local), the harness's own on-disk rate-limit payload (Codex), or a
+/// live gated call to the provider's rate-limit endpoint (Claude live).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum UsageSource {
     Local,
     RateLimits,
+    Live,
 }
 
 /// One usage window (the current 5-hour block, or the week).

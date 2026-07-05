@@ -41,6 +41,9 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 # Plan 13 — launch-at-login (per-user LaunchAgent on macOS)
 tauri-plugin-autostart = "2"
+# Plan 16 — live Claude rate-limit fetch (single gated, user-triggered call).
+# Lightweight blocking HTTP client (rustls, no async runtime).
+ureq = "2"
 
 [dev-dependencies]
 tempfile = "3"

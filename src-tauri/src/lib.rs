@@ -342,6 +342,9 @@ pub fn run() {
             commands::autostart_status,
             commands::autostart_set,
             commands::usage_snapshot,
+            commands::usage_snapshot_live,
+            commands::live_usage_enabled,
+            commands::set_live_usage_enabled,
             commands::native_update_status
         ])
         .build(tauri::generate_context!())
