@@ -501,6 +501,20 @@ pub fn backup_scheduler_remove() -> Result<(), WardError> {
     sched_ops::remove()
 }
 
+// ── Launch-at-login (Plan 13) ───────────────────────────────────────────
+
+/// Plan 13 — is launch-at-login enabled?
+#[tauri::command]
+pub fn autostart_status(app: tauri::AppHandle) -> Result<bool, WardError> {
+    crate::native::autostart::status(&app)
+}
+
+/// Plan 13 — enable/disable launch-at-login.
+#[tauri::command]
+pub fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), WardError> {
+    crate::native::autostart::set(&app, enabled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

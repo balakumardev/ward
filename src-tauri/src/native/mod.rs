@@ -11,6 +11,7 @@
 //! requires a real Tauri App context and is verified manually; the
 //! other two have unit tests that exercise the core logic.
 
+pub mod autostart;
 pub mod notify;
 pub mod tray;
 pub mod watch;

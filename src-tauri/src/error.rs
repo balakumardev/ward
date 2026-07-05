@@ -12,6 +12,8 @@ pub enum WardError {
     Git(String),
     #[error("backup error: {0}")]
     Backup(String),
+    #[error("autostart error: {0}")]
+    Autostart(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -26,6 +28,7 @@ enum ErrorKind {
     McpIntrospectFailed(String),
     Git(String),
     Backup(String),
+    Autostart(String),
     Io(String),
 }
 
@@ -42,6 +45,7 @@ impl serde::Serialize for WardError {
             WardError::McpIntrospectFailed(_) => ErrorKind::McpIntrospectFailed(message),
             WardError::Git(_) => ErrorKind::Git(message),
             WardError::Backup(_) => ErrorKind::Backup(message),
+            WardError::Autostart(_) => ErrorKind::Autostart(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)

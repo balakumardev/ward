@@ -199,6 +199,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--start-hidden"]),
+        ))
         .setup(|app| {
             // Menu-bar tray (Plan 10). Build it after the app is
             // initialised so the window icon is available. We hold
@@ -222,6 +226,10 @@ pub fn run() {
                     let _ = window.hide();
                 }
             }
+
+            // Launch-at-login (Plan 13): enable once on first run, gated by
+            // a ~/.ward/first-run sentinel so a later opt-out persists.
+            crate::native::autostart::enable_on_first_run(app.handle());
 
             // Start the fs watcher (Plan 10). Stash the keepalive
             // handle in app-managed state.
@@ -289,7 +297,9 @@ pub fn run() {
             commands::backup_push,
             commands::backup_set_remote,
             commands::backup_scheduler_install,
-            commands::backup_scheduler_remove
+            commands::backup_scheduler_remove,
+            commands::autostart_status,
+            commands::autostart_set
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
