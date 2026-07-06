@@ -252,6 +252,26 @@ impl HarnessOps for ClaudeOps {
         std::fs::write(&abs, content)?;
         Ok(())
     }
+
+    fn upsert_mcp_entry(&self, ctx: &Ctx, scope_id: &str, name: &str,
+        config: &serde_json::Value, target_path: Option<&str>, scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>
+    {
+        let (target, parent) = match target_path {
+            Some(tp) => {
+                let p = ensure_under_home(Path::new(tp), ctx.home)?;
+                let parent = detect_mcp_parent(&p, name, scopes);
+                (p, parent)
+            }
+            None => {
+                let p = resolve_mcp_json(scope_id, scopes)
+                    .ok_or_else(|| WardError::NotFound(format!("Cannot resolve .mcp.json for {scope_id}")))?;
+                let p = ensure_under_home(&p, ctx.home)?;
+                (p, McpParentKey::mcp_servers())
+            }
+        };
+        write_mcp_upsert(&target, &parent, name, config)
+    }
 }
 
 // ── Per-category move implementations ──────────────────────────────────
@@ -1546,5 +1566,67 @@ mod tests {
         assert!(json2.exists());
         ops.restore(&ctx_for(home), &info2).unwrap();
         assert!(!json2.exists(), "create undo removes the file");
+    }
+
+    // ── upsert_mcp_entry (harness-dispatched target/parent resolution) ──
+
+    #[test]
+    fn ops_upsert_edit_existing_writes_back_to_item_path() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude.json");
+        fs::write(&json, r#"{"mcpServers":{"github":{"command":"gh"}}}"#).unwrap();
+        let ops = ClaudeOps;
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let info = ops.upsert_mcp_entry(&ctx_for(home), "global", "github",
+            &serde_json::json!({"command":"gh","args":["api"]}),
+            Some(&json.display().to_string()), &scopes).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["github"]["args"][0], "api");
+        assert_eq!(info.kind, "mcp-upsert");
+    }
+
+    #[test]
+    fn ops_upsert_add_new_resolves_global_mcp_json() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let ops = ClaudeOps;
+        // No target_path → resolves ~/.claude/.mcp.json (global) + flat mcpServers.
+        let info = ops.upsert_mcp_entry(&ctx_for(home), "global", "brandnew",
+            &serde_json::json!({"command":"npx","args":["-y","x@1.0.0"]}), None, &scopes).unwrap();
+        let target = home.join(".claude/.mcp.json");
+        assert!(target.exists(), "global add lands in ~/.claude/.mcp.json");
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["brandnew"]["command"], "npx");
+        assert_eq!(info.mcp_parent_key.as_deref(), Some("mcpServers"));
+    }
+
+    #[test]
+    fn ops_upsert_add_new_scan_visible() {
+        // Proves the resolved write target is a file ClaudeAdapter scans.
+        use crate::harness::adapters::claude::ClaudeAdapter;
+        use crate::harness::framework;
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let ctx = Ctx { home, cwd: None };
+        let scopes = framework::run_scan(&ClaudeAdapter, &ctx).unwrap().scopes;
+        ClaudeOps.upsert_mcp_entry(&ctx, "global", "visible-srv",
+            &serde_json::json!({"command":"echo"}), None, &scopes).unwrap();
+        let items = framework::run_scan(&ClaudeAdapter, &ctx).unwrap().items;
+        assert!(items.iter().any(|i| i.category == "mcp" && i.name == "visible-srv"),
+            "upserted server must appear in a fresh scan");
+    }
+
+    #[test]
+    fn ops_upsert_rejects_target_outside_home() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let bad = home.join("../evil.json");
+        let res = ClaudeOps.upsert_mcp_entry(&ctx_for(home), "global", "x",
+            &serde_json::json!({"command":"y"}), Some(&bad.display().to_string()), &scopes);
+        assert!(res.is_err(), "target outside home must be rejected");
     }
 }

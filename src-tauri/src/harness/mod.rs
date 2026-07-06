@@ -37,6 +37,13 @@ pub trait HarnessOps: Send + Sync {
 
     /// Write `content` to `path` after validating it stays under `home`.
     fn save_file(&self, ctx: &Ctx, path: &str, content: &str) -> Result<(), WardError>;
+
+    /// Insert-or-overwrite one MCP server entry. `target_path == Some` edits
+    /// that exact file (parent auto-detected); `None` resolves the write
+    /// target from `scope_id` (a new server). Returns an undo payload.
+    fn upsert_mcp_entry(&self, ctx: &Ctx, scope_id: &str, name: &str,
+        config: &serde_json::Value, target_path: Option<&str>, scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>;
 }
 
 pub trait Harness: Send + Sync {
