@@ -232,6 +232,17 @@ pub fn mcp_upsert_entry(
     ops.upsert_mcp_entry(&ctx, &scope_id, &name, &config, target_path.as_deref(), &scopes)
 }
 
+/// Create a new skill (scaffold `<skills_dir>/<name>/SKILL.md`). Create-only —
+/// refuses to overwrite an existing skill dir. Returns a `skill-create`
+/// `RestoreInfo` whose undo removes the created dir (Plan 19).
+#[tauri::command]
+pub fn skill_upsert(harness: String, scope_id: String, name: String, content: String)
+    -> Result<RestoreInfo, WardError>
+{
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    crate::harness::adapters::claude_ops::skill_upsert(ctx.home, &harness, &scope_id, &name, &content, &scopes)
+}
+
 // ── Security Scanner (Plan 05) ─────────────────────────────────────────
 
 /// Run the security scan over the discovered MCP items.

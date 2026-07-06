@@ -325,6 +325,7 @@ pub fn run() {
             commands::mcp_set_policy,
             commands::mcp_check_policy,
             commands::mcp_upsert_entry,
+            commands::skill_upsert,
             commands::security_scan,
             commands::security_baseline_check,
             commands::security_baseline_accept,

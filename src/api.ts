@@ -62,7 +62,7 @@ export interface ScanResult {
 }
 export interface Destination { scopeId: string; label: string; kind: string; }
 export interface RestoreInfo {
-  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert';
+  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert' | 'skill-create';
   originalPath: string;
   currentPath?: string | null;
   backupBytes?: number[] | null;
@@ -389,6 +389,11 @@ export const api = {
   // shared config file (upsert by name).
   mcpUpsertEntry: (harness: string, scopeId: string, name: string, config: McpConfig, targetPath?: string) =>
     invokeOrThrow<RestoreInfo>('mcp_upsert_entry', { harness, scopeId, name, config, targetPath }),
+
+  // Plan 19 — creatable skills: scaffold a new `<skills_dir>/<name>/SKILL.md`
+  // (create-only). Returns a `skill-create` RestoreInfo for Undo.
+  skillUpsert: (harness: string, scopeId: string, name: string, content: string) =>
+    invokeOrThrow<RestoreInfo>('skill_upsert', { harness, scopeId, name, content }),
 
   // Plan 05 — Security scanner.
   securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>

@@ -301,6 +301,15 @@ test('mcpUpsertEntry invokes mcp_upsert_entry with camelCase args', async () => 
   });
 });
 
+// ── Plan 19: creatable skills (skill_upsert) ──
+
+test('skillUpsert invokes skill_upsert with camelCase args', async () => {
+  invoke.mockResolvedValue({ kind: 'skill-create', originalPath: '/x' });
+  await api.skillUpsert('claude', 'global', 'my-skill', '---\nname: my-skill\n---\n');
+  expect(invoke).toHaveBeenCalledWith('skill_upsert',
+    { harness: 'claude', scopeId: 'global', name: 'my-skill', content: '---\nname: my-skill\n---\n' });
+});
+
 // ── Tauri runtime detection ────────────────────────────────────────────
 
 test('invoke rejects with TauriUnavailableError when not running inside a Tauri webview', async () => {

@@ -54,3 +54,15 @@ describe('MockStore MCP upsert', () => {
     expect(n2).toBe(n0);
   });
 });
+
+describe('MockStore skill upsert', () => {
+  it('skillUpsert adds a new skill item and undo removes it', () => {
+    const s = new MockStore();
+    const n0 = s.scan('claude').items.filter((i) => i.category === 'skill').length;
+    const r = s.skillUpsert('claude', 'global', 'brand-skill', '---\nname: brand-skill\n---\n');
+    expect(r.kind).toBe('skill-create');
+    expect(s.scan('claude').items.filter((i) => i.category === 'skill').length).toBe(n0 + 1);
+    s.restore({ ...r });
+    expect(s.scan('claude').items.filter((i) => i.category === 'skill').length).toBe(n0);
+  });
+});

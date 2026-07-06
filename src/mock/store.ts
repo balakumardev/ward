@@ -183,6 +183,24 @@ export class MockStore {
     return { kind: 'mcp-upsert', originalPath: newItem.path, __undoId: undoId };
   }
 
+  // Plan 19 — creatable skills: scaffold a new skill item (create-only in the
+  // real backend; the mock just inserts the row so the Organizer's Add Skill
+  // flow can be exercised). Undo splices the new item back out.
+  skillUpsert(harness: string, scopeId: string, name: string, _content: string): MockRestore {
+    const s = this.scanFor(harness);
+    const newItem = {
+      category: 'skill', scopeId, name,
+      path: `${scopeId}/skills/${name}/SKILL.md`,
+      movable: true, deletable: true, locked: false,
+    } as (typeof s.items)[number];
+    s.items.push(newItem);
+    const undoId = this.newUndo(() => {
+      const j = s.items.indexOf(newItem);
+      if (j >= 0) s.items.splice(j, 1);
+    });
+    return { kind: 'skill-create', originalPath: newItem.path, __undoId: undoId };
+  }
+
   getPolicy(): McpPolicy {
     return clone(this.policy);
   }

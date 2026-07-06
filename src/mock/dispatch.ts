@@ -33,6 +33,9 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'mcp_upsert_entry':
       await delay(60);
       return store.upsertMcpEntry(args.harness ?? 'claude', args.scopeId, args.name, args.config, args.targetPath);
+    case 'skill_upsert':
+      await delay(60);
+      return store.skillUpsert(args.harness ?? 'claude', args.scopeId, args.name, args.content);
     case 'mcp_get_policy': return store.getPolicy();
     case 'mcp_set_policy': await delay(40); return store.setPolicy(args.policy);
     case 'mcp_check_policy': return store.checkPolicy(args.serverName, args.serverConfig ?? {}, args.policy);
