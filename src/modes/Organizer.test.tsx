@@ -1,4 +1,4 @@
-import { render, fireEvent, waitFor, cleanup } from '@solidjs/testing-library';
+import { render, fireEvent, waitFor, cleanup, screen } from '@solidjs/testing-library';
 import { afterEach, beforeEach } from 'vitest';
 import { Organizer, type OrganizerApi } from './Organizer';
 import type { ScanResult } from '../api';
@@ -24,6 +24,7 @@ const noopApi: OrganizerApi = {
   mcpGetDisabled: async () => [],
   mcpSetDisabled: async () => ({ kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' }),
   mcpGetPolicy: async () => ({ allowlist: [], denylist: [] }),
+  upsertMcpEntry: async () => ({ kind: 'mcp-upsert', originalPath: '/Users/x/.claude.json' }),
 };
 
 const scan: ScanResult = {
@@ -403,4 +404,103 @@ test('undo captures the disabled toggle as a RestoreInfo', async () => {
   const toggle = document.querySelector('[data-testid="mcp-disable-toggle"][data-disabled="false"]') as HTMLButtonElement;
   fireEvent.click(toggle);
   await waitFor(() => expect(queryAllByTestId('undo-btn').length).toBeGreaterThan(0));
+});
+
+// ── Plan 18: structured MCP edit form ──
+
+/** Build a minimal single-MCP-item scan for exercising the structured
+ *  MCP edit form. Mirrors the real ScanResult fixture shape used above. */
+function makeScanWithMcp(opts: {
+  name: string; scopeId: string; path: string; mcpConfig: Record<string, unknown>;
+}): ScanResult {
+  const scopes: ScanResult['scopes'] = [
+    { id: 'global', kind: 'global', label: 'Global (~/.claude)', root: '/Users/x/.claude' },
+  ];
+  if (opts.scopeId !== 'global') {
+    scopes.push({ id: opts.scopeId, kind: 'project', label: opts.scopeId, root: `/work/${opts.scopeId}` });
+  }
+  return {
+    harnessId: 'claude',
+    categories: [{ id: 'mcp', label: 'MCP', count: 1 }],
+    scopes,
+    items: [
+      { category: 'mcp', scopeId: opts.scopeId, name: opts.name, path: opts.path,
+        movable: true, deletable: true, locked: false, mcpConfig: opts.mcpConfig },
+    ],
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  };
+}
+
+/** Reuse the file's noop api as the base fake for MCP-form tests. */
+const fakeApi = noopApi;
+
+function renderOrganizer(opts: { scan: ScanResult; api: OrganizerApi }) {
+  return render(() => <Organizer scan={opts.scan} loadFile={async () => '{}'} api={opts.api} />);
+}
+
+it('renders a structured MCP form and saves an edited arg via upsertMcpEntry', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeScanWithMcp({ name: 'context7', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx', args: ['-y', 'a@1.0.0'] } });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  // select the MCP item
+  fireEvent.click(screen.getByText('context7'));
+  // form is present, not the read-only notice
+  expect(await screen.findByTestId('mcp-form')).toBeInTheDocument();
+  expect(screen.queryByTestId('detail-editor')).not.toBeInTheDocument();
+  // edit the command field
+  const cmd = screen.getByTestId('mcp-command') as HTMLInputElement;
+  fireEvent.input(cmd, { target: { value: 'uvx' } });
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [item, config] = upsertSpy.mock.calls[0];
+  expect(item.name).toBe('context7');
+  expect(config.command).toBe('uvx');
+  expect(config.args).toEqual(['-y', 'a@1.0.0']); // preserved
+});
+
+it('edits an arg row, adds an env var, and persists both (unknown keys survive)', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeScanWithMcp({ name: 'ctx', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx', args: ['-y', 'pkg@1'], type: 'stdio' } });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByText('ctx'));
+  await screen.findByTestId('mcp-form');
+  // Edit the second existing arg row in place (exercises <Index> reactivity).
+  const argInputs = screen.getAllByTestId('mcp-arg-input') as HTMLInputElement[];
+  expect(argInputs.length).toBe(2);
+  fireEvent.input(argInputs[1], { target: { value: 'pkg@2' } });
+  // Add a new env var and fill both key + value.
+  fireEvent.click(screen.getByTestId('mcp-env-add'));
+  fireEvent.input(screen.getByTestId('mcp-env-key'), { target: { value: 'TOKEN' } });
+  fireEvent.input(screen.getByTestId('mcp-env-value'), { target: { value: 'abc' } });
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [, config] = upsertSpy.mock.calls[0];
+  expect(config.command).toBe('npx');
+  expect(config.args).toEqual(['-y', 'pkg@2']);
+  expect(config.env).toEqual({ TOKEN: 'abc' });
+  expect(config.type).toBe('stdio'); // form-unmanaged key preserved via clone
+});
+
+it('switching transport to http persists url and drops stdio fields', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeScanWithMcp({ name: 'ctx', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx', args: ['-y', 'pkg@1'] } });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByText('ctx'));
+  await screen.findByTestId('mcp-form');
+  expect(screen.getByTestId('mcp-command')).toBeInTheDocument();
+  // Toggle to the http transport — stdio fields disappear, url appears.
+  fireEvent.click(screen.getByTestId('mcp-transport-http'));
+  const url = await screen.findByTestId('mcp-url') as HTMLInputElement;
+  fireEvent.input(url, { target: { value: 'https://mcp.example.com/sse' } });
+  expect(screen.queryByTestId('mcp-command')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [, config] = upsertSpy.mock.calls[0];
+  expect(config.url).toBe('https://mcp.example.com/sse');
+  expect(config.command).toBeUndefined();
+  expect(config.args).toBeUndefined();
+  expect(config.env).toBeUndefined();
 });

@@ -1,0 +1,117 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Ward — Organizer MCP structured edit form (Plan 18).
+   MCP "items" are entries inside a shared config file, so instead of the
+   raw-text editor they get this structured stdio/http form. Styling reuses
+   the token vocabulary + the editor-card look so the pane reads as one
+   surface with the rest of the Organizer detail view.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.mcp-form {
+  flex: 1;
+  min-height: 0;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: var(--sh-2);
+}
+
+/* Transport toggle — sits on its own row, sized to content. */
+.mcp-transport {
+  align-self: flex-start;
+  margin-bottom: 2px;
+}
+
+/* Field labels — small, uppercase, dimmed, like the editor chrome. */
+.mcp-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+
+/* Text inputs — full-width, monospace (config values are code-ish). */
+.mcp-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.mcp-input:focus {
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg-2);
+  outline: none;
+}
+.mcp-input::placeholder { color: var(--text-mute); }
+
+/* A group of add/remove rows (args / env / headers). */
+.mcp-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+.mcp-rows-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mcp-row-add {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  color: var(--accent);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-bg-2);
+}
+.mcp-row-add:hover {
+  background: var(--accent-bg);
+  border-color: var(--border-accent);
+  color: var(--accent);
+}
+
+/* A single row: value input(s) + a remove button. */
+.mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcp-row .mcp-input { flex: 1; }
+/* Key/value rows: the key column is narrower than the value column. */
+.mcp-row-kv .mcp-input-key { flex: 0 0 34%; min-width: 0; }
+
+.mcp-row-del {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.mcp-row-del:hover {
+  color: var(--danger);
+  border-color: rgba(255, 69, 58, 0.35);
+  background: var(--danger-bg);
+}
+
+/* The form's own footer (Save) reuses .editor-foot from app.css, but the
+   form scrolls, so keep its Save action anchored below the fields. */
+.mcp-form .editor-foot { padding-top: 4px; }

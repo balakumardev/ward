@@ -8,7 +8,7 @@ import { BudgetWithPicker } from './modes/Budget';
 import { Sessions } from './modes/Sessions';
 import { Backups } from './modes/Backups';
 import { api, isTauri, TauriUnavailableError } from './api';
-import type { McpPolicy as McpPolicyType, RestoreInfo } from './api';
+import type { HarnessItem, McpConfig, McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
 export default function App() {
   const [mode, setMode] = createSignal('organizer');
@@ -66,6 +66,13 @@ export default function App() {
       return r;
     },
     mcpGetPolicy: () => api.mcpGetPolicy(),
+    // Plan 18 — MCP marketplace: upsert (install/edit) a server entry into
+    // the item's scope config file, then re-scan so the row reflects it.
+    upsertMcpEntry: async (item: HarnessItem, config: McpConfig) => {
+      const r = await api.mcpUpsertEntry(harness(), item.scopeId, item.name, config, item.path);
+      await refetch();
+      return r;
+    },
 
     // Plan 07 — Sessions mode.
     sessionPreview: (path: string) => api.sessionPreview(path),

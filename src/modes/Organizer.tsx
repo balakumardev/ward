@@ -1,5 +1,6 @@
-import { createMemo, createResource, createSignal, createEffect, For, Show } from 'solid-js';
-import type { Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult } from '../api';
+import { createMemo, createResource, createSignal, createEffect, For, Index, Show } from 'solid-js';
+import type { Destination, HarnessItem, McpConfig, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult } from '../api';
+import '../styles/organizer.css';
 
 function effectiveBadge(item: HarnessItem): string | null {
   if (!item.effective) return null;
@@ -62,6 +63,9 @@ export interface OrganizerApi {
   mcpGetDisabled: (projectPath: string) => Promise<string[]>;
   mcpSetDisabled: (projectPath: string, list: string[]) => Promise<RestoreInfo>;
   mcpGetPolicy: () => Promise<McpPolicy>;
+  // Plan 18 — MCP marketplace: upsert (install/edit) a server entry into a
+  // scope's shared config file. Persists the structured MCP form's Save.
+  upsertMcpEntry: (item: HarnessItem, config: McpConfig) => Promise<RestoreInfo>;
 }
 
 export function Organizer(props: {
@@ -349,6 +353,22 @@ export function Organizer(props: {
     }
   }
 
+  // Plan 18 — persist a structured MCP config edit via upsert. Reuses the
+  // same lastUndo + statusMsg wiring as doToggleMcpDisabled so the toolbar
+  // Undo button and status line surface the result. The upsert bridge
+  // re-scans on success, so the row reflects the new config immediately.
+  async function saveMcp(config: McpConfig): Promise<void> {
+    const item = selectedItem();
+    if (!item) return;
+    try {
+      const info = await props.api.upsertMcpEntry(item, config);
+      setLastUndo(info);
+      setStatusMsg(`Saved "${item.name}". Click Undo to reverse.`);
+    } catch (e) {
+      setStatusMsg(`MCP save failed: ${String(e)}`);
+    }
+  }
+
   function bulkMoveDestinations(): Destination[] {
     // First selected item's destinations drive the bulk UI (CCO does the
     // same per-item). Caller can pick any scope that's valid for at least
@@ -592,45 +612,51 @@ export function Organizer(props: {
                   </div>
                 </div>
 
-                <div class="editor-card">
-                  <div class="editor-bar">
-                    <Show when={dirty()}><span class="dot-unsaved" title="Unsaved changes" /></Show>
-                    <span class="editor-fname">{fileName(item().path)}</span>
-                    <span class="lang-tag">{isMcp() ? 'json' : langTag(item())}</span>
-                    <span style={{ flex: 1 }} />
-                    <Show when={md()}>
-                      <div class="seg">
-                        <button classList={{ 'seg-btn': true, active: !previewMode() }} onClick={() => setPreviewMode(false)}>Edit</button>
-                        <button classList={{ 'seg-btn': true, active: previewMode() }} onClick={() => setPreviewMode(true)}>Preview</button>
-                      </div>
+                {/* Plan 18 — MCP entries get a structured stdio/http form
+                    (Save persists via upsertMcpEntry). Everything else gets
+                    the file editor / markdown preview. */}
+                <Show when={isMcp()} fallback={
+                  <div class="editor-card">
+                    <div class="editor-bar">
+                      <Show when={dirty()}><span class="dot-unsaved" title="Unsaved changes" /></Show>
+                      <span class="editor-fname">{fileName(item().path)}</span>
+                      <span class="lang-tag">{langTag(item())}</span>
+                      <span style={{ flex: 1 }} />
+                      <Show when={md()}>
+                        <div class="seg">
+                          <button classList={{ 'seg-btn': true, active: !previewMode() }} onClick={() => setPreviewMode(false)}>Edit</button>
+                          <button classList={{ 'seg-btn': true, active: previewMode() }} onClick={() => setPreviewMode(true)}>Preview</button>
+                        </div>
+                      </Show>
+                    </div>
+                    <Show
+                      when={md() && previewMode()}
+                      fallback={
+                        <textarea
+                          class="editor-area"
+                          data-testid="detail-editor"
+                          spellcheck={false}
+                          value={detail()}
+                          onInput={(e) => { setDetail(e.currentTarget.value); setDirty(true); }}
+                          onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void doSave(); } }}
+                          disabled={item().locked}
+                        />
+                      }
+                    >
+                      <div class="preview" innerHTML={renderMarkdown(detail())} />
                     </Show>
                   </div>
-                  <Show
-                    when={md() && previewMode()}
-                    fallback={
-                      <textarea
-                        class="editor-area"
-                        data-testid="detail-editor"
-                        spellcheck={false}
-                        value={detail()}
-                        onInput={(e) => { setDetail(e.currentTarget.value); setDirty(true); }}
-                        onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void doSave(); } }}
-                        disabled={item().locked || isMcp()}
-                      />
-                    }
-                  >
-                    <div class="preview" innerHTML={renderMarkdown(detail())} />
-                  </Show>
-                </div>
+                }>
+                  <McpForm item={item()} onSave={saveMcp} />
+                </Show>
 
-                <Show when={!item().locked || statusMsg()}>
+                <Show when={(!item().locked && !isMcp()) || statusMsg()}>
                   <div class="editor-foot">
                     <Show when={!item().locked && !isMcp()}>
                       <button class="btn btn-primary" data-testid="save-btn" disabled={!dirty()} onClick={() => doSave()}>Save</button>
                       <button class="btn btn-ghost" data-testid="revert-btn" disabled={!dirty()} onClick={() => doRevert()}>Revert</button>
                       <span class="kbd">⌘S</span>
                     </Show>
-                    <Show when={isMcp()}><span class="status">Read-only — MCP server entry in {fileName(item().path)}. Use the Enable/Disable toggle or MCP Policy to change it.</span></Show>
                     <span style={{ flex: 1 }} />
                     <Show when={statusMsg()}>
                       <span classList={{ status: true, err: statusMsg().includes('failed') || statusMsg().includes('error') }}>{statusMsg()}</span>
@@ -649,6 +675,129 @@ export function Organizer(props: {
           <button class="btn btn-ghost" data-testid="toast-undo" onClick={() => doUndo()}>↺ Undo</button>
         </div>
       </Show>
+    </div>
+  );
+}
+
+// ── Plan 18 — structured MCP server edit form ──
+//
+// MCP "items" are entries inside a shared JSON/TOML config file, not
+// standalone files, so the raw-text editor would clobber the whole file.
+// Instead we surface a structured form: a stdio ⇄ http transport toggle
+// with the fields each transport owns. Save patches a CLONE of the
+// original config (so unknown keys round-trip) and persists via
+// `upsertMcpEntry`. The server name is intentionally NOT editable here —
+// a rename is a delete + re-add, out of scope for an in-place edit.
+function McpForm(props: { item: HarnessItem; onSave: (config: McpConfig) => Promise<void> }) {
+  const seed = () => (props.item.mcpConfig ?? {}) as McpConfig;
+  const [transport, setTransport] = createSignal<'stdio' | 'http'>(seed().url ? 'http' : 'stdio');
+  const [command, setCommand] = createSignal(seed().command ?? '');
+  const [args, setArgs] = createSignal<string[]>([...(seed().args ?? [])]);
+  const [env, setEnv] = createSignal<[string, string][]>(Object.entries<string>(seed().env ?? {}));
+  const [url, setUrl] = createSignal(seed().url ?? '');
+  const [headers, setHeaders] = createSignal<[string, string][]>(Object.entries<string>(seed().headers ?? {}));
+  const [busy, setBusy] = createSignal(false);
+
+  async function save() {
+    setBusy(true);
+    // Patch a CLONE of the original so unknown keys survive.
+    const next: McpConfig = { ...((props.item.mcpConfig as McpConfig) ?? {}) };
+    if (transport() === 'stdio') {
+      next.command = command();
+      next.args = args();
+      next.env = Object.fromEntries(env().filter(([k]) => k));
+      delete next.url; delete next.headers;
+    } else {
+      next.url = url();
+      next.headers = Object.fromEntries(headers().filter(([k]) => k));
+      delete next.command; delete next.args; delete next.env;
+    }
+    try { await props.onSave(next); } finally { setBusy(false); }
+  }
+
+  return (
+    <div class="mcp-form" data-testid="mcp-form">
+      <div class="seg mcp-transport">
+        <button classList={{ 'seg-btn': true, active: transport() === 'stdio' }}
+          data-testid="mcp-transport-stdio" onClick={() => setTransport('stdio')}>stdio</button>
+        <button classList={{ 'seg-btn': true, active: transport() === 'http' }}
+          data-testid="mcp-transport-http" onClick={() => setTransport('http')}>http</button>
+      </div>
+      <Show when={transport() === 'stdio'} fallback={
+        <>
+          <label class="mcp-label">URL</label>
+          <input class="mcp-input" data-testid="mcp-url" value={url()} onInput={(e) => setUrl(e.currentTarget.value)} />
+          <KeyValRows label="Headers" rows={headers()} setRows={setHeaders} testid="mcp-header" />
+        </>
+      }>
+        <label class="mcp-label">Command</label>
+        <input class="mcp-input" data-testid="mcp-command" value={command()} onInput={(e) => setCommand(e.currentTarget.value)} />
+        <ListRows label="Args" rows={args()} setRows={setArgs} testid="mcp-arg" />
+        <KeyValRows label="Env" rows={env()} setRows={setEnv} testid="mcp-env" />
+      </Show>
+      <div class="editor-foot">
+        <button class="btn btn-primary" data-testid="mcp-save" disabled={busy()} onClick={() => void save()}>Save</button>
+      </div>
+    </div>
+  );
+}
+
+/** A list of single-value rows (e.g. stdio `args`), each with a remove
+ *  button and an "Add" control that appends an empty row. Uses <Index>
+ *  (not <For>) so editing a row keeps a stable DOM node — <For> keys by
+ *  value and would recreate the input on each keystroke, losing focus. */
+function ListRows(props: { label: string; rows: string[]; setRows: (v: string[]) => void; testid: string }) {
+  const add = () => props.setRows([...props.rows, '']);
+  const update = (i: number, v: string) => props.setRows(props.rows.map((r, j) => (j === i ? v : r)));
+  const remove = (i: number) => props.setRows(props.rows.filter((_, j) => j !== i));
+  return (
+    <div class="mcp-rows">
+      <div class="mcp-rows-head">
+        <label class="mcp-label">{props.label}</label>
+        <button class="mcp-row-add" data-testid={`${props.testid}-add`} onClick={() => add()}>+ Add</button>
+      </div>
+      <Index each={props.rows}>
+        {(row, i) => (
+          <div class="mcp-row" data-testid={`${props.testid}-row`}>
+            <input class="mcp-input" data-testid={`${props.testid}-input`} value={row()}
+              onInput={(e) => update(i, e.currentTarget.value)} />
+            <button class="mcp-row-del" data-testid={`${props.testid}-remove`}
+              title="Remove" onClick={() => remove(i)}>✕</button>
+          </div>
+        )}
+      </Index>
+    </div>
+  );
+}
+
+/** A list of key/value rows (e.g. stdio `env` or http `headers`), each
+ *  with two inputs, a remove button, and an "Add" control. Uses <Index>
+ *  for the same stable-DOM-node reason as ListRows. */
+function KeyValRows(props: { label: string; rows: [string, string][]; setRows: (v: [string, string][]) => void; testid: string }) {
+  const add = () => props.setRows([...props.rows, ['', '']]);
+  const update = (i: number, which: 0 | 1, v: string) =>
+    props.setRows(props.rows.map((r, j): [string, string] =>
+      j === i ? (which === 0 ? [v, r[1]] : [r[0], v]) : r,
+    ));
+  const remove = (i: number) => props.setRows(props.rows.filter((_, j) => j !== i));
+  return (
+    <div class="mcp-rows">
+      <div class="mcp-rows-head">
+        <label class="mcp-label">{props.label}</label>
+        <button class="mcp-row-add" data-testid={`${props.testid}-add`} onClick={() => add()}>+ Add</button>
+      </div>
+      <Index each={props.rows}>
+        {(row, i) => (
+          <div class="mcp-row mcp-row-kv" data-testid={`${props.testid}-row`}>
+            <input class="mcp-input mcp-input-key" data-testid={`${props.testid}-key`} placeholder="key"
+              value={row()[0]} onInput={(e) => update(i, 0, e.currentTarget.value)} />
+            <input class="mcp-input" data-testid={`${props.testid}-value`} placeholder="value"
+              value={row()[1]} onInput={(e) => update(i, 1, e.currentTarget.value)} />
+            <button class="mcp-row-del" data-testid={`${props.testid}-remove`}
+              title="Remove" onClick={() => remove(i)}>✕</button>
+          </div>
+        )}
+      </Index>
     </div>
   );
 }
