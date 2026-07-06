@@ -789,7 +789,7 @@ export function Organizer(props: {
                     </div>
                   </Show>
                 }>
-                  {(mcpItem) => <McpForm item={mcpItem} onSave={saveMcp} />}
+                  {(mcpItem) => <McpForm item={mcpItem} onSave={saveMcp} harness={props.scan.harnessId} />}
                 </Show>
 
                 <Show when={(!item().locked && !isMcp()) || statusMsg()}>
@@ -833,6 +833,7 @@ export function Organizer(props: {
               scopeId={chosenScope()}
               onScope={setChosenScope}
               onSave={addMcp}
+              harness={props.scan.harnessId}
             />
             <Show when={statusMsg()}>
               <div class="editor-foot">
@@ -926,8 +927,13 @@ function McpForm(props: {
   onName?: (v: string) => void;
   scopeId?: string;
   onScope?: (v: string) => void;
+  harness?: string;
 }) {
   const isAdd = () => props.mode === 'add';
+  // Codex persists an `enabled` bool inside `[mcp_servers.<name>]` (there's no
+  // Claude-style per-project row toggle for Codex), so we expose an Enabled
+  // checkbox for Codex only. Claude ignores the field and never shows it.
+  const isCodex = () => props.harness === 'codex';
   const seed = () => (props.item.mcpConfig ?? {}) as McpConfig;
   const [transport, setTransport] = createSignal<'stdio' | 'http'>(seed().url ? 'http' : 'stdio');
   const [command, setCommand] = createSignal(seed().command ?? '');
@@ -935,6 +941,9 @@ function McpForm(props: {
   const [env, setEnv] = createSignal<[string, string][]>(Object.entries<string>(seed().env ?? {}));
   const [url, setUrl] = createSignal(seed().url ?? '');
   const [headers, setHeaders] = createSignal<[string, string][]>(Object.entries<string>(seed().headers ?? {}));
+  // `enabled` defaults to true when the config omits it (Codex treats a missing
+  // key as enabled).
+  const [enabled, setEnabled] = createSignal<boolean>(seed().enabled ?? true);
   const [busy, setBusy] = createSignal(false);
 
   async function save() {
@@ -956,6 +965,8 @@ function McpForm(props: {
       // Realign it to a remote type when one was present; never fabricate one.
       if (next.type !== undefined && !REMOTE_TYPES.includes(String(next.type))) next.type = 'http';
     }
+    // Codex owns the `enabled` bool; Claude leaves whatever was there untouched.
+    if (isCodex()) next.enabled = enabled();
     try { await props.onSave(next); } finally { setBusy(false); }
   }
 
@@ -979,6 +990,13 @@ function McpForm(props: {
         <button classList={{ 'seg-btn': true, active: transport() === 'http' }}
           data-testid="mcp-transport-http" onClick={() => setTransport('http')}>http</button>
       </div>
+      <Show when={isCodex()}>
+        <label class="toggle mcp-enabled-row">
+          <input type="checkbox" data-testid="mcp-enabled" checked={enabled()}
+            onInput={(e) => setEnabled(e.currentTarget.checked)} />
+          Enabled
+        </label>
+      </Show>
       <Show when={transport() === 'stdio'} fallback={
         <>
           <label class="mcp-label">URL</label>

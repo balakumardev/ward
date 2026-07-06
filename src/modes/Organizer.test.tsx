@@ -611,6 +611,63 @@ it('renders a READ-ONLY MCP pane (no form, no add button) when mcpEditable is fa
   expect(screen.queryByTestId('mcp-save')).not.toBeInTheDocument();
 });
 
+// ── Plan 20: Codex Enabled toggle in the MCP form ──
+
+/** An editable Codex scan carrying one stdio MCP server (mcpEditable on). */
+function makeCodexMcpScan(mcpConfig: Record<string, unknown>): ScanResult {
+  return {
+    harnessId: 'codex',
+    categories: [{ id: 'mcp', label: 'MCP', count: 1 }],
+    scopes: [{ id: 'global', kind: 'global', label: 'Global (~/.codex)', root: '/Users/x/.codex' }],
+    items: [
+      { category: 'mcp', scopeId: 'global', name: 'context7', path: '/Users/x/.codex/config.toml',
+        movable: false, deletable: true, locked: false, mcpConfig },
+    ],
+    capabilities: { contextBudget: false, mcpControls: false, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: true, skillCreatable: true },
+  };
+}
+
+it('shows an Enabled checkbox (default true) for a Codex MCP item and persists the toggle on Save', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeCodexMcpScan({ command: 'npx', args: ['-y', 'c7'] }); // no `enabled` key
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByText('context7'));
+  await screen.findByTestId('mcp-form');
+  const check = screen.getByTestId('mcp-enabled') as HTMLInputElement;
+  expect(check).toBeInTheDocument();
+  expect(check.checked).toBe(true); // absent `enabled` defaults to true
+  // Toggle it off, then Save — `enabled: false` must land in the config.
+  fireEvent.click(check);
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [, config] = upsertSpy.mock.calls[0];
+  expect(config.enabled).toBe(false);
+  expect(config.command).toBe('npx'); // stdio fields preserved alongside enabled
+});
+
+it('reflects an existing enabled:false and keeps it disabled through Save', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeCodexMcpScan({ command: 'npx', args: ['-y', 'c7'], enabled: false });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByText('context7'));
+  await screen.findByTestId('mcp-form');
+  const check = screen.getByTestId('mcp-enabled') as HTMLInputElement;
+  expect(check.checked).toBe(false); // seeded from config.enabled
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [, config] = upsertSpy.mock.calls[0];
+  expect(config.enabled).toBe(false);
+});
+
+it('does NOT show the Enabled checkbox for a Claude MCP item', async () => {
+  const scan = makeScanWithMcp({ name: 'context7', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx', args: ['-y', 'c7'] } });
+  renderOrganizer({ scan, api: fakeApi });
+  fireEvent.click(screen.getByText('context7'));
+  await screen.findByTestId('mcp-form');
+  expect(screen.queryByTestId('mcp-enabled')).not.toBeInTheDocument();
+});
+
 // ── Plan 18 review-fix 3: align a contradictory `type` on transport switch ──
 
 it('switching a type:stdio entry to http realigns the contradictory type and keeps url', async () => {
