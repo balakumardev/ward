@@ -161,6 +161,28 @@ export class MockStore {
     return { kind: 'mcp-disabled', originalPath: projectPath, __undoId: undoId };
   }
 
+  upsertMcpEntry(harness: string, scopeId: string, name: string, config: unknown, targetPath?: string): MockRestore {
+    const s = this.scanFor(harness);
+    const idx = s.items.findIndex((i) => i.category === 'mcp' && i.name === name && i.scopeId === scopeId);
+    if (idx >= 0) {
+      const prev = s.items[idx].mcpConfig;
+      s.items[idx] = { ...s.items[idx], mcpConfig: config };
+      const undoId = this.newUndo(() => { s.items[idx] = { ...s.items[idx], mcpConfig: prev }; });
+      return { kind: 'mcp-upsert', originalPath: s.items[idx].path, __undoId: undoId };
+    }
+    const newItem = {
+      category: 'mcp', scopeId, name,
+      path: targetPath ?? `${scopeId}/.mcp.json`,
+      movable: false, deletable: true, locked: false, mcpConfig: config,
+    } as (typeof s.items)[number];
+    s.items.push(newItem);
+    const undoId = this.newUndo(() => {
+      const j = s.items.indexOf(newItem);
+      if (j >= 0) s.items.splice(j, 1);
+    });
+    return { kind: 'mcp-upsert', originalPath: newItem.path, __undoId: undoId };
+  }
+
   getPolicy(): McpPolicy {
     return clone(this.policy);
   }

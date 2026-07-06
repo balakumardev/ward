@@ -32,3 +32,25 @@ describe('MockStore usage + autostart', () => {
     expect(s.liveUsageEnabled()).toBe(false);
   });
 });
+
+describe('MockStore MCP upsert', () => {
+  it('upsertMcpEntry edits an existing MCP item config in place', () => {
+    const s = new MockStore();
+    const before = s.scan('claude').items.find((i) => i.category === 'mcp')!;
+    const r = s.upsertMcpEntry('claude', before.scopeId, before.name, { command: 'edited', args: ['z'] }, before.path);
+    expect(r.kind).toBe('mcp-upsert');
+    const after = s.scan('claude').items.find((i) => i.category === 'mcp' && i.name === before.name)!;
+    expect((after.mcpConfig as { command: string }).command).toBe('edited');
+  });
+
+  it('upsertMcpEntry adds a new MCP item and undo removes it', () => {
+    const s = new MockStore();
+    const n0 = s.scan('claude').items.filter((i) => i.category === 'mcp').length;
+    const r = s.upsertMcpEntry('claude', 'global', 'brandnew', { command: 'npx', args: ['-y', 'p@1.0.0'] });
+    const n1 = s.scan('claude').items.filter((i) => i.category === 'mcp').length;
+    expect(n1).toBe(n0 + 1);
+    s.restore({ ...r });
+    const n2 = s.scan('claude').items.filter((i) => i.category === 'mcp').length;
+    expect(n2).toBe(n0);
+  });
+});
