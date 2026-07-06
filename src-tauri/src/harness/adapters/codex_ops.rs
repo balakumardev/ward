@@ -11,15 +11,17 @@
 //! `[mcp_servers.<name>]` sub-table we own is rewritten. Undo captures the
 //! whole prior file bytes (mirrors `claude_mcp::set_policy`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value};
 
 use crate::error::WardError;
-use crate::model::RestoreInfo;
+use crate::fs_utils::ensure_under_home;
+use crate::harness::adapters::claude_ops::{delete_single_file, delete_skill_dir, restore_file};
+use crate::harness::{Ctx, HarnessOps};
+use crate::model::{Destination, HarnessItem, RestoreInfo, Scope};
 
-/// The Codex harness ops. Unit struct — all state comes from `Ctx`. The
-/// `HarnessOps` implementation is wired in Task 2.
+/// The Codex harness ops. Unit struct — all state comes from `Ctx`.
 pub struct CodexOps;
 
 // ── JSON → TOML conversion (inverse of `codex::toml_to_json`) ───────────
@@ -146,8 +148,134 @@ pub fn upsert_mcp_entry_toml(
     })
 }
 
+/// Surgically remove `[mcp_servers.<name>]` from `target`, capturing the whole
+/// prior file bytes for undo. Errors if the file or the entry is absent.
+fn remove_mcp_entry_toml(target: &Path, name: &str) -> Result<RestoreInfo, WardError> {
+    let backup_bytes = std::fs::read(target)
+        .map_err(|_| WardError::NotFound(format!("config.toml not found: {}", target.display())))?;
+    let text = String::from_utf8_lossy(&backup_bytes).into_owned();
+    let mut doc: DocumentMut = text
+        .parse()
+        .map_err(|e| WardError::NotFound(format!("parse toml {}: {e}", target.display())))?;
+    let removed = doc
+        .get_mut("mcp_servers")
+        .and_then(|i| i.as_table_mut())
+        .and_then(|t| t.remove(name));
+    if removed.is_none() {
+        return Err(WardError::NotFound(format!(
+            "Server {name} not found in {}",
+            target.display()
+        )));
+    }
+    std::fs::write(target, doc.to_string())?;
+    Ok(RestoreInfo {
+        kind: "mcp-upsert".into(),
+        original_path: target.display().to_string(),
+        current_path: None,
+        backup_bytes: Some(backup_bytes),
+        mcp_entry: None,
+        mcp_key: Some(name.to_string()),
+        mcp_parent_key: Some("mcp_servers".into()),
+        mcp_scope: None,
+    })
+}
+
+// ── Target resolution ───────────────────────────────────────────────────
+
+/// Resolve the `config.toml` write target for `(scope_id, scopes)`:
+/// global → `~/.codex/config.toml`; project → `<repo>/.codex/config.toml`.
+fn resolve_codex_config_toml(
+    home: &Path,
+    scope_id: &str,
+    scopes: &[Scope],
+) -> Result<PathBuf, WardError> {
+    if scope_id == "global" {
+        return Ok(home.join(".codex").join("config.toml"));
+    }
+    let scope = scopes
+        .iter()
+        .find(|s| s.id == scope_id)
+        .ok_or_else(|| WardError::NotFound(format!("Unknown scope: {scope_id}")))?;
+    Ok(PathBuf::from(&scope.root).join(".codex").join("config.toml"))
+}
+
+// ── HarnessOps impl ─────────────────────────────────────────────────────
+
+impl HarnessOps for CodexOps {
+    /// Codex config is single-file per scope; move stays a Claude capability.
+    fn get_valid_destinations(&self, _ctx: &Ctx, _item: &HarnessItem, _scopes: &[Scope]) -> Vec<Destination> {
+        Vec::new()
+    }
+
+    fn move_item(&self, _ctx: &Ctx, _item: &HarnessItem, _dest_scope_id: &str, _scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>
+    {
+        Err(WardError::NotFound("Codex does not support moving items".into()))
+    }
+
+    fn delete_item(&self, ctx: &Ctx, item: &HarnessItem, _scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>
+    {
+        if item.locked {
+            return Err(WardError::NotFound(format!("{} is locked and cannot be deleted", item.name)));
+        }
+        match item.category.as_str() {
+            // MCP delete = surgical TOML remove; whole-file backup for undo.
+            "mcp" => {
+                let target = ensure_under_home(Path::new(&item.path), ctx.home)?;
+                remove_mcp_entry_toml(&target, &item.name)
+            }
+            // File-based categories reuse Claude's semantics verbatim.
+            "memory" | "rule" => delete_single_file(ctx, item),
+            "skill" => delete_skill_dir(ctx, item),
+            other => Err(WardError::NotFound(format!("{other} items cannot be deleted"))),
+        }
+    }
+
+    fn restore(&self, ctx: &Ctx, info: &RestoreInfo) -> Result<(), WardError> {
+        match info.kind.as_str() {
+            "file" => restore_file(ctx, info),
+            "mcp-upsert" => crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
+            "skill-create" => {
+                let dir = ensure_under_home(Path::new(&info.original_path), ctx.home)?;
+                if dir.exists() {
+                    std::fs::remove_dir_all(&dir)?;
+                }
+                Ok(())
+            }
+            other => Err(WardError::NotFound(format!("Unknown restore kind: {other}"))),
+        }
+    }
+
+    fn save_file(&self, ctx: &Ctx, path: &str, content: &str) -> Result<(), WardError> {
+        let abs = ensure_under_home(Path::new(path), ctx.home)?;
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&abs, content)?;
+        Ok(())
+    }
+
+    fn upsert_mcp_entry(&self, ctx: &Ctx, scope_id: &str, name: &str,
+        config: &serde_json::Value, target_path: Option<&str>, scopes: &[Scope])
+        -> Result<RestoreInfo, WardError>
+    {
+        let target = match target_path {
+            // Edit existing: write that exact file (validated under home).
+            Some(tp) => ensure_under_home(Path::new(tp), ctx.home)?,
+            // Add new: resolve the scope's config.toml.
+            None => {
+                let p = resolve_codex_config_toml(ctx.home, scope_id, scopes)?;
+                ensure_under_home(&p, ctx.home)?
+            }
+        };
+        upsert_mcp_entry_toml(&target, name, config)
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // TESTS — Task 1: json_to_toml_table round-trip + surgical upsert goldens.
+//         Task 2: CodexOps HarnessOps (delete/restore/upsert/move/dest).
 // ════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -324,5 +452,254 @@ sandbox_mode = \"read-only\"
         assert!(path.exists());
         crate::harness::adapters::claude_mcp::restore_mcp_file(home, &info).unwrap();
         assert!(!path.exists(), "undo of a create removes the file");
+    }
+
+    // ── Task 2: CodexOps HarnessOps ──
+
+    use crate::harness::adapters::codex::CodexAdapter;
+    use crate::harness::Harness;
+    use crate::model::Scope;
+
+    fn ctx_home() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        (dir, home)
+    }
+
+    fn global_scope(home: &Path) -> Scope {
+        Scope {
+            id: "global".into(),
+            kind: "global".into(),
+            label: "Global (~/.codex)".into(),
+            root: home.join(".codex").display().to_string(),
+        }
+    }
+
+    fn mcp_item(path: &Path, name: &str) -> HarnessItem {
+        HarnessItem {
+            category: "mcp".into(),
+            scope_id: "global".into(),
+            name: name.into(),
+            description: String::new(),
+            path: path.display().to_string(),
+            movable: false,
+            deletable: true,
+            locked: false,
+            effective: None,
+            mcp_config: None,
+        }
+    }
+
+    #[test]
+    fn resolve_config_toml_global_and_project() {
+        let home = Path::new("/Users/testhome");
+        let scopes = vec![
+            Scope { id: "global".into(), kind: "global".into(),
+                label: "Global".into(), root: "/Users/testhome/.codex".into() },
+            Scope { id: "-proj".into(), kind: "project".into(),
+                label: "proj".into(), root: "/work/proj".into() },
+        ];
+        let g = resolve_codex_config_toml(home, "global", &scopes).unwrap();
+        assert!(g.ends_with(".codex/config.toml"));
+        assert!(g.starts_with("/Users/testhome"));
+        let p = resolve_codex_config_toml(home, "-proj", &scopes).unwrap();
+        assert_eq!(p, PathBuf::from("/work/proj/.codex/config.toml"));
+        assert!(resolve_codex_config_toml(home, "-nope", &scopes).is_err());
+    }
+
+    #[test]
+    fn ops_upsert_add_is_visible_on_rescan() {
+        // Write target must be a scanned file: upsert → re-scan → present.
+        let (_d, home) = ctx_home();
+        let cfg_path = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, COMMENTED_CONFIG).unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+        let scopes = vec![global_scope(&home)];
+
+        let cfg = json!({ "command": "node", "args": ["srv.mjs"], "env": { "K": "v" } });
+        CodexOps
+            .upsert_mcp_entry(&ctx, "global", "brand-new", &cfg, None, &scopes)
+            .unwrap();
+
+        let items = CodexAdapter.scan_category(&ctx, "mcp", &scopes[0]).unwrap();
+        let found = items.iter().find(|i| i.name == "brand-new").expect("new server visible after re-scan");
+        assert_eq!(found.mcp_config.as_ref().unwrap()["command"], "node");
+        // Prior servers still present.
+        assert!(items.iter().any(|i| i.name == "context7"));
+        assert!(items.iter().any(|i| i.name == "auggie-mcp"));
+    }
+
+    #[test]
+    fn ops_upsert_edit_via_target_path_overwrites_in_place() {
+        let (_d, home) = ctx_home();
+        let cfg_path = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, COMMENTED_CONFIG).unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+        let scopes = vec![global_scope(&home)];
+
+        let cfg = json!({ "command": "npx", "args": ["-y", "@upstash/context7-mcp@9.9.9"] });
+        let info = CodexOps
+            .upsert_mcp_entry(&ctx, "global", "context7", &cfg,
+                Some(&cfg_path.display().to_string()), &scopes)
+            .unwrap();
+        assert_eq!(info.kind, "mcp-upsert");
+        let items = CodexAdapter.scan_category(&ctx, "mcp", &scopes[0]).unwrap();
+        let c7 = items.iter().find(|i| i.name == "context7").unwrap();
+        let args = c7.mcp_config.as_ref().unwrap()["args"].as_array().unwrap();
+        assert_eq!(args.last().unwrap(), "@upstash/context7-mcp@9.9.9");
+    }
+
+    #[test]
+    fn ops_upsert_project_scope_writes_repo_config() {
+        let (_d, home) = ctx_home();
+        let repo = home.join("work").join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+        let scopes = vec![
+            global_scope(&home),
+            Scope { id: "-repo".into(), kind: "project".into(),
+                label: "repo".into(), root: repo.display().to_string() },
+        ];
+        let cfg = json!({ "command": "node", "args": ["s.mjs"] });
+        CodexOps
+            .upsert_mcp_entry(&ctx, "-repo", "repo_mcp", &cfg, None, &scopes)
+            .unwrap();
+        let written = repo.join(".codex").join("config.toml");
+        assert!(written.exists(), "project config.toml created under repo");
+        let out = std::fs::read_to_string(&written).unwrap();
+        assert!(out.contains("[mcp_servers.repo_mcp]"));
+    }
+
+    #[test]
+    fn ops_delete_and_restore_mcp_preserves_other_tables() {
+        let (_d, home) = ctx_home();
+        let cfg_path = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(cfg_path.parent().unwrap()).unwrap();
+        std::fs::write(&cfg_path, COMMENTED_CONFIG).unwrap();
+        let original = std::fs::read(&cfg_path).unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+
+        let item = mcp_item(&cfg_path, "context7");
+        let info = CodexOps.delete_item(&ctx, &item, &[]).unwrap();
+        assert_eq!(info.kind, "mcp-upsert");
+        let after = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(!after.contains("[mcp_servers.context7]"), "deleted server gone:\n{after}");
+        assert!(after.contains("[mcp_servers.\"auggie-mcp\"]"), "sibling preserved");
+        assert!(after.contains("[profiles.review]"), "unrelated table preserved");
+
+        // Undo brings the whole file back byte-identically.
+        CodexOps.restore(&ctx, &info).unwrap();
+        assert_eq!(std::fs::read(&cfg_path).unwrap(), original, "restore is byte-identical");
+    }
+
+    #[test]
+    fn ops_delete_and_restore_skill_dir() {
+        let (_d, home) = ctx_home();
+        let skill_dir = home.join(".codex").join("skills").join("demo");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# Demo\n\nbody\n").unwrap();
+        std::fs::write(skill_dir.join("extra.txt"), "aux").unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+
+        let item = HarnessItem {
+            category: "skill".into(), scope_id: "global".into(),
+            name: "demo".into(), description: String::new(),
+            path: skill_dir.display().to_string(),
+            movable: false, deletable: true, locked: false,
+            effective: None, mcp_config: None,
+        };
+        let info = CodexOps.delete_item(&ctx, &item, &[]).unwrap();
+        assert_eq!(info.kind, "file");
+        assert!(!skill_dir.exists(), "skill dir removed");
+
+        CodexOps.restore(&ctx, &info).unwrap();
+        assert!(skill_dir.join("SKILL.md").exists(), "SKILL.md restored");
+        assert_eq!(std::fs::read_to_string(skill_dir.join("extra.txt")).unwrap(), "aux");
+    }
+
+    #[test]
+    fn ops_delete_and_restore_memory_file() {
+        let (_d, home) = ctx_home();
+        let mem = home.join(".codex").join("memories").join("note.md");
+        std::fs::create_dir_all(mem.parent().unwrap()).unwrap();
+        std::fs::write(&mem, "remember this").unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+        let item = HarnessItem {
+            category: "memory".into(), scope_id: "global".into(),
+            name: "note".into(), description: String::new(),
+            path: mem.display().to_string(),
+            movable: false, deletable: true, locked: false,
+            effective: None, mcp_config: None,
+        };
+        let info = CodexOps.delete_item(&ctx, &item, &[]).unwrap();
+        assert!(!mem.exists());
+        CodexOps.restore(&ctx, &info).unwrap();
+        assert_eq!(std::fs::read_to_string(&mem).unwrap(), "remember this");
+    }
+
+    #[test]
+    fn ops_delete_rejects_locked_and_unsupported_category() {
+        let (_d, home) = ctx_home();
+        let ctx = Ctx { home: &home, cwd: None };
+        let mut locked = mcp_item(&home.join(".codex").join("config.toml"), "x");
+        locked.locked = true;
+        assert!(CodexOps.delete_item(&ctx, &locked, &[]).is_err(), "locked rejected");
+
+        let mut cfg = mcp_item(&home.join(".codex").join("config.toml"), "x");
+        cfg.category = "config".into();
+        cfg.locked = false;
+        assert!(CodexOps.delete_item(&ctx, &cfg, &[]).is_err(), "non-deletable category rejected");
+    }
+
+    #[test]
+    fn ops_move_is_unsupported_and_destinations_empty() {
+        let (_d, home) = ctx_home();
+        let ctx = Ctx { home: &home, cwd: None };
+        let item = mcp_item(&home.join(".codex").join("config.toml"), "x");
+        assert!(CodexOps.move_item(&ctx, &item, "global", &[]).is_err());
+        assert!(CodexOps.get_valid_destinations(&ctx, &item, &[]).is_empty());
+    }
+
+    #[test]
+    fn ops_restore_unknown_kind_errors() {
+        let (_d, home) = ctx_home();
+        let ctx = Ctx { home: &home, cwd: None };
+        let info = RestoreInfo {
+            kind: "mystery".into(), original_path: home.display().to_string(),
+            current_path: None, backup_bytes: None, mcp_entry: None,
+            mcp_key: None, mcp_parent_key: None, mcp_scope: None,
+        };
+        assert!(CodexOps.restore(&ctx, &info).is_err());
+    }
+
+    #[test]
+    fn ops_restore_skill_create_removes_dir() {
+        let (_d, home) = ctx_home();
+        let created = home.join(".codex").join("skills").join("fresh");
+        std::fs::create_dir_all(&created).unwrap();
+        std::fs::write(created.join("SKILL.md"), "x").unwrap();
+        let ctx = Ctx { home: &home, cwd: None };
+        let info = RestoreInfo {
+            kind: "skill-create".into(),
+            original_path: created.display().to_string(),
+            current_path: None, backup_bytes: None, mcp_entry: None,
+            mcp_key: None, mcp_parent_key: None, mcp_scope: None,
+        };
+        CodexOps.restore(&ctx, &info).unwrap();
+        assert!(!created.exists(), "skill-create undo removes the created dir");
+    }
+
+    #[test]
+    fn ops_save_file_writes_under_home_and_rejects_traversal() {
+        let (_d, home) = ctx_home();
+        let ctx = Ctx { home: &home, cwd: None };
+        let target = home.join(".codex").join("AGENTS.md");
+        CodexOps.save_file(&ctx, &target.display().to_string(), "# Agents\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "# Agents\n");
+        // Traversal outside home is rejected.
+        let bad = home.join("..").join("evil.md");
+        assert!(CodexOps.save_file(&ctx, &bad.display().to_string(), "x").is_err());
     }
 }

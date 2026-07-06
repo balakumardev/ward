@@ -7,6 +7,7 @@ use crate::harness::adapters::claude_budget as budget;
 use crate::harness::adapters::claude_mcp as mcp;
 use crate::harness::adapters::claude_ops::ClaudeOps;
 use crate::harness::adapters::codex::CodexAdapter;
+use crate::harness::adapters::codex_ops::CodexOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
 use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
 use crate::sessions::{cost as session_cost, distill as session_distill, parse as session_parse, trim as session_trim};
@@ -51,6 +52,7 @@ pub fn read_file_content(path: String) -> Result<String, WardError> {
 fn ops_for(harness_id: &str) -> Result<&'static dyn HarnessOps, WardError> {
     match harness_id {
         "claude" => Ok(&ClaudeOps),
+        "codex" => Ok(&CodexOps),
         other => Err(WardError::HarnessUnavailable(other.to_string())),
     }
 }
@@ -743,6 +745,14 @@ mod tests {
             scan_impl(&registry, dir.path(), "nope"),
             Err(WardError::HarnessUnavailable(_))
         ));
+    }
+
+    #[test]
+    fn ops_for_dispatches_claude_and_codex() {
+        // Plan 20: Codex now has a write path, so ops_for resolves it.
+        assert!(ops_for("claude").is_ok());
+        assert!(ops_for("codex").is_ok());
+        assert!(matches!(ops_for("nope"), Err(WardError::HarnessUnavailable(_))));
     }
 
     #[test]

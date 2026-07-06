@@ -555,7 +555,7 @@ fn move_mcp(_ctx: &Ctx, item: &HarnessItem, dest_scope_id: &str, scopes: &[Scope
 
 // ── Delete implementations ─────────────────────────────────────────────
 
-fn delete_single_file(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, WardError> {
+pub(crate) fn delete_single_file(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, WardError> {
     let p = PathBuf::from(&item.path);
     let bytes = std::fs::read(&p)?;
     std::fs::remove_file(&p)?;
@@ -571,7 +571,7 @@ fn delete_single_file(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, War
     })
 }
 
-fn delete_skill_dir(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, WardError> {
+pub(crate) fn delete_skill_dir(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, WardError> {
     let dir = skill_dir_from_item(item);
     let tree = capture_dir(&dir)?;
     std::fs::remove_dir_all(&dir)?;
@@ -632,7 +632,7 @@ fn delete_mcp_entry(_ctx: &Ctx, item: &HarnessItem) -> Result<RestoreInfo, WardE
 
 // ── Restore ────────────────────────────────────────────────────────────
 
-fn restore_file(ctx: &Ctx, info: &RestoreInfo) -> Result<(), WardError> {
+pub(crate) fn restore_file(ctx: &Ctx, info: &RestoreInfo) -> Result<(), WardError> {
     if let Some(bytes) = &info.backup_bytes {
         // Delete case: write bytes back to original_path.
         let abs = ensure_under_home(Path::new(&info.original_path), ctx.home)?;
