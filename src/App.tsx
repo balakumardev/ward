@@ -7,8 +7,9 @@ import { Security } from './modes/Security';
 import { BudgetWithPicker } from './modes/Budget';
 import { Sessions } from './modes/Sessions';
 import { Backups } from './modes/Backups';
+import { Marketplace } from './modes/Marketplace';
 import { api, isTauri, TauriUnavailableError } from './api';
-import type { HarnessItem, McpConfig, McpPolicy as McpPolicyType, RestoreInfo } from './api';
+import type { HarnessItem, InstallTarget, MarketEntry, McpConfig, McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
 export default function App() {
   const [mode, setMode] = createSignal('organizer');
@@ -102,6 +103,22 @@ export default function App() {
     backupLog: (n: number) => api.backupLog(n),
   };
 
+  // Plan 21 — Marketplace bridge. Search/build are pass-through; install fans
+  // out to the shared upsert engine then re-scans so any newly-installed MCP
+  // server shows up in the Organizer immediately.
+  const marketApi = {
+    search: (kind: string, query: string, cursor?: string) => api.marketplaceSearch(kind, query, cursor),
+    buildConfig: (entry: MarketEntry, packageIndex: number, envValues: Record<string, string>) =>
+      api.marketplaceBuildConfig(entry, packageIndex, envValues),
+    install: async (entry: MarketEntry, packageIndex: number, targets: InstallTarget[], envValues: Record<string, string>) => {
+      const r = await api.marketplaceInstall(entry, packageIndex, targets, envValues);
+      await refetch();
+      return r;
+    },
+    getPolicy: () => api.mcpGetPolicy(),
+    checkPolicy: (name: string, config: unknown, policy: McpPolicyType) => api.mcpCheckPolicy(name, config, policy),
+  };
+
   return (
     <Shell
       active={mode()}
@@ -151,7 +168,11 @@ export default function App() {
               <Show when={mode() === 'budget'} fallback={
                 <Show when={mode() === 'sessions'} fallback={
                   <Show when={mode() === 'backups'} fallback={
-                    <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                    <Show when={mode() === 'marketplace'} fallback={
+                      <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                    }>
+                      <Marketplace scan={result()} api={marketApi} />
+                    </Show>
                   }>
                     <Show when={result().capabilities.backup} fallback={
                       <div data-testid="backups-unsupported" style={{ padding: '16px', color: 'var(--text-dim)' }}>
