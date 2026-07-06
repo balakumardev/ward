@@ -54,7 +54,7 @@ export interface ScanResult {
 }
 export interface Destination { scopeId: string; label: string; kind: string; }
 export interface RestoreInfo {
-  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy';
+  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert';
   originalPath: string;
   currentPath?: string | null;
   backupBytes?: number[] | null;
@@ -62,6 +62,22 @@ export interface RestoreInfo {
   mcpKey?: string | null;
   mcpParentKey?: string | null;
   mcpScope?: string | null;
+}
+
+/** Plan 18 — a single MCP server config, as stored in the shared
+ *  config file (`~/.claude.json` mcpServers map / Codex TOML). Fields
+ *  cover both stdio (`command`/`args`/`env`) and HTTP/SSE
+ *  (`url`/`headers`/`type`) transports. The index signature preserves
+ *  any keys Ward doesn't model so an upsert round-trips losslessly. */
+export interface McpConfig {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  type?: string;
+  enabled?: boolean;
+  [key: string]: unknown; // preserve unknown keys round-trip
 }
 
 /** Plan 04 — MCP policy allowlist/denylist entries. */
@@ -360,6 +376,11 @@ export const api = {
     invokeOrThrow<RestoreInfo>('mcp_set_policy', { policy }),
   mcpCheckPolicy: (serverName: string, serverConfig: unknown, policy: McpPolicy) =>
     invokeOrThrow<PolicyVerdict>('mcp_check_policy', { serverName, serverConfig, policy }),
+
+  // Plan 18 — MCP marketplace: install/update a server entry in a scope's
+  // shared config file (upsert by name).
+  mcpUpsertEntry: (harness: string, scopeId: string, name: string, config: McpConfig, targetPath?: string) =>
+    invokeOrThrow<RestoreInfo>('mcp_upsert_entry', { harness, scopeId, name, config, targetPath }),
 
   // Plan 05 — Security scanner.
   securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>

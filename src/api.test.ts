@@ -290,6 +290,17 @@ test('nativeUpdateStatus passes critical + optional lastScanAt', async () => {
   });
 });
 
+// ── Plan 18: MCP marketplace (upsert) ──
+
+test('mcpUpsertEntry invokes mcp_upsert_entry with camelCase args', async () => {
+  invoke.mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  await api.mcpUpsertEntry('claude', 'global', 'srv', { command: 'npx', args: ['-y', 'p@1.0.0'] }, '/Users/x/.claude.json');
+  expect(invoke).toHaveBeenCalledWith('mcp_upsert_entry', {
+    harness: 'claude', scopeId: 'global', name: 'srv',
+    config: { command: 'npx', args: ['-y', 'p@1.0.0'] }, targetPath: '/Users/x/.claude.json',
+  });
+});
+
 // ── Tauri runtime detection ────────────────────────────────────────────
 
 test('invoke rejects with TauriUnavailableError when not running inside a Tauri webview', async () => {
