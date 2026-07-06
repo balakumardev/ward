@@ -117,6 +117,7 @@ export default function App() {
     },
     getPolicy: () => api.mcpGetPolicy(),
     checkPolicy: (name: string, config: unknown, policy: McpPolicyType) => api.mcpCheckPolicy(name, config, policy),
+    previewSkill: (entry: MarketEntry) => api.marketplacePreviewSkill(entry),
   };
 
   return (

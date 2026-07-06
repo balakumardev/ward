@@ -2,7 +2,20 @@ import { test, expect, vi } from 'vitest';
 import { render, fireEvent, waitFor } from '@solidjs/testing-library';
 import { Marketplace } from './Marketplace';
 import type { MarketplaceApi } from './Marketplace';
-import type { BuiltConfig, InstallTarget, MarketEntry, McpConfig, PolicyVerdict, ScanResult } from '../api';
+import type { BuiltConfig, InstallTarget, MarketEntry, McpConfig, PolicyVerdict, ScanResult, SkillPreview } from '../api';
+
+const SKILL: MarketEntry = {
+  kind: 'skill',
+  name: 'brainstorming',
+  displayName: 'brainstorming',
+  description: 'Explore intent and requirements before building.',
+  source: 'marketplace',
+  verified: true,
+  packages: [],
+  remotes: [],
+  repoUrl: 'https://raw.githubusercontent.com/acme/agent-skills/main',
+  skillPath: 'https://raw.githubusercontent.com/acme/agent-skills/main/skills/brainstorming/SKILL.md',
+};
 
 const NOTES: MarketEntry = {
   kind: 'mcp',
@@ -55,11 +68,16 @@ function buildConfigMock(entry: MarketEntry, idx: number, env: Record<string, st
 
 function makeApi(over: Partial<MarketplaceApi> = {}): MarketplaceApi {
   return {
-    search: vi.fn(async () => ({ entries: [NOTES] })),
+    search: vi.fn(async (kind: string) => ({ entries: kind === 'skill' ? [SKILL] : [NOTES] })),
     buildConfig: vi.fn(async (entry, idx, env) => buildConfigMock(entry, idx, env)),
     install: vi.fn(async (_e: MarketEntry, _i: number, targets: InstallTarget[]) => targets.map((t) => ({ target: t, ok: true }))),
     getPolicy: vi.fn(async () => ({ allowlist: [], denylist: [] })),
     checkPolicy: vi.fn(async () => 'noPolicy' as PolicyVerdict),
+    previewSkill: vi.fn(async (e: MarketEntry): Promise<SkillPreview> => ({
+      name: e.name,
+      description: e.description,
+      body: `---\nname: ${e.name}\ndescription: ${e.description}\n---\n\n# ${e.name}\n\nSynthetic skill body.\n`,
+    })),
     ...over,
   };
 }
@@ -122,11 +140,49 @@ test('toggling a target + Install calls install with the selected targets', asyn
   expect(call[2]).toEqual([{ harness: 'claude', scopeId: 'global' }]); // targets
 });
 
-test('Skills tab shows a coming-soon state, not a broken search', async () => {
+test('Skills tab lists skill cards from the catalog search', async () => {
+  const api = makeApi();
+  const { getByTestId, findByTestId, getByText } = render(() => <Marketplace scan={SCAN} api={api} />);
+  fireEvent.click(getByTestId('market-tab-skills'));
+  await findByTestId('market-card');
+  getByText('brainstorming', { selector: '.mkt-card-name' });
+  getByText('Explore intent and requirements before building.');
+  expect(api.search).toHaveBeenCalledWith('skill', '');
+});
+
+test('selecting a skill shows its SKILL.md preview (approval bound to content)', async () => {
   const api = makeApi();
   const { getByTestId, findByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
   fireEvent.click(getByTestId('market-tab-skills'));
-  await findByTestId('market-skills-empty');
+  fireEvent.click(await findByTestId('market-card'));
+  await findByTestId('market-detail');
+  // The real SKILL.md body is fetched + rendered before install.
+  await findByTestId('market-preview');
+  await waitFor(() => expect(getByTestId('market-preview').textContent).toContain('# brainstorming'));
+  expect(api.previewSkill).toHaveBeenCalled();
+  // No MCP-only affordances for a skill entry.
+  expect(() => getByTestId('market-pkg-pick')).toThrow();
+  expect(() => getByTestId('market-policy-verdict')).toThrow();
+});
+
+test('installing a skill calls install with the skill entry + selected targets', async () => {
+  const api = makeApi();
+  const { getByTestId, findByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
+  fireEvent.click(getByTestId('market-tab-skills'));
+  fireEvent.click(await findByTestId('market-card'));
+  await findByTestId('market-preview');
+
+  // Check the Claude × global cell.
+  fireEvent.click(getByTestId('market-cell-claude-global'));
+  const installBtn = getByTestId('market-install') as HTMLButtonElement;
+  await waitFor(() => expect(installBtn.disabled).toBe(false));
+  fireEvent.click(installBtn);
+
+  await waitFor(() => expect(api.install).toHaveBeenCalledTimes(1));
+  const call = (api.install as ReturnType<typeof vi.fn>).mock.calls[0];
+  expect(call[0].kind).toBe('skill');
+  expect(call[0].name).toBe('brainstorming'); // entry
+  expect(call[2]).toEqual([{ harness: 'claude', scopeId: 'global' }]); // targets
 });
 
 test('a policy denial disables Install and shows the block note', async () => {
