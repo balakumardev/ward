@@ -138,8 +138,20 @@ pub fn set_policy(home: &Path, policy: &McpPolicy) -> Result<RestoreInfo, WardEr
     };
     if !root.is_object() { root = json!({}); }
     let obj = root.as_object_mut().unwrap();
-    obj.insert("allowedMcpServers".to_string(), json!(policy.allowlist));
-    obj.insert("deniedMcpServers".to_string(), json!(policy.denylist));
+    // Empty allowlist/denylist mean "no policy". Claude Code reads
+    // `allowedMcpServers: []` as an allowlist that permits NOTHING — it blocks
+    // every MCP server (global and project). So an empty policy MUST be written
+    // as absence of the key, never as `[]`. Remove when empty; write when set.
+    if policy.allowlist.is_empty() {
+        obj.remove("allowedMcpServers");
+    } else {
+        obj.insert("allowedMcpServers".to_string(), json!(policy.allowlist));
+    }
+    if policy.denylist.is_empty() {
+        obj.remove("deniedMcpServers");
+    } else {
+        obj.insert("deniedMcpServers".to_string(), json!(policy.denylist));
+    }
 
     if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; }
     write_json_pretty(&p, &root)?;
@@ -695,8 +707,10 @@ mod tests {
         assert!(settings.exists());
         assert!(info.backup_bytes.is_none());
         let after: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-        assert_eq!(after["allowedMcpServers"], json!([]));
-        assert_eq!(after["deniedMcpServers"], json!([]));
+        // Empty policy → keys omitted entirely. Writing `[]` would make Claude
+        // Code treat it as an allowlist that blocks every MCP server.
+        assert!(after.get("allowedMcpServers").is_none());
+        assert!(after.get("deniedMcpServers").is_none());
     }
 
     #[test]
@@ -713,7 +727,9 @@ mod tests {
         };
         set_policy(&home, &policy).unwrap();
         let after: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
-        assert_eq!(after["allowedMcpServers"], json!([]));
+        // Empty allowlist clears the prior `old` entry by removing the key,
+        // rather than writing a block-everything `[]`.
+        assert!(after.get("allowedMcpServers").is_none());
         assert_eq!(after["deniedMcpServers"][0]["serverName"], "new");
     }
 
