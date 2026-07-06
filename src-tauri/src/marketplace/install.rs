@@ -8,6 +8,7 @@
 //! EXACT same dispatch the Organizer's Save uses (no second MCP writer).
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde_json::{Map, Value};
 
@@ -218,11 +219,88 @@ pub fn install(
     targets: &[InstallTarget],
     env_values: &HashMap<String, String>,
 ) -> Vec<InstallResult> {
+    // Skills fan out through `skill_upsert` (fetch the SKILL.md, write it into
+    // each target); MCP servers fan out through `upsert_mcp_entry`. Both reuse
+    // the SAME write engines the Organizer uses — no second writer.
+    if entry.kind == "skill" {
+        return install_skill(entry, targets);
+    }
     install_with(entry, package_index, targets, env_values, |harness| {
         let ops = crate::commands::ops_for(harness)?;
         let (ctx, scopes) = crate::commands::harness_ctx(harness)?;
         Ok((ops, ctx, scopes))
     })
+}
+
+/// Install a skill entry into every target. Fetches the `SKILL.md` **once**
+/// (the same bytes land in every target) then writes it via the shared
+/// create-only `skill_upsert`. Network reaches out here (unlike the MCP path,
+/// where the registry was already fetched) — it is still user-triggered.
+fn install_skill(entry: &MarketEntry, targets: &[InstallTarget]) -> Vec<InstallResult> {
+    install_skill_with(
+        entry,
+        targets,
+        crate::marketplace::skills::fetch_skill_md,
+        |harness| {
+            let (ctx, scopes) = crate::commands::harness_ctx(harness)?;
+            Ok((ctx.home, scopes))
+        },
+    )
+}
+
+/// The skill install loop, with the network fetch and per-harness resolution
+/// injected so the fan-out (fetch once → write each → never abort) is
+/// unit-testable against a temp home without touching the network or `~/.claude`.
+fn install_skill_with<Fetch, Resolve>(
+    entry: &MarketEntry,
+    targets: &[InstallTarget],
+    fetch: Fetch,
+    resolve: Resolve,
+) -> Vec<InstallResult>
+where
+    Fetch: Fn(&str) -> Result<String, WardError>,
+    Resolve: Fn(&str) -> Result<(&'static Path, Vec<Scope>), WardError>,
+{
+    // Fetch the SKILL.md exactly once — identical content for every target.
+    // Held as a `Result<String, String>` so each target can re-surface a shared
+    // fetch failure without needing `WardError: Clone`.
+    let content: Result<String, String> = match entry.skill_path.as_deref().filter(|s| !s.is_empty())
+    {
+        Some(url) => fetch(url).map_err(|e| e.to_string()),
+        None => Err(format!("skill '{}' has no source URL to fetch", entry.name)),
+    };
+
+    targets
+        .iter()
+        .map(|target| {
+            let outcome: Result<RestoreInfo, WardError> = (|| {
+                let body = content.as_ref().map_err(|e| WardError::Registry(e.clone()))?;
+                let (home, scopes) = resolve(&target.harness)?;
+                crate::harness::adapters::claude_ops::skill_upsert(
+                    home,
+                    &target.harness,
+                    &target.scope_id,
+                    &entry.name,
+                    body,
+                    &scopes,
+                )
+            })();
+            match outcome {
+                Ok(restore) => InstallResult {
+                    target: target.clone(),
+                    ok: true,
+                    error: None,
+                    restore: Some(restore),
+                },
+                Err(e) => InstallResult {
+                    target: target.clone(),
+                    ok: false,
+                    error: Some(e.to_string()),
+                    restore: None,
+                },
+            }
+        })
+        .collect()
 }
 
 /// The install loop, with the per-harness resolution injected so the fan-out
@@ -509,5 +587,126 @@ mod tests {
             scan.items.iter().any(|i| i.category == "mcp" && i.name == "notes"),
             "installed MCP server should appear in the scan"
         );
+    }
+
+    // ── Skill install fan-out (Plan 22) ──────────────────────────────────
+
+    fn skill_entry() -> MarketEntry {
+        MarketEntry {
+            kind: "skill".into(),
+            name: "brainstorming".into(),
+            display_name: "brainstorming".into(),
+            description: "Explore intent before building.".into(),
+            source: "marketplace".into(),
+            version: None,
+            verified: true,
+            packages: vec![],
+            remotes: vec![],
+            repo_url: Some("https://raw.githubusercontent.com/acme/agent-skills/main".into()),
+            skill_path: Some(
+                "https://raw.githubusercontent.com/acme/agent-skills/main/skills/brainstorming/SKILL.md".into(),
+            ),
+        }
+    }
+
+    /// The SKILL.md is fetched once (shared content), written into each target
+    /// via `skill_upsert`, and a single bad target neither aborts the batch nor
+    /// blocks the good one. Mirrors the MCP install test.
+    #[test]
+    fn install_skill_writes_skill_md_and_collects_partial_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let scopes = vec![Scope {
+            id: "global".into(),
+            kind: "global".into(),
+            label: "Global".into(),
+            root: home.join(".claude").display().to_string(),
+        }];
+        let home_static: &'static Path = Box::leak(home.to_path_buf().into_boxed_path());
+        let scopes_for_closure = scopes.clone();
+
+        let entry = skill_entry();
+        let body = "---\nname: brainstorming\ndescription: d\n---\n\n# Brainstorming\n";
+        let targets = vec![
+            InstallTarget { harness: "claude".into(), scope_id: "global".into() },
+            InstallTarget { harness: "nope".into(), scope_id: "global".into() },
+        ];
+        let results = install_skill_with(
+            &entry,
+            &targets,
+            |_url| Ok(body.to_string()),
+            move |h| match h {
+                "claude" => Ok((home_static, scopes_for_closure.clone())),
+                other => Err(WardError::HarnessUnavailable(other.into())),
+            },
+        );
+
+        assert_eq!(results.len(), 2, "every target attempted; no early abort");
+        assert!(results[0].ok, "claude skill install should succeed: {:?}", results[0].error);
+        assert_eq!(results[0].restore.as_ref().unwrap().kind, "skill-create");
+        assert!(!results[1].ok, "bad harness must fail");
+
+        // The SKILL.md landed on disk with the EXACT fetched bytes.
+        let written =
+            std::fs::read_to_string(home.join(".claude/skills/brainstorming/SKILL.md")).unwrap();
+        assert_eq!(written, body);
+
+        // Scan-visibility: the new skill shows up on a fresh scan.
+        let ctx = Ctx { home, cwd: None };
+        let scan = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        assert!(
+            scan.items.iter().any(|i| i.category == "skill" && i.name == "brainstorming"),
+            "installed skill should appear in the scan"
+        );
+    }
+
+    /// A shared-fetch failure fails every target identically and writes nothing.
+    #[test]
+    fn install_skill_fetch_failure_fails_all_targets_without_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let scopes = vec![Scope {
+            id: "global".into(),
+            kind: "global".into(),
+            label: "Global".into(),
+            root: home.join(".claude").display().to_string(),
+        }];
+        let home_static: &'static Path = Box::leak(home.to_path_buf().into_boxed_path());
+        let scopes_for_closure = scopes.clone();
+
+        let entry = skill_entry();
+        let targets = vec![
+            InstallTarget { harness: "claude".into(), scope_id: "global".into() },
+            InstallTarget { harness: "claude".into(), scope_id: "global".into() },
+        ];
+        let results = install_skill_with(
+            &entry,
+            &targets,
+            |_url| Err(WardError::Registry("boom".into())),
+            move |_h| Ok((home_static, scopes_for_closure.clone())),
+        );
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| !r.ok));
+        assert!(results[0].error.as_ref().unwrap().contains("boom"));
+        assert!(!home.join(".claude/skills").exists(), "nothing written when the fetch fails");
+    }
+
+    /// A skill entry with no `skill_path` fails cleanly (still one result/target).
+    #[test]
+    fn install_skill_without_source_url_errors_per_target() {
+        let mut entry = skill_entry();
+        entry.skill_path = None;
+        let targets = vec![InstallTarget { harness: "claude".into(), scope_id: "global".into() }];
+        let results = install_skill_with(
+            &entry,
+            &targets,
+            |_url| Ok("unused".to_string()),
+            |_h| panic!("resolve must not be reached without content"),
+        );
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok);
+        assert!(results[0].error.as_ref().unwrap().contains("no source URL"));
     }
 }

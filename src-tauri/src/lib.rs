@@ -330,6 +330,7 @@ pub fn run() {
             commands::marketplace_search,
             commands::marketplace_build_config,
             commands::marketplace_install,
+            commands::marketplace_preview_skill,
             commands::security_scan,
             commands::security_baseline_check,
             commands::security_baseline_accept,

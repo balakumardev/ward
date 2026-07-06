@@ -277,9 +277,34 @@ fn filter_market_page(
     crate::marketplace::MarketPage { entries, next_cursor: page.next_cursor }
 }
 
-/// Search the marketplace for a `kind` of unit. Today only `"mcp"` (the
-/// official MCP Registry); `"skill"` returns an empty page (the Skills tab is
-/// a Plan 22 seam — a clean empty state, not an error).
+/// Aggregate a set of curated skill marketplaces into one filtered page. The
+/// fetcher is injected so the flatten + "one bad marketplace never kills the
+/// search" behavior is unit-testable without the network. A marketplace whose
+/// fetch errors is skipped; the survivors are substring-filtered by `query`.
+fn search_skills_with<F>(
+    marketplaces: &[(&str, &str)],
+    fetch: F,
+    query: &str,
+) -> crate::marketplace::MarketPage
+where
+    F: Fn(&str) -> Result<Vec<crate::marketplace::MarketEntry>, WardError>,
+{
+    let mut entries = Vec::new();
+    for (_name, url) in marketplaces {
+        if let Ok(mut es) = fetch(url) {
+            entries.append(&mut es);
+        }
+        // A single failing marketplace is skipped, never fatal.
+    }
+    filter_market_page(
+        crate::marketplace::MarketPage { entries, next_cursor: None },
+        query,
+    )
+}
+
+/// Search the marketplace for a `kind` of unit — `"mcp"` (the official MCP
+/// Registry, paged) or `"skill"` (the curated Claude skill marketplaces,
+/// aggregated + substring-filtered). Any other kind yields an empty page.
 ///
 /// Network (fetch) is **user-triggered only** and runs on a worker thread via
 /// `spawn_blocking` — a sync command would do the HTTP round-trip on the main
@@ -291,17 +316,32 @@ pub async fn marketplace_search(
     query: String,
     cursor: Option<String>,
 ) -> Result<crate::marketplace::MarketPage, WardError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if kind != "mcp" {
-            // Skills (Plan 22) aren't searchable yet — hand back an empty page
-            // so the UI's Skills tab renders its "coming soon" state.
-            return Ok(crate::marketplace::MarketPage { entries: vec![], next_cursor: None });
+    tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
+        "mcp" => {
+            let page = crate::marketplace::registry::fetch_servers(cursor.as_deref())?;
+            Ok(filter_market_page(page, &query))
         }
-        let page = crate::marketplace::registry::fetch_servers(cursor.as_deref())?;
-        Ok(filter_market_page(page, &query))
+        "skill" => Ok(search_skills_with(
+            crate::marketplace::skills::CURATED_MARKETPLACES,
+            crate::marketplace::skills::fetch_marketplace,
+            &query,
+        )),
+        _ => Ok(crate::marketplace::MarketPage { entries: vec![], next_cursor: None }),
     })
     .await
     .map_err(|e| WardError::Registry(format!("marketplace search task failed: {e}")))?
+}
+
+/// Fetch a skill's `SKILL.md` and parse its frontmatter for the pre-install
+/// preview (spec §9.5 — bind approval to the actual content, not the name).
+/// Network I/O → `spawn_blocking`, user-triggered on card select.
+#[tauri::command]
+pub async fn marketplace_preview_skill(
+    entry: crate::marketplace::MarketEntry,
+) -> Result<crate::marketplace::skills::SkillPreview, WardError> {
+    tauri::async_runtime::spawn_blocking(move || crate::marketplace::skills::preview_skill(&entry))
+        .await
+        .map_err(|e| WardError::Registry(format!("marketplace preview task failed: {e}")))?
 }
 
 /// Build the exact server object (version-pinned, secret-safe) that would be
@@ -836,6 +876,60 @@ mod tests {
             scan_impl(&registry, dir.path(), "nope"),
             Err(WardError::HarnessUnavailable(_))
         ));
+    }
+
+    #[test]
+    fn skill_search_flattens_curated_and_survives_one_bad_marketplace() {
+        use crate::marketplace::MarketEntry;
+        fn mk(name: &str, desc: &str) -> MarketEntry {
+            MarketEntry {
+                kind: "skill".into(),
+                name: name.into(),
+                display_name: name.into(),
+                description: desc.into(),
+                source: "marketplace".into(),
+                version: None,
+                verified: true,
+                packages: vec![],
+                remotes: vec![],
+                repo_url: None,
+                skill_path: Some(format!("https://x/{name}/SKILL.md")),
+            }
+        }
+        let marketplaces = [
+            ("Good", "https://good.example/marketplace.json"),
+            ("Bad", "https://bad.example/marketplace.json"),
+        ];
+        let page = search_skills_with(
+            &marketplaces,
+            |url| {
+                if url.contains("bad.example") {
+                    Err(WardError::Registry("network down".into()))
+                } else {
+                    Ok(vec![mk("brainstorming", "ideate first"), mk("writing-plans", "make a plan")])
+                }
+            },
+            "plan",
+        );
+        // The bad marketplace is skipped (not fatal); the good one's entries
+        // are substring-filtered by "plan".
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].name, "writing-plans");
+        assert!(page.next_cursor.is_none());
+
+        // Empty query keeps every survivor.
+        let all = search_skills_with(
+            &marketplaces,
+            |url| {
+                if url.contains("bad.example") {
+                    Err(WardError::Registry("network down".into()))
+                } else {
+                    Ok(vec![mk("brainstorming", "ideate first"), mk("writing-plans", "make a plan")])
+                }
+            },
+            "",
+        );
+        assert_eq!(all.entries.len(), 2);
     }
 
     #[test]
