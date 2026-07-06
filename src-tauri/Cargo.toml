@@ -47,7 +47,11 @@ notify-debouncer-mini = "0.4"
 tauri-plugin-autostart = "2"
 # Plan 16 — live Claude rate-limit fetch (single gated, user-triggered call).
 # Lightweight blocking HTTP client (rustls, no async runtime).
-ureq = "2"
+# `native-certs`: trust the OS keychain, not only the bundled Mozilla roots
+# (webpki-roots). Required behind TLS-intercepting corporate proxies (e.g.
+# Zscaler), whose root CA is installed in the system keychain but is absent from
+# webpki-roots — without this every HTTPS call fails with `UnknownIssuer`.
+ureq = { version = "2", features = ["native-certs"] }
 
 [dev-dependencies]
 tempfile = "3"
