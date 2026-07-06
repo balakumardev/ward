@@ -13,11 +13,13 @@ import type {
   ScanResult, HarnessItem, Destination, RestoreInfo, McpPolicy, PolicyVerdict,
   ScanResultSec, BaselineDiff, BudgetBreakdown, Conversation, CostBreakdown,
   DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult, GitLogEntry,
+  McpConfig, EnvVar, MarketEntry, MarketPage, BuiltConfig, InstallResult, InstallTarget,
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
   usageSnapshotFor,
   liveSnapshotFor,
+  MARKET_ENTRIES,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -31,6 +33,62 @@ function clone<T>(v: T): T {
 
 function itemKey(i: HarnessItem): string {
   return `${i.category}::${i.name}::${i.scopeId}::${i.path}`;
+}
+
+// ── Marketplace helpers (mirror src-tauri/src/marketplace/install.rs) ──
+const UNPINNED = 'refusing to install an unpinned version';
+
+function deriveLocalName(registryName: string): string {
+  const seg = registryName.split('/').pop()?.trim() ?? '';
+  return seg || registryName.trim();
+}
+
+/** Non-secret vars with a provided value only; secrets are NEVER written. */
+function buildSecretSafe(vars: EnvVar[], envValues: Record<string, string>): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (const v of vars) {
+    if (v.isSecret) continue;
+    const val = envValues[v.name];
+    if (val) obj[v.name] = val;
+  }
+  return obj;
+}
+
+function mapRemoteType(t: string): string {
+  return t.toLowerCase() === 'sse' ? 'sse' : 'http';
+}
+
+/** Faithful mirror of the Rust `build_mcp_config` so the dev:mock preview,
+ *  policy verdict, and install all behave like the native app (version-pin
+ *  enforced, secrets omitted, npm→npx / pypi→uvx / remote→url+type). */
+function buildMcpConfig(entry: MarketEntry, packageIndex: number, envValues: Record<string, string>): BuiltConfig {
+  if (entry.packages.length > 0) {
+    const pkg = entry.packages[packageIndex];
+    if (!pkg) throw new Error(`package index ${packageIndex} out of range for '${entry.name}'`);
+    const version = (pkg.version ?? '').trim();
+    if (!version || version.toLowerCase() === 'latest') throw new Error(UNPINNED);
+    let command: string;
+    let args: string[];
+    if (pkg.registryType === 'npm') { command = 'npx'; args = ['-y', `${pkg.identifier}@${version}`]; }
+    else if (pkg.registryType === 'pypi') { command = 'uvx'; args = [`${pkg.identifier}==${version}`]; }
+    else if (pkg.registryType === 'oci') {
+      throw new Error(`'${entry.name}' ships an OCI/container image; install it with your container runtime — Ward will not run docker for you`);
+    } else throw new Error(`unsupported package registry type '${pkg.registryType}' for '${entry.name}'`);
+    const env = buildSecretSafe(pkg.env, envValues);
+    const config: McpConfig = { command, args };
+    if (Object.keys(env).length) config.env = env;
+    return { name: deriveLocalName(entry.name), config, commandPreview: [command, ...args], env: pkg.env };
+  }
+  if (entry.remotes.length > 0) {
+    const remote = entry.remotes[packageIndex];
+    if (!remote) throw new Error(`remote index ${packageIndex} out of range for '${entry.name}'`);
+    if (!remote.url.trim()) throw new Error(`remote for '${entry.name}' has no url`);
+    const headers = buildSecretSafe(remote.headers, envValues);
+    const config: McpConfig = { url: remote.url, type: mapRemoteType(remote.transport) };
+    if (Object.keys(headers).length) config.headers = headers;
+    return { name: deriveLocalName(entry.name), config, commandPreview: [remote.url], env: remote.headers };
+  }
+  throw new Error(`entry '${entry.name}' has no packages or remotes to install`);
 }
 
 export class MockStore {
@@ -199,6 +257,42 @@ export class MockStore {
       if (j >= 0) s.items.splice(j, 1);
     });
     return { kind: 'skill-create', originalPath: newItem.path, __undoId: undoId };
+  }
+
+  // ── Marketplace (Plan 21) ──
+  /** Search the synthetic registry list, filtered by substring over name /
+   *  display name / description. `kind !== "mcp"` (skills) → empty page. */
+  marketplaceSearch(kind: string, query: string, _cursor?: string): MarketPage {
+    if (kind !== 'mcp') return { entries: [] };
+    const q = query.trim().toLowerCase();
+    const entries = (q
+      ? MARKET_ENTRIES.filter((e) =>
+          e.name.toLowerCase().includes(q) ||
+          e.displayName.toLowerCase().includes(q) ||
+          e.description.toLowerCase().includes(q))
+      : MARKET_ENTRIES
+    ).map(clone);
+    return { entries };
+  }
+
+  /** Pre-install preview — mirrors the Rust `build_mcp_config`. */
+  marketplaceBuildConfig(entry: MarketEntry, packageIndex: number, envValues: Record<string, string>): BuiltConfig {
+    return buildMcpConfig(entry, packageIndex, envValues);
+  }
+
+  /** Fan an install out to every target. Builds per target so an unpinned /
+   *  OCI entry fails that target without aborting the batch; a success upserts
+   *  a new MCP item into the target's scan so the Organizer reflects it. */
+  marketplaceInstall(entry: MarketEntry, packageIndex: number, targets: InstallTarget[], envValues: Record<string, string>): InstallResult[] {
+    return targets.map((target) => {
+      try {
+        const built = buildMcpConfig(entry, packageIndex, envValues);
+        const restore = this.upsertMcpEntry(target.harness, target.scopeId, built.name, built.config);
+        return { target, ok: true, restore };
+      } catch (e) {
+        return { target, ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    });
   }
 
   getPolicy(): McpPolicy {

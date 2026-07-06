@@ -310,6 +310,38 @@ test('skillUpsert invokes skill_upsert with camelCase args', async () => {
     { harness: 'claude', scopeId: 'global', name: 'my-skill', content: '---\nname: my-skill\n---\n' });
 });
 
+// ── Plan 21: Marketplace (MCP servers) ──
+
+const sampleEntry = {
+  kind: 'mcp', name: 'io.github.acme/notes', displayName: 'Acme Notes',
+  description: 'notes', source: 'registry', version: '2.1.0', verified: true,
+  packages: [{ registryType: 'npm', identifier: '@acme/notes-mcp', version: '2.1.0', transport: 'stdio', env: [] }],
+  remotes: [],
+};
+
+test('marketplaceSearch invokes marketplace_search with camelCase args', async () => {
+  invoke.mockResolvedValue({ entries: [] });
+  await api.marketplaceSearch('mcp', 'notes', 'cur1');
+  expect(invoke).toHaveBeenCalledWith('marketplace_search', { kind: 'mcp', query: 'notes', cursor: 'cur1' });
+});
+
+test('marketplaceBuildConfig invokes marketplace_build_config with packageIndex + envValues', async () => {
+  invoke.mockResolvedValue({ name: 'notes', config: { command: 'npx' }, commandPreview: ['npx'], env: [] });
+  await api.marketplaceBuildConfig(sampleEntry, 0, { NOTES_REGION: 'us' });
+  expect(invoke).toHaveBeenCalledWith('marketplace_build_config', {
+    entry: sampleEntry, packageIndex: 0, envValues: { NOTES_REGION: 'us' },
+  });
+});
+
+test('marketplaceInstall invokes marketplace_install with targets', async () => {
+  invoke.mockResolvedValue([{ target: { harness: 'claude', scopeId: 'global' }, ok: true }]);
+  const targets = [{ harness: 'claude', scopeId: 'global' }, { harness: 'codex', scopeId: 'global' }];
+  await api.marketplaceInstall(sampleEntry, 0, targets, {});
+  expect(invoke).toHaveBeenCalledWith('marketplace_install', {
+    entry: sampleEntry, packageIndex: 0, targets, envValues: {},
+  });
+});
+
 // ── Tauri runtime detection ────────────────────────────────────────────
 
 test('invoke rejects with TauriUnavailableError when not running inside a Tauri webview', async () => {

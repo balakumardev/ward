@@ -252,6 +252,90 @@ pub fn skill_upsert(harness: String, scope_id: String, name: String, content: St
     crate::harness::adapters::claude_ops::skill_upsert(ctx.home, &harness, &scope_id, &name, &content, &scopes)
 }
 
+// ── Marketplace (Plan 21) ──────────────────────────────────────────────
+
+/// Filter a registry page by a case-insensitive substring over each entry's
+/// name, display name, and description. Empty query keeps everything. Pure so
+/// the search behavior is unit-testable without the network.
+fn filter_market_page(
+    page: crate::marketplace::MarketPage,
+    query: &str,
+) -> crate::marketplace::MarketPage {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return page;
+    }
+    let entries = page
+        .entries
+        .into_iter()
+        .filter(|e| {
+            e.name.to_lowercase().contains(&q)
+                || e.display_name.to_lowercase().contains(&q)
+                || e.description.to_lowercase().contains(&q)
+        })
+        .collect();
+    crate::marketplace::MarketPage { entries, next_cursor: page.next_cursor }
+}
+
+/// Search the marketplace for a `kind` of unit. Today only `"mcp"` (the
+/// official MCP Registry); `"skill"` returns an empty page (the Skills tab is
+/// a Plan 22 seam — a clean empty state, not an error).
+///
+/// Network (fetch) is **user-triggered only** and runs on a worker thread via
+/// `spawn_blocking` — a sync command would do the HTTP round-trip on the main
+/// thread and freeze the UI (see the async-command gotcha in CLAUDE.md; the
+/// plan's `pub fn` sketch is corrected to `async` here for that reason).
+#[tauri::command]
+pub async fn marketplace_search(
+    kind: String,
+    query: String,
+    cursor: Option<String>,
+) -> Result<crate::marketplace::MarketPage, WardError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if kind != "mcp" {
+            // Skills (Plan 22) aren't searchable yet — hand back an empty page
+            // so the UI's Skills tab renders its "coming soon" state.
+            return Ok(crate::marketplace::MarketPage { entries: vec![], next_cursor: None });
+        }
+        let page = crate::marketplace::registry::fetch_servers(cursor.as_deref())?;
+        Ok(filter_market_page(page, &query))
+    })
+    .await
+    .map_err(|e| WardError::Registry(format!("marketplace search task failed: {e}")))?
+}
+
+/// Build the exact server object (version-pinned, secret-safe) that would be
+/// installed for `entry`'s `package_index` package — powers the pre-install
+/// preview + policy gate. Pure (no I/O), so it stays a sync command.
+#[tauri::command]
+pub fn marketplace_build_config(
+    entry: crate::marketplace::MarketEntry,
+    package_index: usize,
+    env_values: std::collections::HashMap<String, String>,
+) -> Result<crate::marketplace::BuiltConfig, WardError> {
+    crate::marketplace::install::build_mcp_config(&entry, package_index, &env_values)
+}
+
+/// Install `entry`'s `package_index` package into every target, fanning out to
+/// the shared `upsert_mcp_entry` engine. Returns one `InstallResult` per
+/// target (partial failures visible + individually undoable).
+///
+/// Writes config files + re-discovers scopes (blocking I/O), so it runs on a
+/// worker thread via `spawn_blocking` to keep the UI responsive.
+#[tauri::command]
+pub async fn marketplace_install(
+    entry: crate::marketplace::MarketEntry,
+    package_index: usize,
+    targets: Vec<crate::marketplace::InstallTarget>,
+    env_values: std::collections::HashMap<String, String>,
+) -> Result<Vec<crate::marketplace::InstallResult>, WardError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(crate::marketplace::install::install(&entry, package_index, &targets, &env_values))
+    })
+    .await
+    .map_err(|e| WardError::Registry(format!("marketplace install task failed: {e}")))?
+}
+
 // ── Security Scanner (Plan 05) ─────────────────────────────────────────
 
 /// Run the security scan over the discovered MCP items.
@@ -919,6 +1003,36 @@ mod tests {
         let servers = vec!["github".to_string(), "github".to_string()];
         let b = budget::compose("global", &items, &servers, home);
         assert_eq!(b.mcp_schemas, budget::MCP_TOOL_SCHEMA);
+    }
+
+    #[test]
+    fn filter_market_page_matches_name_and_description_case_insensitively() {
+        use crate::marketplace::{MarketEntry, MarketPage};
+        let mk = |name: &str, display: &str, desc: &str| MarketEntry {
+            kind: "mcp".into(), name: name.into(), display_name: display.into(),
+            description: desc.into(), source: "registry".into(), version: None,
+            verified: true, packages: vec![], remotes: vec![], repo_url: None, skill_path: None,
+        };
+        let page = MarketPage {
+            entries: vec![
+                mk("io.github.acme/notes", "Acme Notes", "take notes"),
+                mk("io.github.beta/search", "Beta Search", "web SEARCH tool"),
+                mk("io.github.gamma/db", "Gamma DB", "postgres access"),
+            ],
+            next_cursor: Some("cur".into()),
+        };
+        // Empty query keeps everything (and the cursor).
+        let all = filter_market_page(page.clone(), "  ");
+        assert_eq!(all.entries.len(), 3);
+        assert_eq!(all.next_cursor.as_deref(), Some("cur"));
+        // Substring over description, case-insensitive.
+        let hits = filter_market_page(page.clone(), "search");
+        assert_eq!(hits.entries.len(), 1);
+        assert_eq!(hits.entries[0].name, "io.github.beta/search");
+        // Substring over the registry name.
+        assert_eq!(filter_market_page(page.clone(), "acme").entries.len(), 1);
+        // No match → empty.
+        assert!(filter_market_page(page, "zzz-nope").entries.is_empty());
     }
 
     #[test]

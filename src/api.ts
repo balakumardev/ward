@@ -356,6 +356,82 @@ export interface UsageSnapshot {
   generatedAt: string;
 }
 
+// ── Plan 21 — Marketplace (MCP servers) ─────────────────────────────────
+
+/** One env var (or remote header) a server declares. Ward renders the NAME
+ *  only — a secret value is never collected or written. */
+export interface EnvVar {
+  name: string;
+  isRequired: boolean;
+  isSecret: boolean;
+}
+
+/** One installable package for an MCP server. `transport` is the flattened
+ *  `stdio` | `http` | `sse`; `env` lists the declared vars. */
+export interface Package {
+  registryType: string; // "npm" | "pypi" | "oci"
+  identifier: string;
+  version: string;
+  transport: string;
+  env: EnvVar[];
+  runtimeHint?: string;
+}
+
+/** A hosted remote transport for an MCP server. */
+export interface Remote {
+  transport: string;
+  url: string;
+  headers: EnvVar[];
+}
+
+/** Unified marketplace card model (mirrors the Rust `MarketEntry`).
+ *  `kind: "skill"` + `repoUrl`/`skillPath` are the Plan 22 seam. */
+export interface MarketEntry {
+  kind: string; // "mcp" | "skill"
+  name: string;
+  displayName: string;
+  description: string;
+  source: string; // "registry" | "github" | "marketplace"
+  version?: string;
+  verified: boolean;
+  packages: Package[];
+  remotes: Remote[];
+  repoUrl?: string;
+  skillPath?: string;
+}
+
+/** One install destination — a harness × scope pair. Kept as data so a
+ *  future `harness: "claude-desktop"` slots in without a rewrite. */
+export interface InstallTarget {
+  harness: string;
+  scopeId: string;
+}
+
+/** The exact server object that will land on disk, plus the flattened
+ *  command/url preview and the declared env metadata. */
+export interface BuiltConfig {
+  name: string;
+  config: McpConfig;
+  commandPreview: string[];
+  env: EnvVar[];
+}
+
+/** Per-target install outcome. The batch never aborts on one failure, so
+ *  each target reports independently (and carries its own undoable
+ *  `restore` on success). */
+export interface InstallResult {
+  target: InstallTarget;
+  ok: boolean;
+  error?: string;
+  restore?: RestoreInfo;
+}
+
+/** One page of marketplace results + the cursor for the next page. */
+export interface MarketPage {
+  entries: MarketEntry[];
+  nextCursor?: string;
+}
+
 export const api = {
   scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
@@ -394,6 +470,16 @@ export const api = {
   // (create-only). Returns a `skill-create` RestoreInfo for Undo.
   skillUpsert: (harness: string, scopeId: string, name: string, content: string) =>
     invokeOrThrow<RestoreInfo>('skill_upsert', { harness, scopeId, name, content }),
+
+  // Plan 21 — Marketplace (MCP servers). Search is a user-triggered network
+  // call; build_config is a pure pre-install preview; install fans out to the
+  // shared upsert engine (one Install = N targets).
+  marketplaceSearch: (kind: string, query: string, cursor?: string) =>
+    invokeOrThrow<MarketPage>('marketplace_search', { kind, query, cursor }),
+  marketplaceBuildConfig: (entry: MarketEntry, packageIndex: number, envValues: Record<string, string>) =>
+    invokeOrThrow<BuiltConfig>('marketplace_build_config', { entry, packageIndex, envValues }),
+  marketplaceInstall: (entry: MarketEntry, packageIndex: number, targets: InstallTarget[], envValues: Record<string, string>) =>
+    invokeOrThrow<InstallResult[]>('marketplace_install', { entry, packageIndex, targets, envValues }),
 
   // Plan 05 — Security scanner.
   securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>

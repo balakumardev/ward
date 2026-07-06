@@ -40,6 +40,11 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'mcp_set_policy': await delay(40); return store.setPolicy(args.policy);
     case 'mcp_check_policy': return store.checkPolicy(args.serverName, args.serverConfig ?? {}, args.policy);
 
+    // ── Marketplace (Plan 21) ──
+    case 'marketplace_search': await delay(260); return store.marketplaceSearch(args.kind ?? 'mcp', args.query ?? '', args.cursor);
+    case 'marketplace_build_config': return store.marketplaceBuildConfig(args.entry, args.packageIndex ?? 0, args.envValues ?? {});
+    case 'marketplace_install': await delay(120); return store.marketplaceInstall(args.entry, args.packageIndex ?? 0, args.targets ?? [], args.envValues ?? {});
+
     // ── Security ──
     case 'security_scan': await delay(420); return store.securityScan();
     case 'security_baseline_check': await delay(60); return store.baselineCheck();

@@ -12,7 +12,7 @@
 import type {
   ScanResult, ScanResultSec, Finding, ServerSummary, DupFinding, BaselineDiff,
   BudgetBreakdown, Conversation, CostBreakdown, DistillResult, BackupStatus,
-  UsageSnapshot,
+  UsageSnapshot, MarketEntry,
 } from '../api';
 
 // ── Codex harness scan ────────────────────────────────────────────────────
@@ -331,3 +331,70 @@ export function liveSnapshotFor(_harness: string): UsageSnapshot {
     source: 'live', available: true, generatedAt: '2026-07-05T16:16:00Z',
   };
 }
+
+// ── Plan 21 — Marketplace (MCP servers) ────────────────────────────────────
+// A small SYNTHETIC registry list (no real tokens) covering the three shapes
+// the Marketplace detail sheet must render: a stdio npm server with a secret +
+// a non-secret env var, a stdio pypi server, and a hosted remote/http server
+// with a secret header. `marketplaceSearch` filters this list by substring.
+export const MARKET_ENTRIES: MarketEntry[] = [
+  {
+    kind: 'mcp',
+    name: 'io.github.acme/notes',
+    displayName: 'Acme Notes',
+    description: 'Read and write notes from your editor — synthetic stdio npm server.',
+    source: 'registry',
+    version: '2.1.0',
+    verified: true,
+    packages: [
+      {
+        registryType: 'npm',
+        identifier: '@acme/notes-mcp',
+        version: '2.1.0',
+        transport: 'stdio',
+        env: [
+          { name: 'NOTES_API_KEY', isRequired: true, isSecret: true },
+          { name: 'NOTES_REGION', isRequired: false, isSecret: false },
+        ],
+      },
+    ],
+    remotes: [],
+  },
+  {
+    kind: 'mcp',
+    name: 'io.github.acme/pytools',
+    displayName: 'Acme PyTools',
+    description: 'Python developer tools over MCP — synthetic stdio pypi server.',
+    source: 'registry',
+    version: '0.4.2',
+    verified: true,
+    packages: [
+      {
+        registryType: 'pypi',
+        identifier: 'acme-pytools',
+        version: '0.4.2',
+        transport: 'stdio',
+        env: [],
+        runtimeHint: 'uvx',
+      },
+    ],
+    remotes: [],
+  },
+  {
+    kind: 'mcp',
+    name: 'com.acme/hosted',
+    displayName: 'Acme Hosted',
+    description: 'Hosted streamable-HTTP endpoint — synthetic remote server.',
+    source: 'registry',
+    version: '3.0.0',
+    verified: true,
+    packages: [],
+    remotes: [
+      {
+        transport: 'streamable-http',
+        url: 'https://mcp.acme.example/v1',
+        headers: [{ name: 'X-Acme-Token', isRequired: true, isSecret: true }],
+      },
+    ],
+  },
+];

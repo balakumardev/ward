@@ -66,3 +66,50 @@ describe('MockStore skill upsert', () => {
     expect(s.scan('claude').items.filter((i) => i.category === 'skill').length).toBe(n0);
   });
 });
+
+describe('MockStore marketplace', () => {
+  it('marketplaceSearch filters by substring and returns empty for skills', () => {
+    const s = new MockStore();
+    expect(s.marketplaceSearch('mcp', '').entries.length).toBeGreaterThanOrEqual(3);
+    const hits = s.marketplaceSearch('mcp', 'pytools').entries;
+    expect(hits.length).toBe(1);
+    expect(hits[0].name).toContain('pytools');
+    // Skills tab is a Plan 22 seam → empty page, not an error.
+    expect(s.marketplaceSearch('skill', '').entries.length).toBe(0);
+  });
+
+  it('marketplaceBuildConfig pins the version and omits secret env values', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('mcp', 'notes').entries[0];
+    const built = s.marketplaceBuildConfig(entry, 0, { NOTES_REGION: 'us-east-1', NOTES_API_KEY: 'leak' });
+    expect(built.config.command).toBe('npx');
+    expect(built.config.args).toEqual(['-y', '@acme/notes-mcp@2.1.0']);
+    expect(built.config.env).toEqual({ NOTES_REGION: 'us-east-1' });
+    expect(JSON.stringify(built.config)).not.toContain('leak'); // secret never written
+  });
+
+  it('marketplaceInstall to Claude global adds an MCP item and reports ok', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('mcp', 'notes').entries[0];
+    const before = s.scan('claude').items.filter((i) => i.category === 'mcp').length;
+    const results = s.marketplaceInstall(entry, 0, [{ harness: 'claude', scopeId: 'global' }], {});
+    expect(results.length).toBe(1);
+    expect(results[0].ok).toBe(true);
+    const items = s.scan('claude').items.filter((i) => i.category === 'mcp');
+    expect(items.length).toBe(before + 1);
+    expect(items.some((i) => i.name === 'notes')).toBe(true);
+  });
+
+  it('marketplaceInstall does not abort the batch on a build failure', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('mcp', 'notes').entries[0];
+    entry.packages[0].version = 'latest'; // force an unpinned build failure
+    const results = s.marketplaceInstall(entry, 0, [
+      { harness: 'claude', scopeId: 'global' },
+      { harness: 'codex', scopeId: 'global' },
+    ], {});
+    expect(results.length).toBe(2); // every target attempted
+    expect(results.every((r) => !r.ok)).toBe(true);
+    expect(results[0].error).toContain('unpinned');
+  });
+});
