@@ -239,7 +239,8 @@ impl HarnessOps for ClaudeOps {
         match info.kind.as_str() {
             "file" => restore_file(ctx, info),
             "mcp-entry" => restore_mcp_entry(ctx, info),
-            "mcp-disabled" | "mcp-policy" => crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
+            "mcp-disabled" | "mcp-policy" | "mcp-upsert" =>
+                crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
             other => Err(WardError::NotFound(format!("Unknown restore kind: {other}"))),
         }
     }
@@ -753,6 +754,30 @@ fn insert_mcp_entry(root: &mut serde_json::Value, parent: &McpParentKey,
             .as_object_mut().unwrap();
         proj.insert(key.into(), entry);
     }
+}
+
+/// Surgically insert-or-overwrite one `mcpServers[<name>]` key in `target`,
+/// preserving every other key. Whole prior file bytes are captured in the
+/// returned `RestoreInfo` (kind `"mcp-upsert"`) so undo is byte-exact for an
+/// edit and a clean removal for a create (mirrors `claude_mcp::set_policy`).
+pub fn write_mcp_upsert(target: &Path, parent: &McpParentKey, name: &str,
+                        config: &serde_json::Value) -> Result<RestoreInfo, WardError> {
+    let backup_bytes = std::fs::read(target).unwrap_or_default();
+    let mut root = read_json_or_empty(target)?;
+    ensure_mcp_parent(&mut root, parent);
+    insert_mcp_entry(&mut root, parent, name, config.clone());
+    if let Some(dir) = target.parent() { std::fs::create_dir_all(dir)?; }
+    write_json(target, &root)?;
+    Ok(RestoreInfo {
+        kind: "mcp-upsert".into(),
+        original_path: target.display().to_string(),
+        current_path: None,
+        backup_bytes: if backup_bytes.is_empty() { None } else { Some(backup_bytes) },
+        mcp_entry: None,
+        mcp_key: Some(name.to_string()),
+        mcp_parent_key: Some(parent.object_key().to_string()),
+        mcp_scope: parent.scope_key().map(|s| s.to_string()),
+    })
 }
 
 fn extract_mcp_entry(root: &mut serde_json::Value, parent: &McpParentKey, key: &str)
@@ -1451,5 +1476,75 @@ mod tests {
         let ops = ClaudeOps;
         let bad = home.join("../etc/passwd");
         assert!(ops.save_file(&ctx_for(home), &bad.display().to_string(), "x").is_err());
+    }
+
+    // ── write_mcp_upsert (surgical single-key upsert) + mcp-upsert undo ──
+
+    #[test]
+    fn upsert_inserts_new_entry_into_flat_mcp_servers() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        fs::write(&json, r#"{"mcpServers":{"existing":{"command":"e"}}}"#).unwrap();
+        let cfg = serde_json::json!({"command":"npx","args":["-y","pkg@1.0.0"]});
+        let info = write_mcp_upsert(&json, &McpParentKey::mcp_servers(), "newsrv", &cfg).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["newsrv"]["command"], "npx");
+        assert_eq!(after["mcpServers"]["existing"]["command"], "e", "unrelated key preserved");
+        assert_eq!(info.kind, "mcp-upsert");
+        assert_eq!(info.mcp_key.as_deref(), Some("newsrv"));
+        assert!(info.backup_bytes.is_some());
+    }
+
+    #[test]
+    fn upsert_overwrites_existing_entry() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        fs::write(&json, r#"{"mcpServers":{"github":{"command":"old","args":["a"]}}}"#).unwrap();
+        let cfg = serde_json::json!({"command":"new","args":["b","c"]});
+        write_mcp_upsert(&json, &McpParentKey::mcp_servers(), "github", &cfg).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["github"]["command"], "new");
+        assert_eq!(after["mcpServers"]["github"]["args"], serde_json::json!(["b","c"]));
+    }
+
+    #[test]
+    fn upsert_creates_file_when_missing_and_backup_is_none() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        assert!(!json.exists());
+        let cfg = serde_json::json!({"url":"https://x.com/mcp"});
+        let info = write_mcp_upsert(&json, &McpParentKey::mcp_servers(), "remote", &cfg).unwrap();
+        assert!(json.exists());
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["remote"]["url"], "https://x.com/mcp");
+        assert!(info.backup_bytes.is_none(), "no prior file → no backup");
+    }
+
+    #[test]
+    fn upsert_undo_restores_byte_identical_and_removes_when_created() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        let original = "{\n  \"mcpServers\": {\n    \"a\": {\n      \"command\": \"x\"\n    }\n  }\n}\n";
+        fs::write(&json, original).unwrap();
+        let ops = ClaudeOps;
+        let info = write_mcp_upsert(&json, &McpParentKey::mcp_servers(), "b",
+            &serde_json::json!({"command":"y"})).unwrap();
+        ops.restore(&ctx_for(home), &info).unwrap();
+        assert_eq!(fs::read_to_string(&json).unwrap(), original, "edit undo is byte-identical");
+
+        // create case: undo removes the file
+        let json2 = home.join(".claude/fresh.mcp.json");
+        let info2 = write_mcp_upsert(&json2, &McpParentKey::mcp_servers(), "c",
+            &serde_json::json!({"command":"z"})).unwrap();
+        assert!(json2.exists());
+        ops.restore(&ctx_for(home), &info2).unwrap();
+        assert!(!json2.exists(), "create undo removes the file");
     }
 }
