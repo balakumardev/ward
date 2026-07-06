@@ -174,6 +174,7 @@ impl Harness for ClaudeAdapter {
             context_budget: true, mcp_controls: true, mcp_policy: true,
             mcp_security: true, sessions: true, effective: true, backup: true,
             mcp_editable: true,
+            skill_creatable: true,
         }
     }
 
@@ -741,6 +742,7 @@ mod tests {
         let c = ClaudeAdapter.capabilities();
         assert!(c.effective && c.mcp_security && c.backup && c.context_budget);
         assert!(c.mcp_editable, "Claude advertises an MCP upsert backend");
+        assert!(c.skill_creatable, "Claude advertises a skill-create backend");
     }
 
     use std::fs;

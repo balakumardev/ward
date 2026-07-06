@@ -15,6 +15,11 @@ pub struct Capabilities {
     /// read-only (Codex until its upsert backend exists). Serializes as
     /// `mcpEditable`.
     pub mcp_editable: bool,
+    /// Plan 19 — true when this harness can create a new Skill (scaffold
+    /// `<skills_dir>/<name>/SKILL.md`). Gates the Organizer's "+ Add Skill"
+    /// control. Claude `true`; Codex `false` until its write path lands.
+    /// Serializes as `skillCreatable`.
+    pub skill_creatable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

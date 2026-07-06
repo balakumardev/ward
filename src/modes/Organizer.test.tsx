@@ -37,7 +37,7 @@ const scan: ScanResult = {
   items: [
     { category: 'skill', scopeId: 'global', name: 'brainstorming', path: '/p/SKILL.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
 };
 
 test('shows category counts and lists items; clicking loads content', async () => {
@@ -79,7 +79,7 @@ const effectiveScan: ScanResult = {
     // Project-only command (active)
     { category: 'command', scopeId: 'repo-a', name: 'build', path: '/p/cmds/build.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
 };
 
 test('show-effective toggle hides global items without a tag when ON', async () => {
@@ -145,7 +145,7 @@ const mutableScan: ScanResult = {
     { category: 'skill', scopeId: 'global', name: 'a', path: '/g/a/SKILL.md', movable: true, deletable: true, locked: false },
     { category: 'skill', scopeId: 'global', name: 'b', path: '/g/b/SKILL.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
 };
 
 test('move menu lists destinations returned by api.listDestinations', async () => {
@@ -294,7 +294,7 @@ const mcpScan: ScanResult = {
       movable: true, deletable: true, locked: false,
       mcpConfig: { command: 'node', args: ['approved.js'] } },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
 };
 
 test('disable toggle only appears for non-global MCP items', async () => {
@@ -427,7 +427,7 @@ function makeScanWithMcp(opts: {
       { category: 'mcp', scopeId: opts.scopeId, name: opts.name, path: opts.path,
         movable: true, deletable: true, locked: false, mcpConfig: opts.mcpConfig },
     ],
-    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
   };
 }
 
@@ -520,7 +520,7 @@ it('re-seeds the MCP form when switching directly between two MCP servers', asyn
       { category: 'mcp', scopeId: 'global', name: 'playwright', path: '/Users/x/.claude.json',
         movable: true, deletable: true, locked: false, mcpConfig: { command: 'pw', args: ['--headed'] } },
     ],
-    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
   };
   renderOrganizer({ scan, api: fakeApi });
 
@@ -568,7 +568,7 @@ it('renders a READ-ONLY MCP pane (no form, no add button) when mcpEditable is fa
       { category: 'mcp', scopeId: 'global', name: 'context7', path: '/Users/x/.codex/config.toml#context7',
         movable: false, deletable: true, locked: false, mcpConfig: { command: 'npx', args: ['-y', 'c7'] } },
     ],
-    capabilities: { contextBudget: false, mcpControls: true, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: false },
+    capabilities: { contextBudget: false, mcpControls: true, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: false, skillCreatable: false },
   };
   renderOrganizer({ scan, api: fakeApi });
   // "+ Add" is hidden when the harness can't edit MCP.

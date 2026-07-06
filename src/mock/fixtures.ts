@@ -42,7 +42,7 @@ export const codexScan: ScanResult = {
     { category: 'setting', scopeId: 'global', name: 'model', path: '/Users/balakumar/.codex/config.toml#model', movable: false, deletable: false, locked: false },
     { category: 'setting', scopeId: 'global', name: 'approval_policy', path: '/Users/balakumar/.codex/config.toml#approval_policy', movable: false, deletable: false, locked: false },
   ],
-  capabilities: { contextBudget: false, mcpControls: true, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: false },
+  capabilities: { contextBudget: false, mcpControls: true, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: false, skillCreatable: false },
 };
 
 // ── Security scan ─────────────────────────────────────────────────────────

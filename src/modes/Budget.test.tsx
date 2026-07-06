@@ -25,7 +25,7 @@ const scan: ScanResult = {
   categories: [],
   scopes: [{ id: 'global', kind: 'global', label: 'Global (~/.claude)', root: '/Users/x/.claude' }],
   items: [],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true },
 };
 const scope: Scope = { id: 'global', kind: 'global', label: 'Global (~/.claude)', root: '/Users/x/.claude' };
 

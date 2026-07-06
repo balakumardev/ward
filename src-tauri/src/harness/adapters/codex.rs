@@ -126,6 +126,8 @@ impl Harness for CodexAdapter {
             backup: true,
             // Codex MCP stays read-only until an upsert backend exists.
             mcp_editable: false,
+            // Codex skill-create lands in Plan 20 (write path); false for now.
+            skill_creatable: false,
         }
     }
 
@@ -966,6 +968,7 @@ args = [\"server.mjs\"]\n\
         assert!(!c.mcp_policy,     "mcpPolicy must be false");
         assert!(!c.effective,      "effective must be false");
         assert!(!c.mcp_editable,   "mcpEditable must be false");
+        assert!(!c.skill_creatable, "skillCreatable must be false");
     }
 
     #[test]

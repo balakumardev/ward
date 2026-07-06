@@ -39,6 +39,10 @@ export interface Capabilities {
    *  the Organizer renders the editable structured MCP form + "+ Add MCP".
    *  False (e.g. Codex) keeps the MCP pane read-only. */
   mcpEditable: boolean;
+  /** Plan 19 — true when this harness can create a new Skill (scaffold
+   *  `<skills_dir>/<name>/SKILL.md`), gating the Organizer's "+ Add Skill".
+   *  Claude true; Codex false until its write path lands. */
+  skillCreatable: boolean;
 }
 export interface Category { id: string; label: string; count: number; }
 export interface Scope { id: string; kind: string; label: string; root: string; }

@@ -614,6 +614,7 @@
     "sessions": true,
     "effective": true,
     "backup": true,
-    "mcpEditable": true
+    "mcpEditable": true,
+    "skillCreatable": true
   }
 }
