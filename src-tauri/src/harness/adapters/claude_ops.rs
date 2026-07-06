@@ -118,6 +118,71 @@ pub fn resolve_mcp_json(scope_id: &str, scopes: &[Scope]) -> Option<PathBuf> {
     Some(repo.join(".mcp.json"))
 }
 
+// ── Skill create (Plan 19) ─────────────────────────────────────────────
+
+/// Validate a skill directory name: kebab-case, no path separators / traversal.
+pub fn validate_skill_name(name: &str) -> Result<(), WardError> {
+    let ok = !name.is_empty()
+        && name.bytes().enumerate().all(|(i, b)| {
+            let c = b as char;
+            if i == 0 { c.is_ascii_lowercase() || c.is_ascii_digit() }
+            else { c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' }
+        });
+    if !ok {
+        return Err(WardError::NotFound(format!(
+            "invalid skill name '{name}' (use lowercase letters, digits, hyphens)"
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve the skills directory for `(harness, scope_id)`.
+fn resolve_skills_dir_for(home: &Path, harness: &str, scope_id: &str, scopes: &[Scope])
+    -> Option<PathBuf>
+{
+    match harness {
+        "claude" => resolve_skill_dir(scope_id, scopes),
+        "codex" => {
+            if scope_id == "global" {
+                Some(home.join(".codex").join("skills"))
+            } else {
+                let scope = scopes.iter().find(|s| s.id == scope_id)?;
+                if scope.kind != "project" { return None; }
+                Some(PathBuf::from(&scope.root).join(".codex").join("skills"))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Create a new skill: write `<skills_dir>/<name>/SKILL.md`. Create-only —
+/// errors if the skill dir already exists. Returns a `skill-create`
+/// RestoreInfo whose undo removes the created dir.
+pub fn skill_upsert(home: &Path, harness: &str, scope_id: &str, name: &str,
+                    content: &str, scopes: &[Scope]) -> Result<RestoreInfo, WardError> {
+    validate_skill_name(name)?;
+    let dir = resolve_skills_dir_for(home, harness, scope_id, scopes)
+        .ok_or_else(|| WardError::NotFound(format!("Cannot resolve skills dir for {harness}/{scope_id}")))?;
+    let skill_dir = dir.join(name);
+    let skill_dir = ensure_under_home(&skill_dir, home)?;
+    if skill_dir.exists() {
+        return Err(WardError::NotFound(format!("Skill '{name}' already exists")));
+    }
+    let target = skill_dir.join("SKILL.md");
+    std::fs::create_dir_all(&skill_dir)?;
+    std::fs::write(&target, content)?;
+    Ok(RestoreInfo {
+        kind: "skill-create".into(),
+        original_path: skill_dir.display().to_string(),
+        current_path: None,
+        backup_bytes: None,
+        mcp_entry: None,
+        mcp_key: None,
+        mcp_parent_key: None,
+        mcp_scope: None,
+    })
+}
+
 /// Look up the `.claude` root that backs `scope_id`. For `global` this
 /// is `home/.claude`; for project scopes it's `repo/.claude` (resolved
 /// from `scopes`).
@@ -241,6 +306,11 @@ impl HarnessOps for ClaudeOps {
             "mcp-entry" => restore_mcp_entry(ctx, info),
             "mcp-disabled" | "mcp-policy" | "mcp-upsert" =>
                 crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
+            "skill-create" => {
+                let dir = ensure_under_home(Path::new(&info.original_path), ctx.home)?;
+                if dir.exists() { std::fs::remove_dir_all(&dir)?; }
+                Ok(())
+            }
             other => Err(WardError::NotFound(format!("Unknown restore kind: {other}"))),
         }
     }
@@ -1654,5 +1724,70 @@ mod tests {
         let res = ClaudeOps.upsert_mcp_entry(&ctx_for(home), "global", "x",
             &serde_json::json!({"command":"y"}), Some(&bad.display().to_string()), &scopes);
         assert!(res.is_err(), "target outside home must be rejected");
+    }
+
+    // ── skill_upsert (Plan 19) ──
+
+    #[test]
+    fn validate_skill_name_accepts_kebab() {
+        assert!(validate_skill_name("my-skill").is_ok());
+        assert!(validate_skill_name("skill1").is_ok());
+    }
+
+    #[test]
+    fn validate_skill_name_rejects_bad() {
+        for bad in ["", "Foo", "a/b", "../evil", "a b", "a.b", "-lead", "UPPER"] {
+            assert!(validate_skill_name(bad).is_err(), "{bad} should be rejected");
+        }
+    }
+
+    #[test]
+    fn skill_upsert_creates_skill_md_in_claude_global() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let info = skill_upsert(home, "claude", "global", "new-skill",
+            "---\nname: new-skill\n---\nbody", &scopes).unwrap();
+        let target = home.join(".claude/skills/new-skill/SKILL.md");
+        assert!(target.is_file());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "---\nname: new-skill\n---\nbody");
+        assert_eq!(info.kind, "skill-create");
+        assert_eq!(info.original_path, home.join(".claude/skills/new-skill").display().to_string());
+        assert!(info.backup_bytes.is_none(), "fresh create → no backup");
+    }
+
+    #[test]
+    fn skill_upsert_refuses_to_clobber_existing() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let existing = home.join(".claude/skills/dup/SKILL.md");
+        fs::create_dir_all(existing.parent().unwrap()).unwrap();
+        fs::write(&existing, "old").unwrap();
+        let res = skill_upsert(home, "claude", "global", "dup", "new", &scopes);
+        assert!(res.is_err(), "must refuse to overwrite an existing skill dir");
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "old", "existing content untouched");
+    }
+
+    #[test]
+    fn skill_upsert_rejects_invalid_name_before_write() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        assert!(skill_upsert(home, "claude", "global", "../evil", "x", &scopes).is_err());
+        assert!(!home.join(".claude/skills").exists(), "no dir created on invalid name");
+    }
+
+    #[test]
+    fn skill_create_undo_removes_the_created_dir() {
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let scopes = scopes_for(home, &home.join("work/project-a"));
+        let ops = ClaudeOps;
+        let info = skill_upsert(home, "claude", "global", "temp", "body", &scopes).unwrap();
+        let skill_dir = home.join(".claude/skills/temp");
+        assert!(skill_dir.is_dir());
+        ops.restore(&ctx_for(home), &info).unwrap();
+        assert!(!skill_dir.exists(), "undo removes the created skill dir");
     }
 }
