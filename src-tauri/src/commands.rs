@@ -216,6 +216,22 @@ pub fn mcp_check_policy(
     Ok(mcp::check_policy(&server_name, &server_config, &policy))
 }
 
+/// Insert-or-overwrite one MCP server entry (Add or Edit from the Organizer).
+/// `target_path == Some` edits that exact config file; `None` resolves the
+/// scope's write target for a new server. Returns a `RestoreInfo` for Undo.
+#[tauri::command]
+pub fn mcp_upsert_entry(
+    harness: String,
+    scope_id: String,
+    name: String,
+    config: serde_json::Value,
+    target_path: Option<String>,
+) -> Result<RestoreInfo, WardError> {
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    ops.upsert_mcp_entry(&ctx, &scope_id, &name, &config, target_path.as_deref(), &scopes)
+}
+
 // ── Security Scanner (Plan 05) ─────────────────────────────────────────
 
 /// Run the security scan over the discovered MCP items.
@@ -875,5 +891,24 @@ mod tests {
         let servers = vec!["github".to_string(), "github".to_string()];
         let b = budget::compose("global", &items, &servers, home);
         assert_eq!(b.mcp_schemas, budget::MCP_TOOL_SCHEMA);
+    }
+
+    #[test]
+    fn mcp_upsert_via_ops_round_trips() {
+        // The command itself needs dirs::home_dir(); exercise the ops path it
+        // delegates to (same pattern as the bulk tests above).
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let json = home.join(".claude.json");
+        fs::write(&json, r#"{"mcpServers":{}}"#).unwrap();
+        let ops = crate::harness::adapters::claude_ops::ClaudeOps;
+        let ctx = Ctx { home, cwd: None };
+        let scopes = vec![Scope { id: "global".into(), kind: "global".into(),
+            label: "Global".into(), root: home.join(".claude").display().to_string() }];
+        let info = ops.upsert_mcp_entry(&ctx, "global", "srv",
+            &serde_json::json!({"command":"c"}), Some(&json.display().to_string()), &scopes).unwrap();
+        assert_eq!(info.kind, "mcp-upsert");
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["srv"]["command"], "c");
     }
 }
