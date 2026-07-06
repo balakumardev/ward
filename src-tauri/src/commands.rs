@@ -49,7 +49,11 @@ pub fn read_file_content(path: String) -> Result<String, WardError> {
 
 /// Pick the ops implementation that backs `harness_id`. Today we only
 /// ship the Claude adapter's ops; future adapters will plug in here.
-fn ops_for(harness_id: &str) -> Result<&'static dyn HarnessOps, WardError> {
+///
+/// `pub(crate)` so the Marketplace install fan-out
+/// (`marketplace::install`) reuses the SAME dispatch — one Install =
+/// N `upsert_mcp_entry` calls, no second MCP writer.
+pub(crate) fn ops_for(harness_id: &str) -> Result<&'static dyn HarnessOps, WardError> {
     match harness_id {
         "claude" => Ok(&ClaudeOps),
         "codex" => Ok(&CodexOps),
@@ -60,7 +64,10 @@ fn ops_for(harness_id: &str) -> Result<&'static dyn HarnessOps, WardError> {
 /// Re-discover scopes + the relevant `Ctx` for a harness. We rebuild
 /// the registry on every mutation command so the scope list reflects
 /// the latest on-disk state.
-fn harness_ctx(harness_id: &str) -> Result<(Ctx<'static>, Vec<Scope>), WardError> {
+///
+/// `pub(crate)` so `marketplace::install` can resolve the same
+/// `(Ctx, scopes)` the mutation commands use when it fans an install out.
+pub(crate) fn harness_ctx(harness_id: &str) -> Result<(Ctx<'static>, Vec<Scope>), WardError> {
     // We need a 'static home so Ctx can outlive this stack frame; use
     // a leaked Box. This is the only Tauri command path; tests use
     // the helpers above.
