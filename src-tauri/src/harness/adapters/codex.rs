@@ -324,7 +324,7 @@ fn pv_to_trust(v: &TomlValue) -> Option<String> {
     }
 }
 
-fn toml_to_json(v: &TomlValue) -> serde_json::Value {
+pub(crate) fn toml_to_json(v: &TomlValue) -> serde_json::Value {
     match v {
         TomlValue::String(s) => serde_json::Value::String(s.clone()),
         TomlValue::Integer(i) => serde_json::Value::Number((*i).into()),

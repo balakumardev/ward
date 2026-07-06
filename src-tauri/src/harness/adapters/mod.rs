@@ -3,3 +3,4 @@ pub mod claude_budget;
 pub mod claude_mcp;
 pub mod claude_ops;
 pub mod codex;
+pub mod codex_ops;

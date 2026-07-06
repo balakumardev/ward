@@ -35,6 +35,10 @@ base64 = "0.22"
 unicode-normalization = "0.1"
 # Plan 09 — Codex adapter (parses ~/.codex/config.toml)
 toml = "0.8"
+# Plan 20 — Codex write path: surgical, comment/format-preserving edits of
+# ~/.codex/config.toml (a `toml::Value` round-trip would destroy comments,
+# reorder keys, and mangle quoted keys / nested sub-tables).
+toml_edit = "0.22"
 # Plan 10 — native shell (CLI, fs-watch, notifications, tray)
 clap = { version = "4", features = ["derive"] }
 notify = "6"
