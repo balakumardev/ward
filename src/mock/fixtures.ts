@@ -398,3 +398,58 @@ export const MARKET_ENTRIES: MarketEntry[] = [
     ],
   },
 ];
+
+// ── Plan 22 — Marketplace (Skills) ─────────────────────────────────────────
+// A small SYNTHETIC skills catalog (no real repos/tokens) mirroring the Rust
+// `parse_marketplace` output: `kind:"skill"`, `source:"marketplace"`, a repo +
+// a resolved raw `SKILL.md` URL. `marketplaceSearch('skill', …)` filters this
+// list by substring; `marketplacePreviewSkill` looks the body up in
+// `MARKET_SKILL_BODIES` below.
+const SKILLS_REPO = 'https://raw.githubusercontent.com/acme/agent-skills/main';
+const skillEntry = (name: string, description: string): MarketEntry => ({
+  kind: 'skill',
+  name,
+  displayName: name,
+  description,
+  source: 'marketplace',
+  verified: true,
+  packages: [],
+  remotes: [],
+  repoUrl: SKILLS_REPO,
+  skillPath: `${SKILLS_REPO}/skills/${name}/SKILL.md`,
+});
+
+export const MARKET_SKILLS: MarketEntry[] = [
+  skillEntry('brainstorming', 'Explore intent and requirements before building.'),
+  skillEntry('writing-plans', 'Turn a spec into a step-by-step implementation plan.'),
+  skillEntry('systematic-debugging', 'Find the root cause before proposing a fix.'),
+];
+
+// Synthetic `SKILL.md` bodies keyed by skill name — returned by
+// `marketplacePreviewSkill` so dev:mock renders the real pre-install preview.
+export const MARKET_SKILL_BODIES: Record<string, string> = {
+  brainstorming:
+    '---\n' +
+    'name: brainstorming\n' +
+    'description: Explore intent and requirements before building.\n' +
+    '---\n\n' +
+    '# Brainstorming\n\n' +
+    'Use this before any creative work. Explore the problem, surface\n' +
+    'requirements, and agree on a design before writing code.\n',
+  'writing-plans':
+    '---\n' +
+    'name: writing-plans\n' +
+    'description: Turn a spec into a step-by-step implementation plan.\n' +
+    '---\n\n' +
+    '# Writing plans\n\n' +
+    'Break a spec into ordered, independently testable tasks with clear\n' +
+    'success criteria before touching any code.\n',
+  'systematic-debugging':
+    '---\n' +
+    'name: systematic-debugging\n' +
+    'description: Find the root cause before proposing a fix.\n' +
+    '---\n\n' +
+    '# Systematic debugging\n\n' +
+    'Reproduce, isolate, and confirm the root cause before proposing or\n' +
+    'applying any fix.\n',
+};

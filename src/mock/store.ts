@@ -14,12 +14,15 @@ import type {
   ScanResultSec, BaselineDiff, BudgetBreakdown, Conversation, CostBreakdown,
   DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult, GitLogEntry,
   McpConfig, EnvVar, MarketEntry, MarketPage, BuiltConfig, InstallResult, InstallTarget,
+  SkillPreview,
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
   usageSnapshotFor,
   liveSnapshotFor,
   MARKET_ENTRIES,
+  MARKET_SKILLS,
+  MARKET_SKILL_BODIES,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -56,6 +59,30 @@ function buildSecretSafe(vars: EnvVar[], envValues: Record<string, string>): Rec
 
 function mapRemoteType(t: string): string {
   return t.toLowerCase() === 'sse' ? 'sse' : 'http';
+}
+
+/** Minimal leading-`---` frontmatter reader (mirrors the Rust
+ *  `parse_frontmatter`) — top-level `key: value` pairs only, quotes stripped. */
+function parseFrontmatter(body: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const m = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(body);
+  if (!m) return out;
+  for (const raw of m[1].split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith(' ') || line.startsWith('\t')) continue;
+    const i = line.indexOf(':');
+    if (i < 0) continue;
+    const key = line.slice(0, i).trim();
+    let val = line.slice(i + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"') && val.length >= 2) ||
+      (val.startsWith("'") && val.endsWith("'") && val.length >= 2)
+    ) {
+      val = val.slice(1, -1);
+    }
+    if (key) out[key] = val;
+  }
+  return out;
 }
 
 /** Faithful mirror of the Rust `build_mcp_config` so the dev:mock preview,
@@ -259,20 +286,36 @@ export class MockStore {
     return { kind: 'skill-create', originalPath: newItem.path, __undoId: undoId };
   }
 
-  // ── Marketplace (Plan 21) ──
-  /** Search the synthetic registry list, filtered by substring over name /
-   *  display name / description. `kind !== "mcp"` (skills) → empty page. */
+  // ── Marketplace (Plan 21 MCP, Plan 22 Skills) ──
+  /** Search the synthetic catalog for a `kind` of unit (`"mcp"` → registry
+   *  servers, `"skill"` → curated skills), filtered by substring over name /
+   *  display name / description. Any other kind → empty page. */
   marketplaceSearch(kind: string, query: string, _cursor?: string): MarketPage {
-    if (kind !== 'mcp') return { entries: [] };
+    const list = kind === 'mcp' ? MARKET_ENTRIES : kind === 'skill' ? MARKET_SKILLS : [];
     const q = query.trim().toLowerCase();
     const entries = (q
-      ? MARKET_ENTRIES.filter((e) =>
+      ? list.filter((e) =>
           e.name.toLowerCase().includes(q) ||
           e.displayName.toLowerCase().includes(q) ||
           e.description.toLowerCase().includes(q))
-      : MARKET_ENTRIES
+      : list
     ).map(clone);
     return { entries };
+  }
+
+  /** Pre-install preview — mirror the Rust `marketplace_preview_skill`: return
+   *  the synthetic SKILL.md body with its frontmatter name/description (the
+   *  catalog entry is the fallback). Binds approval to the actual content. */
+  marketplacePreviewSkill(entry: MarketEntry): SkillPreview {
+    const body =
+      MARKET_SKILL_BODIES[entry.name] ??
+      `---\nname: ${entry.name}\ndescription: ${entry.description}\n---\n\n# ${entry.name}\n`;
+    const fm = parseFrontmatter(body);
+    return {
+      name: fm.name || entry.name,
+      description: fm.description || entry.description,
+      body,
+    };
   }
 
   /** Pre-install preview — mirrors the Rust `build_mcp_config`. */
@@ -286,6 +329,17 @@ export class MockStore {
   marketplaceInstall(entry: MarketEntry, packageIndex: number, targets: InstallTarget[], envValues: Record<string, string>): InstallResult[] {
     return targets.map((target) => {
       try {
+        if (entry.kind === 'skill') {
+          // Create-only, mirroring the Rust `skill_upsert`: a target that
+          // already has this skill fails that target without aborting the batch.
+          const dup = this.scanFor(target.harness).items.some(
+            (i) => i.category === 'skill' && i.name === entry.name && i.scopeId === target.scopeId,
+          );
+          if (dup) return { target, ok: false, error: `Skill '${entry.name}' already exists` };
+          const body = MARKET_SKILL_BODIES[entry.name] ?? '';
+          const restore = this.skillUpsert(target.harness, target.scopeId, entry.name, body);
+          return { target, ok: true, restore };
+        }
         const built = buildMcpConfig(entry, packageIndex, envValues);
         const restore = this.upsertMcpEntry(target.harness, target.scopeId, built.name, built.config);
         return { target, ok: true, restore };

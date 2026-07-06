@@ -432,6 +432,15 @@ export interface MarketPage {
   nextCursor?: string;
 }
 
+/** The fetched-and-parsed `SKILL.md` shown BEFORE a skill install so approval
+ *  is bound to the actual content, not just the name (mirrors Rust
+ *  `SkillPreview`). Frontmatter wins; the catalog entry is the fallback. */
+export interface SkillPreview {
+  name: string;
+  description: string;
+  body: string;
+}
+
 export const api = {
   scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
@@ -480,6 +489,11 @@ export const api = {
     invokeOrThrow<BuiltConfig>('marketplace_build_config', { entry, packageIndex, envValues }),
   marketplaceInstall: (entry: MarketEntry, packageIndex: number, targets: InstallTarget[], envValues: Record<string, string>) =>
     invokeOrThrow<InstallResult[]>('marketplace_install', { entry, packageIndex, targets, envValues }),
+
+  // Plan 22 — fetch + parse a skill's SKILL.md for the pre-install preview
+  // (bind approval to content). User-triggered on card select.
+  marketplacePreviewSkill: (entry: MarketEntry) =>
+    invokeOrThrow<SkillPreview>('marketplace_preview_skill', { entry }),
 
   // Plan 05 — Security scanner.
   securityScan: (harness: string, items: HarnessItem[], runJudge?: boolean) =>

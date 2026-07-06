@@ -68,14 +68,58 @@ describe('MockStore skill upsert', () => {
 });
 
 describe('MockStore marketplace', () => {
-  it('marketplaceSearch filters by substring and returns empty for skills', () => {
+  it('marketplaceSearch filters MCP servers by substring', () => {
     const s = new MockStore();
     expect(s.marketplaceSearch('mcp', '').entries.length).toBeGreaterThanOrEqual(3);
     const hits = s.marketplaceSearch('mcp', 'pytools').entries;
     expect(hits.length).toBe(1);
     expect(hits[0].name).toContain('pytools');
-    // Skills tab is a Plan 22 seam → empty page, not an error.
-    expect(s.marketplaceSearch('skill', '').entries.length).toBe(0);
+    // An unknown kind → empty page (not an error).
+    expect(s.marketplaceSearch('other', '').entries.length).toBe(0);
+  });
+
+  it('marketplaceSearch returns curated skills filtered by substring', () => {
+    const s = new MockStore();
+    expect(s.marketplaceSearch('skill', '').entries.length).toBeGreaterThanOrEqual(3);
+    const hits = s.marketplaceSearch('skill', 'debug').entries;
+    expect(hits.length).toBe(1);
+    expect(hits[0].name).toContain('debugging');
+    expect(hits[0].kind).toBe('skill');
+    expect(hits[0].skillPath).toBeTruthy();
+  });
+
+  it('marketplacePreviewSkill returns the SKILL.md body + frontmatter meta', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('skill', 'brainstorming').entries[0];
+    const preview = s.marketplacePreviewSkill(entry);
+    expect(preview.name).toBe('brainstorming');
+    expect(preview.description).toContain('Explore');
+    expect(preview.body).toContain('---');
+    expect(preview.body.toLowerCase()).toContain('brainstorming');
+  });
+
+  it('marketplaceInstall of a skill to Claude global adds a skill item', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('skill', 'brainstorming').entries[0];
+    const before = s.scan('claude').items.filter((i) => i.category === 'skill').length;
+    const results = s.marketplaceInstall(entry, 0, [{ harness: 'claude', scopeId: 'global' }], {});
+    expect(results.length).toBe(1);
+    expect(results[0].ok).toBe(true);
+    const items = s.scan('claude').items.filter((i) => i.category === 'skill');
+    expect(items.length).toBe(before + 1);
+    expect(items.some((i) => i.name === 'brainstorming')).toBe(true);
+  });
+
+  it('marketplaceInstall of a skill is create-only per target', () => {
+    const s = new MockStore();
+    const entry = s.marketplaceSearch('skill', 'brainstorming').entries[0];
+    s.marketplaceInstall(entry, 0, [{ harness: 'claude', scopeId: 'global' }], {});
+    // Installing the same skill to the same target again fails (already exists),
+    // without aborting or double-adding.
+    const again = s.marketplaceInstall(entry, 0, [{ harness: 'claude', scopeId: 'global' }], {});
+    expect(again[0].ok).toBe(false);
+    expect(again[0].error).toContain('already exists');
+    expect(s.scan('claude').items.filter((i) => i.category === 'skill' && i.name === 'brainstorming').length).toBe(1);
   });
 
   it('marketplaceBuildConfig pins the version and omits secret env values', () => {
