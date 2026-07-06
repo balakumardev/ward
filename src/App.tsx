@@ -75,6 +75,13 @@ export default function App() {
       await refetch();
       return r;
     },
+    // Plan 19 — creatable skills: scaffold a new SKILL.md in the chosen scope,
+    // then re-scan so the new item appears (App injects the current harness).
+    skillUpsert: async (scopeId: string, name: string, content: string) => {
+      const r = await api.skillUpsert(harness(), scopeId, name, content);
+      await refetch();
+      return r;
+    },
 
     // Plan 07 — Sessions mode.
     sessionPreview: (path: string) => api.sessionPreview(path),

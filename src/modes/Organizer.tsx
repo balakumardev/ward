@@ -75,6 +75,9 @@ export interface OrganizerApi {
   // Plan 18 — MCP marketplace: upsert (install/edit) a server entry into a
   // scope's shared config file. Persists the structured MCP form's Save.
   upsertMcpEntry: (item: HarnessItem, config: McpConfig) => Promise<RestoreInfo>;
+  // Plan 19 — creatable skills: scaffold a new `<skills_dir>/<name>/SKILL.md`
+  // in the chosen scope. The App bridge injects the harness + re-scans.
+  skillUpsert: (scopeId: string, name: string, content: string) => Promise<RestoreInfo>;
 }
 
 export function Organizer(props: {
@@ -105,6 +108,12 @@ export function Organizer(props: {
   const [addingMcp, setAddingMcp] = createSignal(false);
   const [newName, setNewName] = createSignal('');
   const [chosenScope, setChosenScope] = createSignal('');
+
+  // Plan 19 — "Add Skill" flow. `addingSkill` gates the detail pane onto a
+  // name+scope dialog; on Create we scaffold a starter SKILL.md and upsert it.
+  const [addingSkill, setAddingSkill] = createSignal(false);
+  const [skillName, setSkillName] = createSignal('');
+  const [chosenSkillScope, setChosenSkillScope] = createSignal('');
 
   // Plan 04 — disabled-server state (per project_path) and policy.
   // Disabled list is keyed by absolute project path so toggles stay
@@ -152,6 +161,9 @@ export function Organizer(props: {
   // Plan 18 — the editable MCP form + "+ Add" only render when the harness
   // declares a working upsert backend. Codex stays read-only until then.
   const mcpEditable = () => props.scan.capabilities.mcpEditable;
+  // Plan 19 — the "+ Add Skill" control only renders when the harness can
+  // create a skill (Claude true; Codex false until its write path lands).
+  const skillCreatable = () => props.scan.capabilities.skillCreatable;
 
   const itemsForCat = createMemo(() =>
     props.scan.items.filter((i) => i.category === activeCat())
@@ -423,6 +435,41 @@ export function Organizer(props: {
     }
   }
 
+  // Plan 19 — open the blank "Add Skill" dialog in the detail pane. Clears any
+  // current selection so the add view (gated on `addingSkill`) owns the pane
+  // and seeds the scope picker to the first scope.
+  function startAddSkill() {
+    // Unreachable when the harness can't create skills (the button is hidden
+    // too, but guard here so it can never be triggered programmatically).
+    if (!skillCreatable()) return;
+    setSkillName('');
+    setChosenSkillScope(props.scan.scopes[0]?.id ?? 'global');
+    setAddingMcp(false);
+    setSelected('');
+    setSelectedKeys(new Set<string>());
+    setStatusMsg('');
+    setAddingSkill(true);
+  }
+
+  // Plan 19 — scaffold a new skill: build a starter SKILL.md (frontmatter +
+  // heading + guidance comment) and create it via skillUpsert. On success the
+  // App's refetch surfaces the new item so the user fills it in with the
+  // existing markdown editor and Saves via the existing `save_file` path.
+  async function createSkill() {
+    if (!skillCreatable()) return;
+    const name = skillName().trim();
+    if (!name) { setStatusMsg('Skill add failed: name is required.'); return; }
+    const content = `---\nname: ${name}\ndescription: TODO one-line description\n---\n\n# ${name}\n\n<!-- Describe when this skill applies and what it does. -->\n`;
+    try {
+      const info = await props.api.skillUpsert(chosenSkillScope(), name, content);
+      setAddingSkill(false);
+      setLastUndo(info);
+      setStatusMsg(`Created skill ${name}. Click Undo to reverse.`);
+    } catch (e) {
+      setStatusMsg(`Skill add failed: ${String(e)}`);
+    }
+  }
+
   function bulkMoveDestinations(): Destination[] {
     // First selected item's destinations drive the bulk UI (CCO does the
     // same per-item). Caller can pick any scope that's valid for at least
@@ -494,6 +541,11 @@ export function Organizer(props: {
             <Show when={activeCat() === 'mcp' && mcpEditable()}>
               <button class="mcp-add-btn" data-testid="mcp-add-button" onClick={() => startAddMcp()}>
                 + Add
+              </button>
+            </Show>
+            <Show when={activeCat() === 'skill' && skillCreatable()}>
+              <button class="mcp-add-btn" data-testid="skill-add-button" onClick={() => startAddSkill()}>
+                + Add Skill
               </button>
             </Show>
             <Show when={props.canPolicy}>
@@ -606,9 +658,11 @@ export function Organizer(props: {
 
       {/* ── Detail / editor ── */}
       <div class="detail">
-        {/* Plan 18 — the "Add MCP Server" view owns the pane when active,
-            independent of the current selection. Gated FIRST so it never
-            collides with the keyed edit-mode <Show> below. */}
+        {/* Plan 19 — the "Add Skill" dialog owns the pane when active (gated
+            OUTERMOST). Plan 18 — the "Add MCP Server" view owns it next,
+            independent of the current selection. Both are gated before the
+            keyed edit-mode <Show> below. */}
+        <Show when={addingSkill()} fallback={
         <Show when={addingMcp() && mcpEditable()} fallback={
         <Show when={selectedItem()} fallback={
           <div class="detail-empty">
@@ -780,6 +834,48 @@ export function Organizer(props: {
               onScope={setChosenScope}
               onSave={addMcp}
             />
+            <Show when={statusMsg()}>
+              <div class="editor-foot">
+                <span style={{ flex: 1 }} />
+                <span classList={{ status: true, err: statusMsg().includes('failed') || statusMsg().includes('error') }}>{statusMsg()}</span>
+              </div>
+            </Show>
+          </div>
+        </Show>
+        }>
+          {/* ── Plan 19 — Add Skill (name + scope → scaffold SKILL.md) ── */}
+          <div class="rise" style={{ display: 'flex', 'flex-direction': 'column', height: '100%', 'min-height': 0 }}>
+            <div class="detail-head">
+              <div class="detail-titlewrap">
+                <div class="detail-title">Add Skill</div>
+                <div class="detail-meta">
+                  <span class="chip"><span class="cat-dot" style={{ '--dot': catDot('skill') }} />skill</span>
+                  <span class="chip">new skill</span>
+                </div>
+              </div>
+              <div class="toolbar">
+                <button class="btn btn-ghost" data-testid="skill-add-cancel" onClick={() => setAddingSkill(false)}>Cancel</button>
+              </div>
+            </div>
+            <div class="skill-add" data-testid="skill-add-form">
+              <label class="mcp-label">Name</label>
+              <input class="mcp-input" data-testid="skill-add-name" placeholder="skill-name" spellcheck={false}
+                value={skillName()} onInput={(e) => setSkillName(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void createSkill(); } }} />
+              <label class="mcp-label">Scope</label>
+              <select class="mcp-input mcp-scope-select" data-testid="skill-add-scope"
+                value={chosenSkillScope()} onChange={(e) => setChosenSkillScope(e.currentTarget.value)}>
+                <For each={props.scan.scopes}>
+                  {(s) => <option value={s.id}>{s.label}</option>}
+                </For>
+              </select>
+              <div class="skill-add-hint">
+                A starter <code>SKILL.md</code> is scaffolded; fill it in with the editor and Save.
+              </div>
+              <div class="editor-foot">
+                <button class="btn btn-primary" data-testid="skill-add-create" onClick={() => void createSkill()}>Create</button>
+              </div>
+            </div>
             <Show when={statusMsg()}>
               <div class="editor-foot">
                 <span style={{ flex: 1 }} />

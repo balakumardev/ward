@@ -141,3 +141,37 @@
   appearance: none;
   -webkit-appearance: none;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Plan 19 — "Add Skill" dialog. A small name + scope card that scaffolds a
+   starter SKILL.md; reuses .mcp-label / .mcp-input / .mcp-scope-select so it
+   reads as one system with the MCP add form.
+   ───────────────────────────────────────────────────────────────────────── */
+.skill-add {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: var(--sh-2);
+}
+.skill-add .editor-foot { padding-top: 4px; }
+
+/* Helper note under the fields — dim, small, explains the scaffold step. */
+.skill-add-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.skill-add-hint code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}

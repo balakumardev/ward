@@ -25,6 +25,7 @@ const noopApi: OrganizerApi = {
   mcpSetDisabled: async () => ({ kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' }),
   mcpGetPolicy: async () => ({ allowlist: [], denylist: [] }),
   upsertMcpEntry: async () => ({ kind: 'mcp-upsert', originalPath: '/Users/x/.claude.json' }),
+  skillUpsert: async () => ({ kind: 'skill-create', originalPath: '/Users/x/.claude/skills/x' }),
 };
 
 const scan: ScanResult = {
@@ -438,6 +439,34 @@ function renderOrganizer(opts: { scan: ScanResult; api: OrganizerApi }) {
   return render(() => <Organizer scan={opts.scan} loadFile={async () => '{}'} api={opts.api} />);
 }
 
+/** Flexible ScanResult builder: pass arbitrary `items` and a partial
+ *  `capabilities` override. Categories are derived from the items (so
+ *  `category-<id>` testids render); scopes default to a single global. */
+function makeScan(opts: {
+  capabilities?: Partial<ScanResult['capabilities']>;
+  items?: ScanResult['items'];
+  scopes?: ScanResult['scopes'];
+  categories?: ScanResult['categories'];
+} = {}): ScanResult {
+  const items = opts.items ?? [];
+  const scopes = opts.scopes ?? [
+    { id: 'global', kind: 'global', label: 'Global (~/.claude)', root: '/Users/x/.claude' },
+  ];
+  const categories = opts.categories ?? Array.from(new Set(items.map((i) => i.category)))
+    .map((id) => ({ id, label: id, count: items.filter((it) => it.category === id).length }));
+  const baseCaps: ScanResult['capabilities'] = {
+    contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true,
+    sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true,
+  };
+  return {
+    harnessId: 'claude',
+    categories,
+    scopes,
+    items,
+    capabilities: { ...baseCaps, ...(opts.capabilities ?? {}) },
+  };
+}
+
 it('renders a structured MCP form and saves an edited arg via upsertMcpEntry', async () => {
   const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
   const scan = makeScanWithMcp({ name: 'context7', scopeId: 'global',
@@ -600,4 +629,32 @@ it('switching a type:stdio entry to http realigns the contradictory type and kee
   expect(config.url).toBe('https://mcp.example.com/sse');
   expect(config.type).not.toBe('stdio'); // contradictory stdio type must not survive next to a url
   expect(config.command).toBeUndefined();
+});
+
+// ── Plan 19: Add Skill flow ──
+
+it('creates a new skill via Add Skill (scaffold content sent to skillUpsert)', async () => {
+  const skillSpy = vi.fn().mockResolvedValue({ kind: 'skill-create', originalPath: '/x' });
+  const scan = makeScan({ capabilities: { skillCreatable: true }, items: [
+    { category: 'skill', scopeId: 'global', name: 'existing', path: '/Users/x/.claude/skills/existing/SKILL.md', movable: true, deletable: true, locked: false },
+  ]});
+  renderOrganizer({ scan, api: { ...fakeApi, skillUpsert: skillSpy } });
+  fireEvent.click(screen.getByTestId('category-skill'));
+  fireEvent.click(screen.getByTestId('skill-add-button'));
+  fireEvent.input(screen.getByTestId('skill-add-name'), { target: { value: 'fresh-skill' } });
+  fireEvent.click(screen.getByTestId('skill-add-create'));
+  await waitFor(() => expect(skillSpy).toHaveBeenCalled());
+  const [scopeId, name, content] = skillSpy.mock.calls[0];
+  expect(scopeId).toBe('global');
+  expect(name).toBe('fresh-skill');
+  expect(content).toContain('name: fresh-skill'); // scaffold frontmatter
+});
+
+it('hides Add Skill when skillCreatable is false', () => {
+  const scan = makeScan({ capabilities: { skillCreatable: false }, items: [
+    { category: 'skill', scopeId: 'global', name: 'existing', path: '/Users/x/.codex/skills/existing/SKILL.md', movable: true, deletable: true, locked: false },
+  ]});
+  renderOrganizer({ scan, api: fakeApi });
+  fireEvent.click(screen.getByTestId('category-skill'));
+  expect(screen.queryByTestId('skill-add-button')).not.toBeInTheDocument();
 });
