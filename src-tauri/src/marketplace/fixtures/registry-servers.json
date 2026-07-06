@@ -1,0 +1,101 @@
+{
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.acme/notes",
+        "title": "Acme Notes",
+        "description": "Synthetic stdio npm server for Ward tests — reads and writes notes.",
+        "repository": { "url": "https://github.com/acme/notes-mcp", "source": "github" },
+        "version": "2.1.0",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "@acme/notes-mcp",
+            "version": "2.1.0",
+            "transport": { "type": "stdio" },
+            "environmentVariables": [
+              {
+                "name": "NOTES_API_KEY",
+                "description": "API key for the Acme Notes service (synthetic).",
+                "isRequired": true,
+                "isSecret": true
+              },
+              {
+                "name": "NOTES_REGION",
+                "description": "Deployment region, e.g. us-east-1.",
+                "isRequired": false,
+                "isSecret": false
+              }
+            ]
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "publishedAt": "2026-05-01T10:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.acme/pytools",
+        "description": "Synthetic stdio pypi server for Ward tests — Python developer tools.",
+        "version": "0.4.2",
+        "packages": [
+          {
+            "registryType": "pypi",
+            "identifier": "acme-pytools",
+            "version": "0.4.2",
+            "transport": { "type": "stdio" },
+            "runtimeHint": "uvx"
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "publishedAt": "2026-05-02T10:00:00Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "com.acme/hosted",
+        "title": "Acme Hosted",
+        "description": "Synthetic hosted remote server for Ward tests — streamable HTTP endpoint.",
+        "version": "3.0.0",
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.acme.example/v1",
+            "headers": [
+              {
+                "name": "X-Acme-Token",
+                "description": "Bearer token for the hosted endpoint (synthetic).",
+                "isRequired": true,
+                "isSecret": true
+              }
+            ]
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "publishedAt": "2026-05-03T10:00:00Z",
+          "isLatest": true
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "nextCursor": "com.acme/hosted:3.0.0",
+    "count": 3
+  }
+}
