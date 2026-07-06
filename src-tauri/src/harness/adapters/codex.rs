@@ -124,10 +124,10 @@ impl Harness for CodexAdapter {
             sessions: true,
             effective: false,
             backup: true,
-            // Codex MCP stays read-only until an upsert backend exists.
-            mcp_editable: false,
-            // Codex skill-create lands in Plan 20 (write path); false for now.
-            skill_creatable: false,
+            // Plan 20: Codex has a surgical TOML write path (CodexOps), so MCP
+            // servers are add/edit/remove-able and skills are creatable.
+            mcp_editable: true,
+            skill_creatable: true,
         }
     }
 
@@ -531,7 +531,9 @@ fn scan_mcp_servers(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
                 name,
                 description: desc,
                 path: cfg_path.display().to_string(),
-                movable: false, deletable: false, locked: false,
+                // Plan 20: Codex now has a TOML write path (CodexOps), so MCP
+                // servers are edit/delete-able. Move stays a Claude capability.
+                movable: false, deletable: true, locked: false,
                 effective: None,
                 mcp_config: Some(json),
             }
@@ -967,8 +969,9 @@ args = [\"server.mjs\"]\n\
         assert!(!c.mcp_controls,   "mcpControls must be false");
         assert!(!c.mcp_policy,     "mcpPolicy must be false");
         assert!(!c.effective,      "effective must be false");
-        assert!(!c.mcp_editable,   "mcpEditable must be false");
-        assert!(!c.skill_creatable, "skillCreatable must be false");
+        // Plan 20 — Codex write path: MCP editable + skills creatable.
+        assert!(c.mcp_editable,    "mcpEditable must be true (Plan 20)");
+        assert!(c.skill_creatable, "skillCreatable must be true (Plan 20)");
     }
 
     #[test]
