@@ -1,0 +1,44 @@
+{
+  "name": "acme-agent-skills",
+  "owner": {
+    "name": "Acme",
+    "email": "skills@acme.example"
+  },
+  "metadata": {
+    "description": "Synthetic Ward test marketplace — no real repos or tokens.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "writing-skills",
+      "description": "Writing and planning helpers bundle.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/brainstorming",
+        "./skills/writing-plans"
+      ]
+    },
+    {
+      "name": "debug-skills",
+      "description": "Systematic debugging technique.",
+      "source": "./",
+      "skills": [
+        "./skills/systematic-debugging"
+      ]
+    },
+    {
+      "name": "rich-skills",
+      "description": "A bundle whose skills carry their own metadata.",
+      "source": "https://github.com/acme/rich-skills",
+      "skills": [
+        {
+          "name": "verification",
+          "description": "Verify work end-to-end before claiming completion.",
+          "path": "skills/verification/SKILL.md",
+          "version": "2.0.0"
+        }
+      ]
+    }
+  ]
+}

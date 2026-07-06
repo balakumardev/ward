@@ -18,6 +18,7 @@
 
 pub mod install;
 pub mod registry;
+pub mod skills;
 
 use serde::{Deserialize, Serialize};
 
