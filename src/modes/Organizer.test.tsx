@@ -504,3 +504,34 @@ it('switching transport to http persists url and drops stdio fields', async () =
   expect(config.args).toBeUndefined();
   expect(config.env).toBeUndefined();
 });
+
+it('re-seeds the MCP form when switching directly between two MCP servers', async () => {
+  // Two MCP servers, both truthy + both category 'mcp'. Selecting A then B
+  // directly (no non-MCP item in between) is the case a NON-keyed <Show>
+  // fails to remount: McpForm's createSignal seeds would keep A's values,
+  // so a subsequent Save would write B's entry with A's stale config.
+  const scan: ScanResult = {
+    harnessId: 'claude',
+    categories: [{ id: 'mcp', label: 'MCP', count: 2 }],
+    scopes: [{ id: 'global', kind: 'global', label: 'Global (~/.claude)', root: '/Users/x/.claude' }],
+    items: [
+      { category: 'mcp', scopeId: 'global', name: 'context7', path: '/Users/x/.claude.json',
+        movable: true, deletable: true, locked: false, mcpConfig: { command: 'npx', args: ['-y', 'c7'] } },
+      { category: 'mcp', scopeId: 'global', name: 'playwright', path: '/Users/x/.claude.json',
+        movable: true, deletable: true, locked: false, mcpConfig: { command: 'pw', args: ['--headed'] } },
+    ],
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  };
+  renderOrganizer({ scan, api: fakeApi });
+
+  // Select the first server — form seeds with its command.
+  fireEvent.click(screen.getByText('context7'));
+  expect((await screen.findByTestId('mcp-command') as HTMLInputElement).value).toBe('npx');
+
+  // Directly select the second server. The form must re-seed to the SECOND
+  // server's command ('pw'), NOT keep the first server's stale value ('npx').
+  fireEvent.click(screen.getByText('playwright'));
+  await waitFor(() => {
+    expect((screen.getByTestId('mcp-command') as HTMLInputElement).value).toBe('pw');
+  });
+});

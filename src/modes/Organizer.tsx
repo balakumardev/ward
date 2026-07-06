@@ -615,7 +615,7 @@ export function Organizer(props: {
                 {/* Plan 18 — MCP entries get a structured stdio/http form
                     (Save persists via upsertMcpEntry). Everything else gets
                     the file editor / markdown preview. */}
-                <Show when={isMcp()} fallback={
+                <Show when={isMcp() ? item() : null} keyed fallback={
                   <div class="editor-card">
                     <div class="editor-bar">
                       <Show when={dirty()}><span class="dot-unsaved" title="Unsaved changes" /></Show>
@@ -647,7 +647,7 @@ export function Organizer(props: {
                     </Show>
                   </div>
                 }>
-                  <McpForm item={item()} onSave={saveMcp} />
+                  {(mcpItem) => <McpForm item={mcpItem} onSave={saveMcp} />}
                 </Show>
 
                 <Show when={(!item().locked && !isMcp()) || statusMsg()}>
