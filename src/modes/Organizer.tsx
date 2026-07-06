@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, createEffect, For, Index, Show } from 'solid-js';
-import type { Destination, HarnessItem, McpConfig, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult } from '../api';
+import type { Destination, HarnessItem, McpConfig, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope } from '../api';
 import '../styles/organizer.css';
 
 function effectiveBadge(item: HarnessItem): string | null {
@@ -19,6 +19,15 @@ function policyBadge(v: PolicyVerdict | undefined): { label: string; color: stri
 function itemKey(item: HarnessItem): string {
   return `${item.category}::${item.name}::${item.scopeId}::${item.path}`;
 }
+
+/** Blank MCP item used to seed the add-mode form — empty config so the
+ *  transport fields start at their stdio defaults. The name + scope for
+ *  the create come from the Organizer's `newName`/`chosenScope` signals
+ *  (read in `addMcp`), NOT from this stub. */
+const BLANK_MCP_ITEM: HarnessItem = {
+  category: 'mcp', scopeId: '', name: '', path: '',
+  movable: false, deletable: true, locked: false, mcpConfig: {},
+};
 
 /** Category → accent colour (drives the dot on category rows and item rows). */
 const CAT_COLORS: Record<string, string> = {
@@ -89,6 +98,13 @@ export function Organizer(props: {
   const [selectedKeys, setSelectedKeys] = createSignal<Set<string>>(new Set());
   const [lastClickKey, setLastClickKey] = createSignal<string>('');
   const [bulkDest, setBulkDest] = createSignal<string>('');
+
+  // Plan 18 — "Add MCP Server" flow. `addingMcp` gates the detail pane onto
+  // a blank add-mode McpForm (independent of `selectedItem()`); `newName` and
+  // `chosenScope` hold the create's identity until Save.
+  const [addingMcp, setAddingMcp] = createSignal(false);
+  const [newName, setNewName] = createSignal('');
+  const [chosenScope, setChosenScope] = createSignal('');
 
   // Plan 04 — disabled-server state (per project_path) and policy.
   // Disabled list is keyed by absolute project path so toggles stay
@@ -369,6 +385,38 @@ export function Organizer(props: {
     }
   }
 
+  // Plan 18 — open the blank "Add MCP Server" form in the detail pane.
+  // Clears any current selection so the add view (gated on `addingMcp`)
+  // owns the pane, and seeds the scope picker to the first scope.
+  function startAddMcp() {
+    setNewName('');
+    setChosenScope(props.scan.scopes[0]?.id ?? 'global');
+    setSelected('');
+    setSelectedKeys(new Set<string>());
+    setStatusMsg('');
+    setAddingMcp(true);
+  }
+
+  // Plan 18 — create a new MCP server. The stub item carries an EMPTY
+  // `path` so the App bridge forwards `targetPath: undefined` → Rust
+  // resolves the chosen scope's config file. Name + scope come from the
+  // add-form signals. On success the App's refetch surfaces the new row.
+  async function addMcp(config: McpConfig): Promise<void> {
+    const name = newName().trim();
+    if (!name) { setStatusMsg('MCP add failed: name is required.'); return; }
+    try {
+      const info = await props.api.upsertMcpEntry(
+        { category: 'mcp', scopeId: chosenScope(), name, path: '', movable: false, deletable: true, locked: false },
+        config,
+      );
+      setAddingMcp(false);
+      setLastUndo(info);
+      setStatusMsg(`Added "${name}". Click Undo to reverse.`);
+    } catch (e) {
+      setStatusMsg(`MCP add failed: ${String(e)}`);
+    }
+  }
+
   function bulkMoveDestinations(): Destination[] {
     // First selected item's destinations drive the bulk UI (CCO does the
     // same per-item). Caller can pick any scope that's valid for at least
@@ -437,6 +485,11 @@ export function Organizer(props: {
               />
               Show Effective
             </label>
+            <Show when={activeCat() === 'mcp'}>
+              <button class="mcp-add-btn" data-testid="mcp-add-button" onClick={() => startAddMcp()}>
+                + Add
+              </button>
+            </Show>
             <Show when={props.canPolicy}>
               <button data-testid="mcp-policy-button" onClick={() => props.onOpenPolicy?.()}
                 style={{ 'font-size': '11px', padding: '4px 10px' }}>
@@ -547,6 +600,10 @@ export function Organizer(props: {
 
       {/* ── Detail / editor ── */}
       <div class="detail">
+        {/* Plan 18 — the "Add MCP Server" view owns the pane when active,
+            independent of the current selection. Gated FIRST so it never
+            collides with the keyed edit-mode <Show> below. */}
+        <Show when={addingMcp()} fallback={
         <Show when={selectedItem()} fallback={
           <div class="detail-empty">
             <div class="big">◫</div>
@@ -667,6 +724,39 @@ export function Organizer(props: {
             );
           }}
         </Show>
+        }>
+          {/* ── Plan 18 — Add MCP Server (blank form: name + scope + config) ── */}
+          <div class="rise" style={{ display: 'flex', 'flex-direction': 'column', height: '100%', 'min-height': 0 }}>
+            <div class="detail-head">
+              <div class="detail-titlewrap">
+                <div class="detail-title">Add MCP Server</div>
+                <div class="detail-meta">
+                  <span class="chip"><span class="cat-dot" style={{ '--dot': catDot('mcp') }} />mcp</span>
+                  <span class="chip">new server</span>
+                </div>
+              </div>
+              <div class="toolbar">
+                <button class="btn btn-ghost" data-testid="mcp-add-cancel" onClick={() => setAddingMcp(false)}>Cancel</button>
+              </div>
+            </div>
+            <McpForm
+              mode="add"
+              item={BLANK_MCP_ITEM}
+              scopes={props.scan.scopes}
+              name={newName()}
+              onName={setNewName}
+              scopeId={chosenScope()}
+              onScope={setChosenScope}
+              onSave={addMcp}
+            />
+            <Show when={statusMsg()}>
+              <div class="editor-foot">
+                <span style={{ flex: 1 }} />
+                <span classList={{ status: true, err: statusMsg().includes('failed') || statusMsg().includes('error') }}>{statusMsg()}</span>
+              </div>
+            </Show>
+          </div>
+        </Show>
       </div>
 
       <Show when={lastUndo() !== null && !selectedItem()}>
@@ -686,9 +776,26 @@ export function Organizer(props: {
 // Instead we surface a structured form: a stdio ⇄ http transport toggle
 // with the fields each transport owns. Save patches a CLONE of the
 // original config (so unknown keys round-trip) and persists via
-// `upsertMcpEntry`. The server name is intentionally NOT editable here —
-// a rename is a delete + re-add, out of scope for an in-place edit.
-function McpForm(props: { item: HarnessItem; onSave: (config: McpConfig) => Promise<void> }) {
+// `upsertMcpEntry`.
+//
+// Two modes (Plan 18):
+//  - `edit` (default): the server name is NOT editable — a rename is a
+//    delete + re-add, out of scope for an in-place edit.
+//  - `add`: a name input + scope picker appear at the top and the config
+//    starts blank. Name/scope are controlled by the parent (Organizer's
+//    `newName`/`chosenScope` signals) via the `name`/`onName`/`scopeId`/
+//    `onScope` props, so `onSave(config)` only needs to carry the config.
+function McpForm(props: {
+  item: HarnessItem;
+  onSave: (config: McpConfig) => Promise<void>;
+  mode?: 'add' | 'edit';
+  scopes?: Scope[];
+  name?: string;
+  onName?: (v: string) => void;
+  scopeId?: string;
+  onScope?: (v: string) => void;
+}) {
+  const isAdd = () => props.mode === 'add';
   const seed = () => (props.item.mcpConfig ?? {}) as McpConfig;
   const [transport, setTransport] = createSignal<'stdio' | 'http'>(seed().url ? 'http' : 'stdio');
   const [command, setCommand] = createSignal(seed().command ?? '');
@@ -717,6 +824,18 @@ function McpForm(props: { item: HarnessItem; onSave: (config: McpConfig) => Prom
 
   return (
     <div class="mcp-form" data-testid="mcp-form">
+      <Show when={isAdd()}>
+        <label class="mcp-label">Name</label>
+        <input class="mcp-input" data-testid="mcp-name" placeholder="server-name" spellcheck={false}
+          value={props.name ?? ''} onInput={(e) => props.onName?.(e.currentTarget.value)} />
+        <label class="mcp-label">Scope</label>
+        <select class="mcp-input mcp-scope-select" data-testid="mcp-scope-pick"
+          value={props.scopeId ?? ''} onChange={(e) => props.onScope?.(e.currentTarget.value)}>
+          <For each={props.scopes ?? []}>
+            {(s) => <option value={s.id}>{s.label}</option>}
+          </For>
+        </select>
+      </Show>
       <div class="seg mcp-transport">
         <button classList={{ 'seg-btn': true, active: transport() === 'stdio' }}
           data-testid="mcp-transport-stdio" onClick={() => setTransport('stdio')}>stdio</button>

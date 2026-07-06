@@ -535,3 +535,22 @@ it('re-seeds the MCP form when switching directly between two MCP servers', asyn
     expect((screen.getByTestId('mcp-command') as HTMLInputElement).value).toBe('pw');
   });
 });
+
+// ── Plan 18 Task 7: Add MCP Server flow ──
+
+it('adds a new MCP server via the Add flow (no targetPath → scope resolves)', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeScanWithMcp({ name: 'context7', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx' } });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByTestId('category-mcp'));
+  fireEvent.click(screen.getByTestId('mcp-add-button'));
+  fireEvent.input(screen.getByTestId('mcp-name'), { target: { value: 'newsrv' } });
+  fireEvent.input(screen.getByTestId('mcp-command'), { target: { value: 'npx' } });
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [item, config] = upsertSpy.mock.calls[0];
+  expect(item.name).toBe('newsrv');
+  expect(item.path).toBe(''); // App forwards undefined targetPath for a create
+  expect(config.command).toBe('npx');
+});

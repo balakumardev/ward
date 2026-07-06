@@ -68,8 +68,10 @@ export default function App() {
     mcpGetPolicy: () => api.mcpGetPolicy(),
     // Plan 18 — MCP marketplace: upsert (install/edit) a server entry into
     // the item's scope config file, then re-scan so the row reflects it.
+    // A create sends an empty `path`; forwarding it as `undefined` lets Rust
+    // resolve the chosen scope's target file (edits pass the real path).
     upsertMcpEntry: async (item: HarnessItem, config: McpConfig) => {
-      const r = await api.mcpUpsertEntry(harness(), item.scopeId, item.name, config, item.path);
+      const r = await api.mcpUpsertEntry(harness(), item.scopeId, item.name, config, item.path || undefined);
       await refetch();
       return r;
     },

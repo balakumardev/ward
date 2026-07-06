@@ -115,3 +115,29 @@
 /* The form's own footer (Save) reuses .editor-foot from app.css, but the
    form scrolls, so keep its Save action anchored below the fields. */
 .mcp-form .editor-foot { padding-top: 4px; }
+
+/* "+ Add" affordance in the MCP items-column header — an accent pill that
+   mirrors the in-form row-add buttons so the two read as one system. */
+.mcp-add-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  color: var(--accent);
+  border: 1px solid var(--border-accent);
+  background: var(--accent-bg-2);
+  cursor: pointer;
+}
+.mcp-add-btn:hover {
+  background: var(--accent-bg);
+  border-color: var(--border-accent);
+  color: var(--accent);
+}
+
+/* Scope picker (add mode) — a native <select> styled to match .mcp-input
+   so the blank-form fields line up as one column. */
+.mcp-scope-select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
