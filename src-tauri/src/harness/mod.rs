@@ -97,7 +97,8 @@ mod tests {
         fn category_ids(&self) -> Vec<&'static str> { vec!["skill"] }
         fn capabilities(&self) -> Capabilities {
             Capabilities { context_budget: false, mcp_controls: false, mcp_policy: false,
-                mcp_security: false, sessions: false, effective: false, backup: false }
+                mcp_security: false, sessions: false, effective: false, backup: false,
+                mcp_editable: false }
         }
         fn discover_scopes(&self, _ctx: &Ctx) -> Result<Vec<Scope>, WardError> { Ok(vec![]) }
         fn scan_category(&self, _c: &Ctx, _cat: &str, _s: &Scope) -> Result<Vec<HarnessItem>, WardError> { Ok(vec![]) }

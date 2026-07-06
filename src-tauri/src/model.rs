@@ -10,6 +10,11 @@ pub struct Capabilities {
     pub sessions: bool,
     pub effective: bool,
     pub backup: bool,
+    /// Plan 18 — true when this harness has a working MCP upsert backend
+    /// (structured install/edit). False keeps the Organizer's MCP pane
+    /// read-only (Codex until its upsert backend exists). Serializes as
+    /// `mcpEditable`.
+    pub mcp_editable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

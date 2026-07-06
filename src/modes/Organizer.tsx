@@ -149,6 +149,9 @@ export function Organizer(props: {
 
   const activeCatLabel = () => props.scan.categories.find((c) => c.id === activeCat())?.label ?? 'items';
   const scopeLabel = (id: string) => props.scan.scopes.find((s) => s.id === id)?.label ?? id;
+  // Plan 18 — the editable MCP form + "+ Add" only render when the harness
+  // declares a working upsert backend. Codex stays read-only until then.
+  const mcpEditable = () => props.scan.capabilities.mcpEditable;
 
   const itemsForCat = createMemo(() =>
     props.scan.items.filter((i) => i.category === activeCat())
@@ -389,6 +392,9 @@ export function Organizer(props: {
   // Clears any current selection so the add view (gated on `addingMcp`)
   // owns the pane, and seeds the scope picker to the first scope.
   function startAddMcp() {
+    // Add-mode is unreachable when the harness can't edit MCP (the button is
+    // hidden too, but guard here so it can never be triggered programmatically).
+    if (!mcpEditable()) return;
     setNewName('');
     setChosenScope(props.scan.scopes[0]?.id ?? 'global');
     setSelected('');
@@ -485,7 +491,7 @@ export function Organizer(props: {
               />
               Show Effective
             </label>
-            <Show when={activeCat() === 'mcp'}>
+            <Show when={activeCat() === 'mcp' && mcpEditable()}>
               <button class="mcp-add-btn" data-testid="mcp-add-button" onClick={() => startAddMcp()}>
                 + Add
               </button>
@@ -603,7 +609,7 @@ export function Organizer(props: {
         {/* Plan 18 — the "Add MCP Server" view owns the pane when active,
             independent of the current selection. Gated FIRST so it never
             collides with the keyed edit-mode <Show> below. */}
-        <Show when={addingMcp()} fallback={
+        <Show when={addingMcp() && mcpEditable()} fallback={
         <Show when={selectedItem()} fallback={
           <div class="detail-empty">
             <div class="big">◫</div>
@@ -625,6 +631,10 @@ export function Organizer(props: {
             };
             const md = () => isMarkdownItem(item());
             const isMcp = () => item().category === 'mcp';
+            // Only render the editable structured form when the harness can
+            // actually persist an upsert. Otherwise MCP falls back to a
+            // read-only pane (see the keyed <Show> fallback below).
+            const showMcpForm = () => isMcp() && mcpEditable();
             return (
               <div class="rise" style={{ display: 'flex', 'flex-direction': 'column', height: '100%', 'min-height': 0 }}>
                 <div class="detail-head">
@@ -672,37 +682,58 @@ export function Organizer(props: {
                 {/* Plan 18 — MCP entries get a structured stdio/http form
                     (Save persists via upsertMcpEntry). Everything else gets
                     the file editor / markdown preview. */}
-                <Show when={isMcp() ? item() : null} keyed fallback={
-                  <div class="editor-card">
-                    <div class="editor-bar">
-                      <Show when={dirty()}><span class="dot-unsaved" title="Unsaved changes" /></Show>
-                      <span class="editor-fname">{fileName(item().path)}</span>
-                      <span class="lang-tag">{langTag(item())}</span>
-                      <span style={{ flex: 1 }} />
-                      <Show when={md()}>
-                        <div class="seg">
-                          <button classList={{ 'seg-btn': true, active: !previewMode() }} onClick={() => setPreviewMode(false)}>Edit</button>
-                          <button classList={{ 'seg-btn': true, active: previewMode() }} onClick={() => setPreviewMode(true)}>Preview</button>
-                        </div>
+                <Show when={showMcpForm() ? item() : null} keyed fallback={
+                  <Show when={isMcp()} fallback={
+                    <div class="editor-card">
+                      <div class="editor-bar">
+                        <Show when={dirty()}><span class="dot-unsaved" title="Unsaved changes" /></Show>
+                        <span class="editor-fname">{fileName(item().path)}</span>
+                        <span class="lang-tag">{langTag(item())}</span>
+                        <span style={{ flex: 1 }} />
+                        <Show when={md()}>
+                          <div class="seg">
+                            <button classList={{ 'seg-btn': true, active: !previewMode() }} onClick={() => setPreviewMode(false)}>Edit</button>
+                            <button classList={{ 'seg-btn': true, active: previewMode() }} onClick={() => setPreviewMode(true)}>Preview</button>
+                          </div>
+                        </Show>
+                      </div>
+                      <Show
+                        when={md() && previewMode()}
+                        fallback={
+                          <textarea
+                            class="editor-area"
+                            data-testid="detail-editor"
+                            spellcheck={false}
+                            value={detail()}
+                            onInput={(e) => { setDetail(e.currentTarget.value); setDirty(true); }}
+                            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void doSave(); } }}
+                            disabled={item().locked}
+                          />
+                        }
+                      >
+                        <div class="preview" innerHTML={renderMarkdown(detail())} />
                       </Show>
                     </div>
-                    <Show
-                      when={md() && previewMode()}
-                      fallback={
-                        <textarea
-                          class="editor-area"
-                          data-testid="detail-editor"
-                          spellcheck={false}
-                          value={detail()}
-                          onInput={(e) => { setDetail(e.currentTarget.value); setDirty(true); }}
-                          onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); void doSave(); } }}
-                          disabled={item().locked}
-                        />
-                      }
-                    >
-                      <div class="preview" innerHTML={renderMarkdown(detail())} />
-                    </Show>
-                  </div>
+                  }>
+                    {/* Plan 18 — MCP without an upsert backend (e.g. Codex):
+                        read-only display of the server config as pretty JSON. */}
+                    <div class="editor-card">
+                      <div class="editor-bar">
+                        <span class="editor-fname">{fileName(item().path)}</span>
+                        <span class="lang-tag">json</span>
+                      </div>
+                      <textarea
+                        class="editor-area"
+                        data-testid="detail-editor"
+                        spellcheck={false}
+                        value={JSON.stringify(item().mcpConfig ?? {}, null, 2)}
+                        disabled
+                      />
+                      <div class="mcp-readonly-note" data-testid="mcp-readonly-note">
+                        Read-only — MCP server entry in {fileName(item().path)}. Editing MCP for this harness isn’t supported yet.
+                      </div>
+                    </div>
+                  </Show>
                 }>
                   {(mcpItem) => <McpForm item={mcpItem} onSave={saveMcp} />}
                 </Show>
@@ -785,6 +816,11 @@ export function Organizer(props: {
 //    starts blank. Name/scope are controlled by the parent (Organizer's
 //    `newName`/`chosenScope` signals) via the `name`/`onName`/`scopeId`/
 //    `onScope` props, so `onSave(config)` only needs to carry the config.
+/** Remote (non-stdio) MCP transport `type` values. Used to reconcile a
+ *  stale `type` key when the user toggles the stdio ⇄ http transport so an
+ *  entry never carries a `type` that contradicts its transport shape. */
+const REMOTE_TYPES = ['http', 'sse'];
+
 function McpForm(props: {
   item: HarnessItem;
   onSave: (config: McpConfig) => Promise<void>;
@@ -814,10 +850,15 @@ function McpForm(props: {
       next.args = args();
       next.env = Object.fromEntries(env().filter(([k]) => k));
       delete next.url; delete next.headers;
+      // A leftover remote `type` (http/sse) contradicts a stdio entry — drop it.
+      if (typeof next.type === 'string' && REMOTE_TYPES.includes(next.type)) delete next.type;
     } else {
       next.url = url();
       next.headers = Object.fromEntries(headers().filter(([k]) => k));
       delete next.command; delete next.args; delete next.env;
+      // A leftover non-remote `type` (e.g. 'stdio') contradicts an http entry.
+      // Realign it to a remote type when one was present; never fabricate one.
+      if (next.type !== undefined && !REMOTE_TYPES.includes(String(next.type))) next.type = 'http';
     }
     try { await props.onSave(next); } finally { setBusy(false); }
   }

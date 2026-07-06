@@ -783,7 +783,14 @@ fn insert_mcp_entry(root: &mut serde_json::Value, parent: &McpParentKey,
 pub fn write_mcp_upsert(target: &Path, parent: &McpParentKey, name: &str,
                         config: &serde_json::Value) -> Result<RestoreInfo, WardError> {
     let backup_bytes = std::fs::read(target).unwrap_or_default();
-    let mut root = read_json_or_empty(target)?;
+    // A 0-byte existing file parses as an EOF error via `read_json_or_empty`
+    // (`from_str("")` fails). Reuse the bytes we already read: empty → start
+    // from an empty object, exactly as `set_policy` does.
+    let mut root = if backup_bytes.is_empty() {
+        serde_json::json!({})
+    } else {
+        read_json_or_empty(target)?
+    };
     ensure_mcp_parent(&mut root, parent);
     insert_mcp_entry(&mut root, parent, name, config.clone());
     if let Some(dir) = target.parent() { std::fs::create_dir_all(dir)?; }
@@ -1543,6 +1550,25 @@ mod tests {
         let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
         assert_eq!(after["mcpServers"]["remote"]["url"], "https://x.com/mcp");
         assert!(info.backup_bytes.is_none(), "no prior file → no backup");
+    }
+
+    #[test]
+    fn upsert_into_zero_byte_file_treats_as_empty() {
+        // An existing 0-byte file must be treated like an empty object, not
+        // fed to `serde_json::from_str("")` (which errors). Mirrors set_policy.
+        let (dir, _repo) = make_home_with_repo();
+        let home = dir.path();
+        let json = home.join(".claude/.mcp.json");
+        fs::create_dir_all(json.parent().unwrap()).unwrap();
+        fs::write(&json, "").unwrap(); // 0-byte existing file
+        let cfg = serde_json::json!({"command":"npx","args":["-y","pkg@1.0.0"]});
+        let info = write_mcp_upsert(&json, &McpParentKey::mcp_servers(), "newsrv", &cfg).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
+        assert_eq!(after["mcpServers"]["newsrv"]["command"], "npx", "entry lands");
+        assert_eq!(info.kind, "mcp-upsert");
+        // Empty prior bytes → treated as a create, so no byte-backup is captured.
+        assert!(info.backup_bytes.is_none(), "0-byte prior file yields no backup");
     }
 
     #[test]

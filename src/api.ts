@@ -35,6 +35,10 @@ function invokeOrThrow<T>(cmd: string, args?: Record<string, unknown>): Promise<
 export interface Capabilities {
   contextBudget: boolean; mcpControls: boolean; mcpPolicy: boolean;
   mcpSecurity: boolean; sessions: boolean; effective: boolean; backup: boolean;
+  /** Plan 18 — true when this harness has a working MCP upsert backend, so
+   *  the Organizer renders the editable structured MCP form + "+ Add MCP".
+   *  False (e.g. Codex) keeps the MCP pane read-only. */
+  mcpEditable: boolean;
 }
 export interface Category { id: string; label: string; count: number; }
 export interface Scope { id: string; kind: string; label: string; root: string; }

@@ -37,7 +37,7 @@ const scan: ScanResult = {
   items: [
     { category: 'skill', scopeId: 'global', name: 'brainstorming', path: '/p/SKILL.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
 };
 
 test('shows category counts and lists items; clicking loads content', async () => {
@@ -79,7 +79,7 @@ const effectiveScan: ScanResult = {
     // Project-only command (active)
     { category: 'command', scopeId: 'repo-a', name: 'build', path: '/p/cmds/build.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
 };
 
 test('show-effective toggle hides global items without a tag when ON', async () => {
@@ -145,7 +145,7 @@ const mutableScan: ScanResult = {
     { category: 'skill', scopeId: 'global', name: 'a', path: '/g/a/SKILL.md', movable: true, deletable: true, locked: false },
     { category: 'skill', scopeId: 'global', name: 'b', path: '/g/b/SKILL.md', movable: true, deletable: true, locked: false },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
 };
 
 test('move menu lists destinations returned by api.listDestinations', async () => {
@@ -294,7 +294,7 @@ const mcpScan: ScanResult = {
       movable: true, deletable: true, locked: false,
       mcpConfig: { command: 'node', args: ['approved.js'] } },
   ],
-  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+  capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
 };
 
 test('disable toggle only appears for non-global MCP items', async () => {
@@ -427,7 +427,7 @@ function makeScanWithMcp(opts: {
       { category: 'mcp', scopeId: opts.scopeId, name: opts.name, path: opts.path,
         movable: true, deletable: true, locked: false, mcpConfig: opts.mcpConfig },
     ],
-    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
   };
 }
 
@@ -520,7 +520,7 @@ it('re-seeds the MCP form when switching directly between two MCP servers', asyn
       { category: 'mcp', scopeId: 'global', name: 'playwright', path: '/Users/x/.claude.json',
         movable: true, deletable: true, locked: false, mcpConfig: { command: 'pw', args: ['--headed'] } },
     ],
-    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true },
+    capabilities: { contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true, sessions: true, effective: true, backup: true, mcpEditable: true },
   };
   renderOrganizer({ scan, api: fakeApi });
 
@@ -553,4 +553,51 @@ it('adds a new MCP server via the Add flow (no targetPath → scope resolves)', 
   expect(item.name).toBe('newsrv');
   expect(item.path).toBe(''); // App forwards undefined targetPath for a create
   expect(config.command).toBe('npx');
+});
+
+// ── Plan 18 review-fix 1: gate the editable form on capabilities.mcpEditable ──
+
+it('renders a READ-ONLY MCP pane (no form, no add button) when mcpEditable is false', async () => {
+  // A harness without an MCP upsert backend (e.g. Codex) must NOT show the
+  // editable structured form or "+ Add" — it falls back to a read-only view.
+  const scan: ScanResult = {
+    harnessId: 'codex',
+    categories: [{ id: 'mcp', label: 'MCP', count: 1 }],
+    scopes: [{ id: 'global', kind: 'global', label: 'Global (~/.codex)', root: '/Users/x/.codex' }],
+    items: [
+      { category: 'mcp', scopeId: 'global', name: 'context7', path: '/Users/x/.codex/config.toml#context7',
+        movable: false, deletable: true, locked: false, mcpConfig: { command: 'npx', args: ['-y', 'c7'] } },
+    ],
+    capabilities: { contextBudget: false, mcpControls: true, mcpPolicy: false, mcpSecurity: true, sessions: false, effective: false, backup: true, mcpEditable: false },
+  };
+  renderOrganizer({ scan, api: fakeApi });
+  // "+ Add" is hidden when the harness can't edit MCP.
+  expect(screen.queryByTestId('mcp-add-button')).not.toBeInTheDocument();
+  // Selecting the MCP item shows the read-only editor, NOT the structured form.
+  fireEvent.click(screen.getByText('context7'));
+  const editor = await screen.findByTestId('detail-editor') as HTMLTextAreaElement;
+  expect(editor).toBeInTheDocument();
+  expect(editor.value).toContain('"command": "npx"'); // pretty-printed server config
+  expect(screen.queryByTestId('mcp-form')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('mcp-save')).not.toBeInTheDocument();
+});
+
+// ── Plan 18 review-fix 3: align a contradictory `type` on transport switch ──
+
+it('switching a type:stdio entry to http realigns the contradictory type and keeps url', async () => {
+  const upsertSpy = vi.fn().mockResolvedValue({ kind: 'mcp-upsert', originalPath: '/x' });
+  const scan = makeScanWithMcp({ name: 'ctx', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx', args: ['-y', 'pkg@1'], type: 'stdio' } });
+  renderOrganizer({ scan, api: { ...fakeApi, upsertMcpEntry: upsertSpy } });
+  fireEvent.click(screen.getByText('ctx'));
+  await screen.findByTestId('mcp-form');
+  fireEvent.click(screen.getByTestId('mcp-transport-http'));
+  const url = await screen.findByTestId('mcp-url') as HTMLInputElement;
+  fireEvent.input(url, { target: { value: 'https://mcp.example.com/sse' } });
+  fireEvent.click(screen.getByTestId('mcp-save'));
+  await waitFor(() => expect(upsertSpy).toHaveBeenCalled());
+  const [, config] = upsertSpy.mock.calls[0];
+  expect(config.url).toBe('https://mcp.example.com/sse');
+  expect(config.type).not.toBe('stdio'); // contradictory stdio type must not survive next to a url
+  expect(config.command).toBeUndefined();
 });

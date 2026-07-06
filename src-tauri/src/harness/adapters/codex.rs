@@ -124,6 +124,8 @@ impl Harness for CodexAdapter {
             sessions: true,
             effective: false,
             backup: true,
+            // Codex MCP stays read-only until an upsert backend exists.
+            mcp_editable: false,
         }
     }
 
@@ -963,6 +965,7 @@ args = [\"server.mjs\"]\n\
         assert!(!c.mcp_controls,   "mcpControls must be false");
         assert!(!c.mcp_policy,     "mcpPolicy must be false");
         assert!(!c.effective,      "effective must be false");
+        assert!(!c.mcp_editable,   "mcpEditable must be false");
     }
 
     #[test]

@@ -613,6 +613,7 @@
     "mcpSecurity": true,
     "sessions": true,
     "effective": true,
-    "backup": true
+    "backup": true,
+    "mcpEditable": true
   }
 }
