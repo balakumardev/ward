@@ -16,6 +16,8 @@ pub enum WardError {
     Autostart(String),
     #[error("live usage error: {0}")]
     Live(String),
+    #[error("registry error: {0}")]
+    Registry(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -32,6 +34,7 @@ enum ErrorKind {
     Backup(String),
     Autostart(String),
     Live(String),
+    Registry(String),
     Io(String),
 }
 
@@ -50,6 +53,7 @@ impl serde::Serialize for WardError {
             WardError::Backup(_) => ErrorKind::Backup(message),
             WardError::Autostart(_) => ErrorKind::Autostart(message),
             WardError::Live(_) => ErrorKind::Live(message),
+            WardError::Registry(_) => ErrorKind::Registry(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)
@@ -72,5 +76,15 @@ mod tests {
         let e = WardError::Git("nothing to commit".into());
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(json, "{\"kind\":\"git\",\"message\":\"git operation failed: nothing to commit\"}");
+    }
+
+    #[test]
+    fn registry_error_serializes_camel_case() {
+        let e = WardError::Registry("refusing to install an unpinned version".into());
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(
+            json,
+            "{\"kind\":\"registry\",\"message\":\"registry error: refusing to install an unpinned version\"}"
+        );
     }
 }

@@ -5,6 +5,7 @@ mod effective;
 mod error;
 mod fs_utils;
 mod harness;
+pub mod marketplace;
 mod model;
 pub mod mcp;
 pub mod native;
