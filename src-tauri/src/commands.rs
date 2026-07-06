@@ -586,17 +586,20 @@ pub fn backup_status() -> Result<BackupStatus, WardError> {
 /// repo mirrors the literal on-disk layout, not the scan's category
 /// labels.
 #[tauri::command]
-pub fn backup_run(
+pub async fn backup_run(
     scan: ScanResult,
     _remote_url: Option<String>,
 ) -> Result<git_ops::ExportReport, WardError> {
-    backup_run_impl(scan).map(|_commit| {
-        // `backup_run` returns the export report (count of files
-        // touched). The commit info is available separately via
-        // `backup_status` / `backup_sync` — we deliberately don't
-        // auto-push here.
-        git_ops::ExportReport::default()
-    })
+    // Return the REAL export report (files/bytes copied) so the UI can show
+    // "Backed up N files". Committing still happens inside `backup_run_impl`;
+    // we deliberately never auto-push here — that stays an explicit user click.
+    //
+    // The copy + `git add -A` can touch thousands of files, so run it on a
+    // blocking worker — a sync command would freeze the webview (and the busy
+    // spinner) for the entire export (see the async-command gotcha in CLAUDE.md).
+    tauri::async_runtime::spawn_blocking(move || backup_run_impl(scan))
+        .await
+        .map_err(|e| WardError::Backup(format!("backup task failed: {e}")))?
 }
 
 fn backup_run_impl(scan: ScanResult) -> Result<git_ops::ExportReport, WardError> {
@@ -648,11 +651,17 @@ fn backup_run_impl(scan: ScanResult) -> Result<git_ops::ExportReport, WardError>
 /// `backup_run` exported the source. Returns CommitInfo so the UI
 /// can show "committed: <sha>". Does NOT push.
 #[tauri::command]
-pub fn backup_sync() -> Result<git_ops::CommitInfo, WardError> {
-    let repo = backup_repo_root()?;
-    let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let msg = format!("backup: ward sync {}", ts);
-    git_ops::commit(&repo, &msg)
+pub async fn backup_sync() -> Result<git_ops::CommitInfo, WardError> {
+    // `git add -A` + commit over the backup tree — run off the webview thread
+    // so the UI stays responsive (mirrors `backup_run`).
+    tauri::async_runtime::spawn_blocking(|| {
+        let repo = backup_repo_root()?;
+        let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let msg = format!("backup: ward sync {}", ts);
+        git_ops::commit(&repo, &msg)
+    })
+    .await
+    .map_err(|e| WardError::Backup(format!("backup sync task failed: {e}")))?
 }
 
 /// `backup_push` — ONLY invoked by an explicit user click. Runs

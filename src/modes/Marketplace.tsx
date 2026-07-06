@@ -28,7 +28,7 @@ export interface MarketplaceApi {
   previewSkill: (entry: MarketEntry) => Promise<SkillPreview>;
 }
 
-/** Static harness axis for the install matrix. Data-driven so a future
+/** Static harness list for the install target picker. Data-driven so a future
  *  `{ id: 'claude-desktop', … }` target slots in without a rewrite (spec §12). */
 const INSTALL_HARNESSES = [
   { id: 'claude', label: 'Claude Code' },
@@ -36,6 +36,14 @@ const INSTALL_HARNESSES = [
 ] as const;
 
 const tkey = (harness: string, scopeId: string) => `${harness}::${scopeId}`;
+
+/** Unique row identity for a market entry. The registry lists the SAME server
+ *  once per published version, so `name` alone is NOT unique — keying selection
+ *  on it makes every same-named row light up together ("click one → all
+ *  selected"). The backend now dedupes by name, but we key on
+ *  `source::name::version` so the UI is robust even if duplicate-named entries
+ *  ever reach it (a second source, a paginated re-append, a dedupe regression). */
+const ekey = (e: MarketEntry) => `${e.source}::${e.name}::${e.version ?? ''}`;
 
 /** The env/header object that will actually be written (stdio `env` or remote
  *  `headers`). Secrets were already omitted upstream by `build_mcp_config`. */
@@ -47,12 +55,15 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   const [tab, setTab] = createSignal<'mcp' | 'skills'>('mcp');
   const [query, setQuery] = createSignal('');
   const [submitted, setSubmitted] = createSignal('');
-  const [selectedName, setSelectedName] = createSignal<string | null>(null);
+  const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   const [pkgIndex, setPkgIndex] = createSignal(0);
   const [envValues, setEnvValues] = createSignal<Record<string, string>>({});
   const [targets, setTargets] = createSignal<Set<string>>(new Set());
   const [results, setResults] = createSignal<InstallResult[] | null>(null);
   const [installing, setInstalling] = createSignal(false);
+  // Pending harness/scope for the "add target" builder (defaults: Claude Code + Global).
+  const [pendingHarness, setPendingHarness] = createSignal<string>(INSTALL_HARNESSES[0].id);
+  const [pendingScope, setPendingScope] = createSignal<string>(props.scan.scopes[0]?.id ?? '');
 
   const searchKind = () => (tab() === 'skills' ? 'skill' : 'mcp');
 
@@ -64,12 +75,12 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   );
 
   const entries = createMemo(() => page()?.entries ?? []);
-  const selected = createMemo(() => entries().find((e) => e.name === selectedName()) ?? null);
+  const selected = createMemo(() => entries().find((e) => ekey(e) === selectedKey()) ?? null);
   const isSkill = createMemo(() => selected()?.kind === 'skill');
 
   // Reset per-selection state whenever the chosen entry changes.
   createEffect(() => {
-    selectedName();
+    selectedKey();
     setPkgIndex(0);
     setEnvValues({});
     setResults(null);
@@ -153,7 +164,7 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   function changeTab(t: 'mcp' | 'skills') {
     if (t === tab()) return;
     setTab(t);
-    setSelectedName(null);
+    setSelectedKey(null);
     setQuery('');
     setSubmitted('');
     setResults(null);
@@ -164,13 +175,23 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
     setEnvValues({ ...envValues(), [name]: value });
   }
 
-  function toggleTarget(harness: string, scopeId: string) {
-    const k = tkey(harness, scopeId);
+  /** Add one harness×scope target (idempotent — the Set dedupes). */
+  function addTarget(harness: string, scopeId: string) {
+    if (!scopeId) return;
     const next = new Set(targets());
-    if (next.has(k)) next.delete(k);
-    else next.add(k);
+    next.add(tkey(harness, scopeId));
     setTargets(next);
   }
+
+  /** Remove one target by its `harness::scope` key. */
+  function removeTargetKey(k: string) {
+    const next = new Set(targets());
+    next.delete(k);
+    setTargets(next);
+  }
+
+  const harnessLabel = (id: string) => INSTALL_HARNESSES.find((h) => h.id === id)?.label ?? id;
+  const scopeLabel = (id: string) => props.scan.scopes.find((s) => s.id === id)?.label ?? id;
 
   async function doInstall() {
     const e = selected();
@@ -242,8 +263,8 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                   {(e) => (
                     <div
                       data-testid="market-card"
-                      classList={{ 'mkt-card': true, active: selectedName() === e.name }}
-                      onClick={() => setSelectedName(e.name)}
+                      classList={{ 'mkt-card': true, active: selectedKey() === ekey(e) }}
+                      onClick={() => setSelectedKey(ekey(e))}
                     >
                       <div class="mkt-card-top">
                         <span class="mkt-card-name">{e.displayName}</span>
@@ -418,36 +439,70 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                   </Show>
                 </Show>
 
-                {/* Install target matrix — harness × scope (shared). */}
+                {/* Install target picker — add harness × scope rows (shared).
+                    A per-project column matrix doesn't scale to N projects, so
+                    the user builds an explicit list: pick harness + project,
+                    Add, repeat. Selection state is still the `targets` Set. */}
                 <div class="mkt-field">
                   <label class="mkt-label">Install to</label>
-                  <div class="mkt-matrix" data-testid="market-target-matrix">
-                    <div class="mkt-matrix-row mkt-matrix-head">
-                      <span class="mkt-matrix-corner">Harness \ Scope</span>
+                  <div class="mkt-target-builder">
+                    <select
+                      data-testid="market-add-harness"
+                      class="mkt-select"
+                      value={pendingHarness()}
+                      onChange={(ev) => setPendingHarness(ev.currentTarget.value)}
+                    >
+                      <For each={INSTALL_HARNESSES}>
+                        {(h) => <option value={h.id}>{h.label}</option>}
+                      </For>
+                    </select>
+                    <select
+                      data-testid="market-add-scope"
+                      class="mkt-select"
+                      value={pendingScope()}
+                      onChange={(ev) => setPendingScope(ev.currentTarget.value)}
+                    >
                       <For each={props.scan.scopes}>
-                        {(s) => <span class="mkt-matrix-scope" data-testid="market-target-scope">{s.label}</span>}
+                        {(s) => <option value={s.id}>{s.label}</option>}
+                      </For>
+                    </select>
+                    <button
+                      type="button"
+                      data-testid="market-add-target"
+                      class="mkt-add-btn"
+                      disabled={!pendingScope() || targets().has(tkey(pendingHarness(), pendingScope()))}
+                      onClick={() => addTarget(pendingHarness(), pendingScope())}
+                    >
+                      + Add
+                    </button>
+                  </div>
+                  <Show
+                    when={selectedTargets().length > 0}
+                    fallback={
+                      <div class="mkt-target-empty" data-testid="market-target-empty">
+                        No targets yet — pick a harness &amp; project, then Add.
+                      </div>
+                    }
+                  >
+                    <div class="mkt-target-list">
+                      <For each={selectedTargets()}>
+                        {(t) => (
+                          <div class="mkt-target-row" data-testid="market-target-row">
+                            <span class="mkt-target-label">{harnessLabel(t.harness)} · {scopeLabel(t.scopeId)}</span>
+                            <button
+                              type="button"
+                              class="mkt-target-remove"
+                              data-testid="market-target-remove"
+                              title="Remove target"
+                              onClick={() => removeTargetKey(tkey(t.harness, t.scopeId))}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )}
                       </For>
                     </div>
-                    <For each={INSTALL_HARNESSES}>
-                      {(h) => (
-                        <div class="mkt-matrix-row" data-testid={`market-target-${h.id}`}>
-                          <span class="mkt-matrix-harness">{h.label}</span>
-                          <For each={props.scan.scopes}>
-                            {(s) => (
-                              <label class="mkt-matrix-cell">
-                                <input
-                                  type="checkbox"
-                                  data-testid={`market-cell-${h.id}-${s.id}`}
-                                  checked={targets().has(tkey(h.id, s.id))}
-                                  onChange={() => toggleTarget(h.id, s.id)}
-                                />
-                              </label>
-                            )}
-                          </For>
-                        </div>
-                      )}
-                    </For>
-                  </div>
+                  </Show>
                 </div>
 
                 {/* Install action + per-target results (shared). */}

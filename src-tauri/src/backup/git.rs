@@ -171,11 +171,53 @@ pub fn export_to_repo(source: &Path, repo_dir: &Path) -> Result<ExportReport, Wa
         return Ok(report);
     }
     ensure_dir(repo_dir)?;
-    copy_tree(source, repo_dir, &mut report)?;
+    copy_tree(source, repo_dir, &mut report, true)?;
     Ok(report)
 }
 
-fn copy_tree(src: &Path, dst: &Path, report: &mut ExportReport) -> Result<(), WardError> {
+// ── Export filtering ────────────────────────────────────────────────────
+//
+// A config backup should capture what the user authored/configured (skills,
+// memory, commands, agents, hooks, settings, CLAUDE.md, MCP config) — NOT the
+// hundreds of MB of caches, cloned plugin repos, session transcripts, history,
+// and machine-local state that `~/.claude/` also accumulates. Those are large,
+// regenerable, and churn constantly, which made every backup slow (a ~770MB
+// copy + `git add -A`) and noisy. The denylists below are matched on entry
+// name during the copy walk.
+
+/// Directory names skipped anywhere in the tree.
+const EXCLUDED_DIRS: &[&str] = &[
+    "cache", "debug", "daemon", "file-history", "projects", "security",
+    "worktree-manager", "transcripts", "shell-snapshots", "usage-data",
+    "statsig", "todos", "backups", "skills-backup", "ide", "logs", ".trash",
+];
+
+/// Under `plugins/`, these are cloned repos / caches — skip them but keep the
+/// small top-level plugin config files. (`cache` is already in EXCLUDED_DIRS.)
+const PLUGINS_EXCLUDED_SUBDIRS: &[&str] = &["repos", "cache", "marketplaces"];
+
+/// Exact file names skipped anywhere — logs and machine-local state.
+const EXCLUDED_FILES: &[&str] = &[
+    "history.jsonl", ".DS_Store", ".last-cleanup", ".last-update-result.json",
+    "daemon-auth-cooldown", "daemon-auth-status.json", "daemon.lock",
+    "daemon.status.json",
+];
+
+/// Whether an entry named `name` (a directory when `is_dir`) sitting inside a
+/// directory named `parent` should be excluded from the backup export.
+fn is_excluded(name: &str, is_dir: bool, parent: Option<&str>) -> bool {
+    if is_dir {
+        EXCLUDED_DIRS.contains(&name)
+            || (parent == Some("plugins") && PLUGINS_EXCLUDED_SUBDIRS.contains(&name))
+    } else {
+        EXCLUDED_FILES.contains(&name) || name.ends_with(".lock")
+    }
+}
+
+/// `top` is true only for the immediate children of the export root, so the
+/// UI-facing `skipped` list surfaces top-level exclusions (e.g. "security/
+/// (excluded)") without the noise of every nested skip.
+fn copy_tree(src: &Path, dst: &Path, report: &mut ExportReport, top: bool) -> Result<(), WardError> {
     if !src.exists() {
         report.skipped.push(src.display().to_string());
         return Ok(());
@@ -187,6 +229,7 @@ fn copy_tree(src: &Path, dst: &Path, report: &mut ExportReport) -> Result<(), Wa
     }
     if meta.is_dir() {
         ensure_dir(dst)?;
+        let parent = src.file_name().and_then(|n| n.to_str());
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
             // Skip nested `.git` directories. Several dirs under
@@ -197,9 +240,21 @@ fn copy_tree(src: &Path, dst: &Path, report: &mut ExportReport) -> Result<(), Wa
             if entry.file_name() == ".git" {
                 continue;
             }
+            let raw_name = entry.file_name();
+            let name = raw_name.to_string_lossy();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            // Drop caches / transcripts / cloned repos / machine-local state.
+            if is_excluded(name.as_ref(), is_dir, parent) {
+                if top {
+                    report
+                        .skipped
+                        .push(format!("{}{} (excluded)", name, if is_dir { "/" } else { "" }));
+                }
+                continue;
+            }
             let child_src = entry.path();
             let child_dst = dst.join(entry.file_name());
-            copy_tree(&child_src, &child_dst, report)?;
+            copy_tree(&child_src, &child_dst, report, false)?;
         }
         return Ok(());
     }

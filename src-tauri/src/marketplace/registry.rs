@@ -50,6 +50,14 @@ pub fn parse_servers(body: &str) -> Result<MarketPage, WardError> {
         }
     }
 
+    // The registry lists every published VERSION of a server as its own row
+    // (e.g. `anki-mcp-server` appears a dozen times, once per version). For the
+    // marketplace UI that's noise — the cards key by `name`, so all versions of
+    // one server render as duplicate rows that select together. Collapse to one
+    // row per name, keeping the highest semver (the version the user wants to
+    // install). Order of first appearance is otherwise preserved.
+    let entries = dedupe_by_name(entries);
+
     let next_cursor = root
         .get("metadata")
         .and_then(|m| m.get("nextCursor"))
@@ -58,6 +66,51 @@ pub fn parse_servers(body: &str) -> Result<MarketPage, WardError> {
         .map(|s| s.to_string());
 
     Ok(MarketPage { entries, next_cursor })
+}
+
+/// Collapse multiple version rows of the same server name into one, keeping
+/// the highest version. Preserves first-appearance order of the surviving
+/// entries so the list stays stable. When versions are equal/unparseable the
+/// first-seen entry wins.
+fn dedupe_by_name(entries: Vec<MarketEntry>) -> Vec<MarketEntry> {
+    // index in `order` → surviving entry; `pos` maps name → that index.
+    let mut order: Vec<MarketEntry> = Vec::with_capacity(entries.len());
+    let mut pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for e in entries {
+        if let Some(&i) = pos.get(&e.name) {
+            // Keep whichever version is higher.
+            if version_gt(e.version.as_deref(), order[i].version.as_deref()) {
+                order[i] = e;
+            }
+        } else {
+            pos.insert(e.name.clone(), order.len());
+            order.push(e);
+        }
+    }
+    order
+}
+
+/// True when version `a` is strictly greater than `b` under a lenient semver
+/// compare (dot-separated numeric components, missing components treated as 0;
+/// non-numeric suffixes ignored). `None`/unparseable sorts lowest.
+fn version_gt(a: Option<&str>, b: Option<&str>) -> bool {
+    version_key(a) > version_key(b)
+}
+
+/// Parse a version string into comparable numeric components. Strips a leading
+/// `v` and any pre-release/build suffix on each component (e.g. `1.2.0-rc1` →
+/// `[1,2,0]`). Returns an empty vec (sorts lowest) for `None`/empty.
+fn version_key(v: Option<&str>) -> Vec<u64> {
+    let Some(v) = v else { return Vec::new() };
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    if v.is_empty() { return Vec::new(); }
+    v.split('.')
+        .map(|part| {
+            // Take the leading run of digits (so `0-rc1` → 0, `2beta` → 2).
+            let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse::<u64>().unwrap_or(0)
+        })
+        .collect()
 }
 
 /// Map one `server.json` object into a [`MarketEntry`] (`kind: "mcp"`).
@@ -323,5 +376,33 @@ mod tests {
     fn malformed_json_is_a_registry_error() {
         let err = parse_servers("not json at all").unwrap_err();
         assert!(matches!(err, WardError::Registry(_)));
+    }
+
+    #[test]
+    fn dedupes_multiple_versions_keeping_highest() {
+        // Same server name published at three versions — the registry lists
+        // each as its own row. parse_servers must collapse to one, keeping the
+        // highest semver.
+        let body = r#"{"servers":[
+            {"server":{"name":"x/note","version":"1.0.0","description":"v1"}},
+            {"server":{"name":"x/note","version":"1.2.0","description":"v1.2"}},
+            {"server":{"name":"x/note","version":"1.0.1","description":"v1.0.1"}},
+            {"server":{"name":"y/other","version":"3.0.0","description":"o"}}
+        ]}"#;
+        let page = parse_servers(body).unwrap();
+        assert_eq!(page.entries.len(), 2, "one row per unique name");
+        let note = page.entries.iter().find(|e| e.name == "x/note").unwrap();
+        assert_eq!(note.version.as_deref(), Some("1.2.0"), "highest version wins");
+        assert_eq!(note.description, "v1.2");
+    }
+
+    #[test]
+    fn version_key_orders_semver_numerically() {
+        // 1.10.0 > 1.9.0 (numeric, not lexical); v-prefix + pre-release tolerated.
+        assert!(version_gt(Some("1.10.0"), Some("1.9.0")));
+        assert!(version_gt(Some("v2.0.0"), Some("1.99.99")));
+        assert!(version_gt(Some("1.0.1"), Some("1.0.0-rc1")));
+        assert!(!version_gt(Some("1.0.0"), Some("1.0.0")));
+        assert!(version_gt(Some("0.1.0"), None));
     }
 }

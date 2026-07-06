@@ -13,6 +13,86 @@ const SEV_CLASS: Record<Severity, string> = {
   low: 'sec-sev-low',
 };
 
+/** Plain-English "what this severity means" line, so the number in the header
+ *  isn't just a colour. */
+const SEV_MEANING: Record<Severity, string> = {
+  critical: 'Critical — very likely malicious or destructive. Investigate before running this server.',
+  high: 'High — strong indicator of unsafe behaviour. Review carefully.',
+  medium: 'Medium — worth a look; may be a false positive in benign text.',
+  low: 'Low — informational; usually safe but flagged for awareness.',
+};
+
+/** Remediation guidance keyed by the rule-id prefix (rule family). Each MCP
+ *  finding comes from one of these families; this is the "what do I do about
+ *  it" the raw scanner output was missing. Kept on the frontend so we can
+ *  tune the wording without a backend rebuild. */
+const REMEDIATION: Record<string, { label: string; advice: string }> = {
+  PI: {
+    label: 'Prompt injection',
+    advice: 'The server text tries to override the agent\'s instructions. If you don\'t recognise/trust this server, disable it in the Organizer or remove it. Legitimate servers rarely embed instruction-override language in their descriptions.',
+  },
+  TP: {
+    label: 'Tool poisoning',
+    advice: 'The tool description hints at hidden, secondary actions (collecting or sending data beyond its stated job). Verify the source repo and the tool\'s actual behaviour before trusting it; disable it if you can\'t.',
+  },
+  TS: {
+    label: 'Tool shadowing',
+    advice: 'This tool tries to influence how other tools behave. Prefer servers that stay in their own lane; remove or disable it if the cross-tool language isn\'t clearly justified.',
+  },
+  SF: {
+    label: 'Sensitive file access',
+    advice: 'The config references sensitive paths (SSH keys, credentials, .env, system files). Confirm the server genuinely needs this access. Scope it down or disable it if not.',
+  },
+  DE: {
+    label: 'Data exfiltration',
+    advice: 'The config points at an external/known-exfiltration endpoint. Confirm the destination is one you trust. If it\'s a tunneling/collector service (webhook.site, ngrok, etc.) treat it as hostile.',
+  },
+  CH: {
+    label: 'Credential exposure',
+    advice: 'A secret (API key, token, private key) appears in plaintext in the config. Rotate it immediately, move it to an environment variable, and remove the literal from the file.',
+  },
+  CE: {
+    label: 'Code execution',
+    advice: 'The config contains dynamic code-execution patterns (eval/exec, reverse shell, curl|bash). Only keep this if you fully trust and understand the command; otherwise disable the server.',
+  },
+  CI: {
+    label: 'Command injection',
+    advice: 'A destructive or network-exfil shell command is present. Review the exact command; remove or sandbox it if it isn\'t clearly safe.',
+  },
+  HK: {
+    label: 'Suspicious hook',
+    advice: 'A hook runs risky shell behaviour (downloads-and-executes, destructive ops, injected variables). Review the hook command in your settings.json and remove it if you didn\'t add it intentionally.',
+  },
+  EP: {
+    label: 'Exfiltration parameter',
+    advice: 'A tool parameter name suggests a hidden data channel (e.g. "note", "debug", "callback_url"). Check what the tool does with it; disable the server if the channel isn\'t legitimate.',
+  },
+  SC: {
+    label: 'Supply chain',
+    advice: 'The command auto-installs packages without confirmation (npx -y). Pin a specific version and review the package before allowing it to run unattended.',
+  },
+  PE: {
+    label: 'Persistence',
+    advice: 'The config modifies shell profiles or installs scheduled tasks/services — classic persistence. Confirm this is intentional; remove it otherwise.',
+  },
+};
+
+/** Look up remediation by the rule-id family (prefix before the dash). */
+function remediationFor(ruleId: string): { label: string; advice: string } | null {
+  const prefix = (ruleId.split('-')[0] ?? '').toUpperCase();
+  return REMEDIATION[prefix] ?? null;
+}
+
+/** Split the finding context around the matched text so the pane can highlight
+ *  exactly what tripped the rule. Falls back to [before=context, ''] when the
+ *  match isn't found inside the context string. */
+function splitContext(context: string, matched: string): [string, string, string] {
+  if (!matched) return [context, '', ''];
+  const i = context.indexOf(matched);
+  if (i < 0) return [context, '', ''];
+  return [context.slice(0, i), matched, context.slice(i + matched.length)];
+}
+
 export interface SecurityApi {
   listDestinations: (item: HarnessItem) => Promise<unknown[]>;
   moveItem: (item: HarnessItem, destScopeId: string) => Promise<RestoreInfo>;
@@ -127,8 +207,11 @@ export function Security(props: {
               >
                 <span class="sec-sev-dot" data-testid="severity-dot" />
                 <div class="sec-finding-main">
-                  <div class="sec-finding-title">{f.ruleId} · {f.sourceName}</div>
-                  <div class="sec-finding-sub">{f.matchedText}</div>
+                  <div class="sec-finding-title">{f.name}</div>
+                  <div class="sec-finding-sub">
+                    <span class="sec-finding-source">{f.sourceName || 'unknown source'}</span>
+                    <span class="sec-finding-rule">{f.ruleId}</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -142,25 +225,60 @@ export function Security(props: {
       {/* RIGHT — detail pane */}
       <main class="sec-detail" data-testid="security-detail">
         <Show when={selectedFinding()} fallback={<div class="sec-detail-empty">Select a finding to view details.</div>}>
-          {(f) => (
+          {(f) => {
+            const rem = () => remediationFor(f().ruleId);
+            const parts = () => splitContext(f().context, f().matchedText);
+            return (
             <div classList={{ 'sec-detail-card': true, rise: true, [SEV_CLASS[f().severity]]: true }}>
               <div class="sec-detail-head">
-                <h2 class="sec-detail-title">{f().ruleId} — {f().name}</h2>
+                <div class="sec-detail-headrow">
+                  <span class="sec-sev-badge" data-testid="security-sev-badge">{f().severity}</span>
+                  <h2 class="sec-detail-title">{f().name}</h2>
+                </div>
+                <div class="sec-detail-tags">
+                  <Show when={rem()}><span class="sec-tag">{rem()!.label}</span></Show>
+                  <span class="sec-tag sec-tag-dim">{f().ruleId}</span>
+                </div>
               </div>
-              <div class="sec-detail-desc">{f().description}</div>
-              <div class="sec-field" data-testid="security-source">
-                <strong>Source:</strong> <code>{f().sourceName}</code>
+
+              {/* What it is */}
+              <div class="sec-section">
+                <div class="sec-section-label">What this means</div>
+                <div class="sec-detail-desc">{f().description}</div>
+                <div class="sec-sev-meaning">{SEV_MEANING[f().severity]}</div>
               </div>
-              <div class="sec-snippet" data-testid="security-snippet">{f().context}</div>
-              <div class="sec-field" data-testid="security-matched">
-                <strong>Matched:</strong> <code class="sec-matched-code">{f().matchedText}</code>
+
+              {/* Where it is */}
+              <div class="sec-section">
+                <div class="sec-section-label">Where</div>
+                <div class="sec-field" data-testid="security-source">
+                  <span class="sec-field-key">Source</span>
+                  <code>{f().sourceName || 'unknown'}</code>
+                </div>
+                <div class="sec-snippet" data-testid="security-snippet">
+                  <Show when={parts()[1]} fallback={<span>{f().context}</span>}>
+                    <span>{parts()[0]}</span>
+                    <mark class="sec-snippet-hit" data-testid="security-matched">{parts()[1]}</mark>
+                    <span>{parts()[2]}</span>
+                  </Show>
+                </div>
               </div>
+
+              {/* What to do */}
+              <Show when={rem()}>
+                <div class="sec-section sec-section-fix">
+                  <div class="sec-section-label">What to do</div>
+                  <div class="sec-fix-advice" data-testid="security-remediation">{rem()!.advice}</div>
+                </div>
+              </Show>
+
               <div class="sec-actions">
-                <button class="btn btn-ghost" data-testid="security-rejudge" onClick={() => rejudge()}>Re-judge</button>
-                <button class="btn" data-testid="security-accept-baseline" onClick={() => acceptBaseline(f())}>Accept baseline</button>
+                <button class="btn btn-ghost" data-testid="security-rejudge" onClick={() => rejudge()}>Re-scan</button>
+                <button class="btn" data-testid="security-accept-baseline" onClick={() => acceptBaseline(f())}>Mark as reviewed</button>
               </div>
             </div>
-          )}
+            );
+          }}
         </Show>
       </main>
     </div>

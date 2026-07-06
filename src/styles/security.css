@@ -81,6 +81,12 @@
 .sec-finding-sub {
   margin-top: 2px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 8px;
+}
+.sec-finding-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sec-finding-rule {
+  flex: none; font-size: 10px; padding: 1px 6px; border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border); color: var(--text-mute);
 }
 
 /* Clean state — positive signal, reserves mint for the primary action. */
@@ -103,15 +109,36 @@
   border-left: 3px solid var(--sev); border-radius: var(--r-lg);
   box-shadow: var(--sh-2); padding: 18px 20px;
 }
-.sec-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.sec-detail-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.sec-detail-headrow { display: flex; align-items: center; gap: 10px; }
 .sec-detail-title {
   margin: 0; font-family: var(--font-display); font-size: 18px; font-weight: 700;
   letter-spacing: 0.2px; color: var(--text); word-break: break-word;
 }
-.sec-detail-desc { color: var(--text-dim); font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
+/* Severity pill in the detail header — carries the finding's severity colour. */
+.sec-sev-badge {
+  flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase;
+  padding: 3px 9px; border-radius: var(--r-pill);
+  color: var(--sev); background: var(--sev-bg); border: 1px solid var(--sev-border);
+}
+.sec-detail-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.sec-tag {
+  font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: var(--r-pill);
+  color: var(--text); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+}
+.sec-tag-dim { color: var(--text-mute); font-family: var(--font-mono); font-weight: 500; }
 
-.sec-field { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.sec-field strong {
+/* Sections stack the "what / where / what to do" story. */
+.sec-section { margin-bottom: 16px; }
+.sec-section-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase;
+  color: var(--text-mute); margin-bottom: 7px;
+}
+.sec-detail-desc { color: var(--text); font-size: 13px; line-height: 1.55; margin-bottom: 8px; }
+.sec-sev-meaning { color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+
+.sec-field { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.sec-field-key {
   font-size: 10px; font-weight: 600; letter-spacing: 0.9px; text-transform: uppercase;
   color: var(--text-mute); font-family: var(--font-ui);
 }
@@ -120,16 +147,24 @@
   background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
   padding: 2px 7px; border-radius: var(--r-sm); word-break: break-word;
 }
-/* Matched text carries the finding's severity colour. */
-.sec-field code.sec-matched-code {
-  color: var(--sev); background: var(--sev-bg); border-color: var(--sev-border);
-}
 
 .sec-snippet {
-  margin-bottom: 14px; padding: 12px 14px; border-radius: var(--r-md);
+  margin-bottom: 0; padding: 12px 14px; border-radius: var(--r-md);
   background: var(--surface-2); border: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--text-dim);
   white-space: pre-wrap; word-break: break-word;
 }
+/* The exact matched text, highlighted in the snippet with the sev colour. */
+.sec-snippet-hit {
+  color: var(--sev); background: var(--sev-bg);
+  border-radius: var(--r-sm); padding: 0 2px; font-weight: 600;
+}
 
-.sec-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* "What to do" gets a subtle accent so the actionable part stands out. */
+.sec-section-fix .sec-fix-advice {
+  color: var(--text); font-size: 12.5px; line-height: 1.6;
+  padding: 12px 14px; border-radius: var(--r-md);
+  background: var(--accent-bg-2); border: 1px solid var(--border-accent);
+}
+
+.sec-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }

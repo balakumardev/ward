@@ -228,8 +228,18 @@ pub fn run() {
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Ward")
+            // Start compact: the Popover measures its content and grows the
+            // window to fit (see fitWindow in Popover.tsx). Starting small means
+            // the window only ever GROWS into place — a taller-than-content
+            // start would flash an empty gap under the content until the first
+            // resize lands.
             .inner_size(320.0, 300.0)
-            .resizable(false)
+            // Must be resizable so the Popover's measure-then-`setSize` fit can
+            // grow the window to its content height (a non-resizable window
+            // silently ignores setSize, forcing the user to scroll). Still
+            // decorationless + not user-draggable-resize in practice since it's
+            // shown transiently under the tray and hidden on blur.
+            .resizable(true)
             .decorations(false)
             .always_on_top(true)
             .skip_taskbar(true)

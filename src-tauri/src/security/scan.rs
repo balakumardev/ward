@@ -105,10 +105,17 @@ pub fn scan(items: &[HarnessItem], opts: &ScanOptions) -> Result<ScanResult, War
         let desc = format!("{}\n{}", item.description, serde_json::to_string(&cfg).unwrap_or_default());
         let mut findings = rules::evaluate(&desc);
         findings.extend(rules::scan_param_names(&cfg, &item.name, &format!("{}/{}", item.scope_id, item.name)));
-        for f in &findings {
-            // Stamp the source info we know from the harness item.
-            // We rebuild a Finding to attach the source_name; the
-            // original `id` (UUID) is preserved for downstream tooling.
+        // Stamp the source info from the harness item. `rules::evaluate`
+        // leaves `source_name` empty (it only sees text), so without this the
+        // UI shows a blank source for every regex finding. `scan_param_names`
+        // already sets its own source_name, so only fill blanks.
+        for f in findings.iter_mut() {
+            if f.source_name.is_empty() {
+                f.source_name = format!("{}/{}", item.scope_id, item.name);
+            }
+            if f.source_type.is_empty() {
+                f.source_type = "mcp".into();
+            }
         }
         let summary = ServerSummary {
             server_name: item.name.clone(),

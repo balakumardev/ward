@@ -1,4 +1,4 @@
-import { createResource, createSignal, onCleanup, onMount, For, Show, Switch, Match } from 'solid-js';
+import { createEffect, createResource, createSignal, onCleanup, onMount, For, Show, Switch, Match } from 'solid-js';
 import { api, isTauri, type UsageSnapshot, type UsageWindow } from '../api';
 import '../styles/popover.css';
 
@@ -32,9 +32,14 @@ export function secsUntil(resetsAt: string | undefined, nowMs: number): number |
   return Math.max(0, Math.floor((ms - nowMs) / 1000));
 }
 
-/** Popover window sizing bounds (logical px). Width is fixed at 320. */
+/** Popover window sizing bounds (logical px). Width is fixed at 320. MAX is
+ *  sized to clear the tallest live layout (Claude 5h+7d gauges with reset +
+ *  source lines, Codex card, footer + launch-at-login toggle) so the window
+ *  grows to fit its content and never falls back to the internal-scroll safety
+ *  net — while staying under a typical Mac's usable menu-bar height so it can't
+ *  run off-screen. Keep in sync with `.pop { max-height }` in popover.css. */
 export const POPOVER_MIN_H = 120;
-export const POPOVER_MAX_H = 600;
+export const POPOVER_MAX_H = 720;
 
 /** Clamp a measured content height into the window's allowed range.
  *  Non-finite / non-positive (e.g. jsdom `scrollHeight === 0`) → MIN. */
@@ -170,20 +175,33 @@ export default function Popover() {
   let popEl: HTMLDivElement | undefined;
   let ro: ResizeObserver | undefined;
   let lastFitH = 0;
-  async function fitWindow() {
-    if (!isTauri() || !popEl) return;
-    const h = clampPopoverHeight(popEl.scrollHeight);
-    if (h === lastFitH) return; // avoid redundant setSize churn
-    lastFitH = h;
+  // Cached synchronous window-resizer, loaded once on mount. Doing the
+  // `import('@tauri-apps/api/…')` on every fitWindow() call added latency that
+  // let the window lag content changes — during that lag the window stayed
+  // taller than the (shorter) loading content, showing an empty gap beneath it.
+  // Caching the setter makes each resize immediate so the window hugs content.
+  let setWindowSize: ((h: number) => void) | null = null;
+  async function loadWindowSizer() {
+    if (!isTauri() || setWindowSize) return;
     try {
       const [{ getCurrentWindow }, { LogicalSize }] = await Promise.all([
         import('@tauri-apps/api/window'),
         import('@tauri-apps/api/dpi'),
       ]);
-      await getCurrentWindow().setSize(new LogicalSize(320, h));
+      const win = getCurrentWindow();
+      setWindowSize = (h: number) => {
+        try { void win.setSize(new LogicalSize(320, h)); } catch { /* window API unavailable — ignore */ }
+      };
     } catch {
       /* non-Tauri window API — ignore */
     }
+  }
+  function fitWindow() {
+    if (!popEl || !setWindowSize) return;
+    const h = clampPopoverHeight(popEl.scrollHeight);
+    if (h === lastFitH) return; // avoid redundant setSize churn
+    lastFitH = h;
+    setWindowSize(h);
   }
 
   // Claude: live (gated network) when opted in under Tauri, else local/preview.
@@ -207,6 +225,19 @@ export default function Popover() {
     (src) => fetchClaude(src.enabled),
   );
   const [codex, { refetch: refetchCodex }] = createResource(() => safeLocal('codex'));
+
+  // Re-fit the window whenever render-affecting state changes (the async usage
+  // resources resolving, opt-in / error / autostart toggling): read the signals
+  // so this effect tracks them, then resize after the DOM paints (rAF). This is
+  // a reliable trigger on the async transitions, complementing the
+  // ResizeObserver so the window never lags a content change and leaves a gap.
+  // (nowMs is deliberately NOT read here — the 1s countdown tick changes text
+  // width, not height, and the observer covers any rare reflow.)
+  createEffect(() => {
+    claude(); codex(); cachedClaude(); cachedCodex(); claudeError(); liveEnabled(); autostart();
+    if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(fitWindow);
+    else fitWindow();
+  });
 
   // 1-second local tick drives the drift-free countdown (no fetching).
   const tick = setInterval(() => setNowMs(Date.now()), 1000);
@@ -233,11 +264,15 @@ export default function Popover() {
   }
 
   onMount(async () => {
+    // Load the cached window-resizer first, then fit once so the hidden window
+    // is already the right height before the first tray-click shows it.
+    await loadWindowSizer();
+    fitWindow();
     // Keep the window fitted to content as usage data / opt-in state render in.
     // ResizeObserver fires once on observe, so the hidden window is already the
     // right height before the first tray-click shows it.
     if (popEl && typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(() => void fitWindow());
+      ro = new ResizeObserver(() => fitWindow());
       ro.observe(popEl);
       onCleanup(() => ro?.disconnect());
     }
@@ -267,7 +302,14 @@ export default function Popover() {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const win = getCurrentWindow();
         const un = await win.onFocusChanged(({ payload }) => {
-          if (payload) refetchAll();
+          if (payload) {
+            refetchAll();
+            // Re-fit on every open. The window persists its size while hidden,
+            // so if a prior fit was missed (or content changed since), size it
+            // to content now that it's shown — prevents opening too small.
+            if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(fitWindow);
+            else fitWindow();
+          }
         });
         onCleanup(un);
       } catch {

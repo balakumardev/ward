@@ -60,6 +60,13 @@ function isMarkdownItem(item: HarnessItem): boolean {
     || ['memory', 'skill', 'plan', 'command', 'rule', 'agent'].includes(item.category);
 }
 
+/** Hooks / settings / plugins are "meta" items: entries inside a shared file
+ *  (or an install manifest), not standalone editable files. They render a
+ *  structured read-only detail card instead of the raw-file editor. */
+function isMetaItem(item: HarnessItem): boolean {
+  return ['hook', 'setting', 'plugin'].includes(item.category);
+}
+
 export interface OrganizerApi {
   listDestinations: (item: HarnessItem) => Promise<Destination[]>;
   moveItem: (item: HarnessItem, destScopeId: string) => Promise<RestoreInfo>;
@@ -226,6 +233,13 @@ export function Organizer(props: {
       // editor — the "random JSON" problem. Show just this server's config,
       // read-only (saving raw text back would clobber the whole file).
       setDetail(JSON.stringify(item.mcpConfig ?? {}, null, 2));
+    } else if (isMetaItem(item)) {
+      // Hooks / settings / plugins are entries inside a shared file (or an
+      // install manifest), not standalone editable files. Loading item.path
+      // would dump the whole settings.json / plugin dir. The structured detail
+      // travels in `mcpConfig`; the detail pane renders a focused card, so we
+      // don't need to (and shouldn't) load the raw file here.
+      setDetail('');
     } else {
       const body = await props.loadFile(item.path);
       setDetail(body);
@@ -601,7 +615,14 @@ export function Organizer(props: {
                           <Show when={selectedKeys().has(k) && k !== selected()}>
                             <span class="check-mark">☑</span>
                           </Show>
-                          <span class="row-name">{item.name}</span>
+                          <Show when={isMetaItem(item) && item.description} fallback={
+                            <span class="row-name">{item.name}</span>
+                          }>
+                            <span class="row-namewrap">
+                              <span class="row-name">{item.name}</span>
+                              <span class="row-sub">{item.description}</span>
+                            </span>
+                          </Show>
                           <Show when={item.locked}><span class="row-lock">🔒</span></Show>
                           <span class="row-badges">
                             <Show when={badge()}>
@@ -734,9 +755,11 @@ export function Organizer(props: {
                 </div>
 
                 {/* Plan 18 — MCP entries get a structured stdio/http form
-                    (Save persists via upsertMcpEntry). Everything else gets
-                    the file editor / markdown preview. */}
+                    (Save persists via upsertMcpEntry). Hooks/settings/plugins
+                    get a focused read-only card. Everything else gets the file
+                    editor / markdown preview. */}
                 <Show when={showMcpForm() ? item() : null} keyed fallback={
+                  <Show when={isMetaItem(item())} fallback={
                   <Show when={isMcp()} fallback={
                     <div class="editor-card">
                       <div class="editor-bar">
@@ -787,6 +810,9 @@ export function Organizer(props: {
                         Read-only — MCP server entry in {fileName(item().path)}. Editing MCP for this harness isn’t supported yet.
                       </div>
                     </div>
+                  </Show>
+                  }>
+                    <MetaCard item={item()} />
                   </Show>
                 }>
                   {(mcpItem) => <McpForm item={mcpItem} onSave={saveMcp} harness={props.scan.harnessId} />}
@@ -897,8 +923,80 @@ export function Organizer(props: {
   );
 }
 
-// ── Plan 18 — structured MCP server edit form ──
+// ── Meta-item detail card (hooks / settings / plugins) ──
 //
+// These categories are entries inside a shared file (settings.json) or an
+// install manifest, NOT standalone editable files. Instead of dumping the raw
+// JSON into the editor, we render a focused read-only card: the fields that
+// matter for that item, plus the source file it came from. The structured data
+// travels from the Rust scanner in `item.mcpConfig` (a generic JSON blob).
+function MetaCard(props: { item: HarnessItem }) {
+  const meta = () => (props.item.mcpConfig ?? {}) as Record<string, unknown>;
+  const kind = () => String(meta().kind ?? props.item.category);
+  const str = (k: string) => {
+    const v = meta()[k];
+    return v == null ? '' : String(v);
+  };
+  return (
+    <div class="meta-card" data-testid="meta-card" data-kind={kind()}>
+      <Show when={kind() === 'hook'}>
+        <div class="meta-rows">
+          <MetaRow label="Event" value={str('event')} mono />
+          <Show when={str('matcher')}>
+            <MetaRow label="Matcher" value={str('matcher')} mono />
+          </Show>
+          <MetaRow label="Type" value={str('type') || 'command'} />
+          <Show when={str('timeout')}>
+            <MetaRow label="Timeout" value={`${str('timeout')}s`} />
+          </Show>
+          <MetaRow label={str('type') === 'http' ? 'URL' : 'Command'} value={str('action')} mono block />
+          <MetaRow label="Source" value={str('source')} mono />
+        </div>
+        <div class="meta-note">
+          Runs on the <code>{str('event')}</code> lifecycle event
+          {str('matcher') && str('matcher') !== '*' ? <> when the matcher matches</> : <> (all events)</>}.
+          Hooks are defined in <code>{str('source')}</code> and run as shell commands regardless of what Claude decides.
+        </div>
+      </Show>
+
+      <Show when={kind() === 'setting'}>
+        <div class="meta-rows">
+          <MetaRow label="Key" value={str('key')} mono />
+          <MetaRow label="Source" value={str('source')} mono />
+        </div>
+        <div class="meta-value-block">
+          <div class="meta-value-label">Value</div>
+          <pre class="meta-value-json"><code>{JSON.stringify(meta().value ?? null, null, 2)}</code></pre>
+        </div>
+      </Show>
+
+      <Show when={kind() === 'plugin'}>
+        <div class="meta-rows">
+          <MetaRow label="Plugin" value={props.item.name} mono />
+          <Show when={props.item.description}>
+            <MetaRow label="Details" value={props.item.description ?? ''} />
+          </Show>
+          <MetaRow label="Install path" value={props.item.path} mono block />
+        </div>
+        <div class="meta-note">
+          Managed by Claude Code's plugin system. Toggle it with
+          {' '}<code>/plugin</code> or by editing <code>enabledPlugins</code> in <code>settings.json</code>.
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+function MetaRow(props: { label: string; value: string; mono?: boolean; block?: boolean }) {
+  return (
+    <div classList={{ 'meta-row': true, block: !!props.block }}>
+      <span class="meta-row-label">{props.label}</span>
+      <span classList={{ 'meta-row-value': true, mono: !!props.mono }}>{props.value || '—'}</span>
+    </div>
+  );
+}
+
+// ── Plan 18 — structured MCP server edit form ──
 // MCP "items" are entries inside a shared JSON/TOML config file, not
 // standalone files, so the raw-text editor would clobber the whole file.
 // Instead we surface a structured form: a stdio ⇄ http transport toggle

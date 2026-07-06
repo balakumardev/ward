@@ -118,7 +118,7 @@ test('a secret env var renders read-only (no typeable field), non-secret is edit
   expect(secretRow.querySelector('input')).toBeNull();
 });
 
-test('toggling a target + Install calls install with the selected targets', async () => {
+test('adding a target + Install calls install with the selected targets', async () => {
   const api = makeApi();
   const { findByTestId, getByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
   fireEvent.click(await findByTestId('market-card'));
@@ -126,8 +126,9 @@ test('toggling a target + Install calls install with the selected targets', asyn
   await findByTestId('market-preview');
   await waitFor(() => expect(getByTestId('market-preview').textContent).toContain('npx'));
 
-  // Check the Claude × global cell.
-  fireEvent.click(getByTestId('market-cell-claude-global'));
+  // Builder defaults to Claude Code + Global (first scope) — just Add it.
+  fireEvent.click(getByTestId('market-add-target'));
+  await findByTestId('market-target-row');
 
   const installBtn = getByTestId('market-install') as HTMLButtonElement;
   await waitFor(() => expect(installBtn.disabled).toBe(false));
@@ -138,6 +139,34 @@ test('toggling a target + Install calls install with the selected targets', asyn
   expect(call[0].name).toBe('io.github.acme/notes'); // entry
   expect(call[1]).toBe(0); // packageIndex
   expect(call[2]).toEqual([{ harness: 'claude', scopeId: 'global' }]); // targets
+});
+
+test('the target picker adds a chosen harness+project and removes it', async () => {
+  const api = makeApi();
+  const { findByTestId, getByTestId, queryByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
+  fireEvent.click(await findByTestId('market-card'));
+  await findByTestId('market-preview');
+
+  // Pick a non-default pair: Codex CLI + the "ward" project scope, then Add.
+  fireEvent.change(getByTestId('market-add-harness'), { target: { value: 'codex' } });
+  fireEvent.change(getByTestId('market-add-scope'), { target: { value: '-proj' } });
+  fireEvent.click(getByTestId('market-add-target'));
+
+  const row = await findByTestId('market-target-row');
+  expect(row.textContent).toContain('Codex CLI');
+  expect(row.textContent).toContain('ward');
+
+  // Install passes exactly the chosen target.
+  const installBtn = getByTestId('market-install') as HTMLButtonElement;
+  await waitFor(() => expect(installBtn.disabled).toBe(false));
+  fireEvent.click(installBtn);
+  await waitFor(() => expect(api.install).toHaveBeenCalledTimes(1));
+  expect((api.install as ReturnType<typeof vi.fn>).mock.calls[0][2]).toEqual([{ harness: 'codex', scopeId: '-proj' }]);
+
+  // Remove it → no rows left, Install disabled again.
+  fireEvent.click(getByTestId('market-target-remove'));
+  await waitFor(() => expect(queryByTestId('market-target-row')).toBeNull());
+  await waitFor(() => expect((getByTestId('market-install') as HTMLButtonElement).disabled).toBe(true));
 });
 
 test('Skills tab lists skill cards from the catalog search', async () => {
@@ -172,8 +201,9 @@ test('installing a skill calls install with the skill entry + selected targets',
   fireEvent.click(await findByTestId('market-card'));
   await findByTestId('market-preview');
 
-  // Check the Claude × global cell.
-  fireEvent.click(getByTestId('market-cell-claude-global'));
+  // Builder defaults to Claude Code + Global — add that target.
+  fireEvent.click(getByTestId('market-add-target'));
+  await findByTestId('market-target-row');
   const installBtn = getByTestId('market-install') as HTMLButtonElement;
   await waitFor(() => expect(installBtn.disabled).toBe(false));
   fireEvent.click(installBtn);
@@ -190,8 +220,34 @@ test('a policy denial disables Install and shows the block note', async () => {
   const { findByTestId, getByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
   fireEvent.click(await findByTestId('market-card'));
   await findByTestId('market-deny-note');
-  // Even with a target checked, a denied verdict keeps Install disabled.
-  fireEvent.click(getByTestId('market-cell-claude-global'));
+  // Even with a target added, a denied verdict keeps Install disabled.
+  fireEvent.click(getByTestId('market-add-target'));
+  await findByTestId('market-target-row');
   const installBtn = getByTestId('market-install') as HTMLButtonElement;
   await waitFor(() => expect(installBtn.disabled).toBe(true));
+});
+
+test('duplicate-named entries (different versions) select independently, not together', async () => {
+  // The registry lists the SAME server once per published version. The backend
+  // dedupes, but the UI must ALSO key selection uniquely so two same-named rows
+  // never light up together ("click one → all selected"). This guards against
+  // duplicate-named entries reaching the list from any source.
+  const V1: MarketEntry = { ...NOTES, version: '1.0.0' };
+  const V2: MarketEntry = { ...NOTES, version: '2.1.0' };
+  const api = makeApi({ search: vi.fn(async () => ({ entries: [V1, V2] })) });
+  const { findAllByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
+  const cards = await findAllByTestId('market-card');
+  expect(cards.length).toBe(2);
+
+  // Click the first card → exactly ONE card is active.
+  fireEvent.click(cards[0]);
+  await waitFor(() => expect(cards.filter((c) => c.classList.contains('active')).length).toBe(1));
+  expect(cards[0].classList.contains('active')).toBe(true);
+  expect(cards[1].classList.contains('active')).toBe(false);
+
+  // Click the second → selection moves; still exactly one active.
+  fireEvent.click(cards[1]);
+  await waitFor(() => expect(cards[1].classList.contains('active')).toBe(true));
+  expect(cards[0].classList.contains('active')).toBe(false);
+  expect(cards.filter((c) => c.classList.contains('active')).length).toBe(1);
 });

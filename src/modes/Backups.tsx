@@ -75,7 +75,15 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
     setInfo(null);
     try {
       const r = await props.api.backupRun(props.scan, null);
-      setInfo(`Exported ${r.filesCopied} file(s), ${r.bytesCopied} bytes to ~/.ward-backups/.`);
+      const mb = (r.bytesCopied / 1_000_000).toFixed(1);
+      let msg =
+        r.filesCopied > 0
+          ? `Backed up ${r.filesCopied.toLocaleString()} config file(s) (${mb} MB) to ~/.ward-backups/.`
+          : 'Nothing new to back up — the backup is already up to date.';
+      if (r.skipped && r.skipped.length > 0) {
+        msg += ` Excluded: ${r.skipped.join(', ')}.`;
+      }
+      setInfo(msg);
       await refetchStatus();
       await refetchHistory();
     } catch (e) {
@@ -252,13 +260,19 @@ export function Backups(props: { scan: ScanResult; api: BackupsApi }) {
               </div>
               <div class="bk-actions">
                 <button class="btn btn-primary" data-testid="backups-btn-run" disabled={busy() !== null} onClick={runBackup}>
-                  Run backup
+                  <Show when={busy() === 'run'} fallback={'Run backup'}>
+                    <span class="bk-spinner" aria-hidden="true" />Backing up…
+                  </Show>
                 </button>
                 <button class="btn btn-primary" data-testid="backups-btn-sync" disabled={busy() !== null} onClick={syncBackup}>
-                  Sync (commit)
+                  <Show when={busy() === 'sync'} fallback={'Sync (commit)'}>
+                    <span class="bk-spinner" aria-hidden="true" />Committing…
+                  </Show>
                 </button>
                 <button class="btn btn-ghost" data-testid="backups-btn-push" disabled={busy() !== null} onClick={pushBackup}>
-                  Push
+                  <Show when={busy() === 'push'} fallback={'Push'}>
+                    <span class="bk-spinner" aria-hidden="true" />Pushing…
+                  </Show>
                 </button>
               </div>
               <div class="bk-hint">
