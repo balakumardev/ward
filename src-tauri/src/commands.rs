@@ -241,6 +241,82 @@ pub fn mcp_upsert_entry(
     ops.upsert_mcp_entry(&ctx, &scope_id, &name, &config, target_path.as_deref(), &scopes)
 }
 
+/// Parse a pasted `mcpServers` JSON blob into `(name, config)` pairs ready for
+/// `upsert_mcp_entry`. Validates the whole blob before any caller writes.
+/// Accepts, in this precedence:
+///   1. `{"mcpServers": {"<name>": {…}}}` (or `mcp_servers`) — the map value.
+///   2. A bare single server (`command` or `url` string at top level) — named
+///      from `fallback_name` (error if absent/blank).
+///   3. A bare map `{"<name>": {…}}` — each value must be a server object.
+pub fn parse_mcp_import(
+    json: &str,
+    fallback_name: Option<&str>,
+) -> Result<Vec<(String, serde_json::Value)>, WardError> {
+    let root: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| WardError::InvalidInput(format!("invalid JSON: {e}")))?;
+    let obj = root
+        .as_object()
+        .ok_or_else(|| WardError::InvalidInput("expected a JSON object".into()))?;
+
+    if let Some(v) = obj.get("mcpServers").or_else(|| obj.get("mcp_servers")) {
+        let map = v
+            .as_object()
+            .ok_or_else(|| WardError::InvalidInput("\"mcpServers\" must be an object".into()))?;
+        return collect_mcp_servers(map);
+    }
+
+    let is_single = obj.get("command").is_some_and(|c| c.is_string())
+        || obj.get("url").is_some_and(|u| u.is_string());
+    if is_single {
+        let name = fallback_name
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| WardError::InvalidInput("a single server object needs a name".into()))?;
+        return Ok(vec![(name.to_string(), root.clone())]);
+    }
+
+    collect_mcp_servers(obj)
+}
+
+fn collect_mcp_servers(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vec<(String, serde_json::Value)>, WardError> {
+    if map.is_empty() {
+        return Err(WardError::InvalidInput("no MCP servers found".into()));
+    }
+    let mut out = Vec::with_capacity(map.len());
+    for (name, cfg) in map {
+        if !cfg.is_object() {
+            return Err(WardError::InvalidInput(format!(
+                "server \"{name}\" must be an object"
+            )));
+        }
+        out.push((name.clone(), cfg.clone()));
+    }
+    Ok(out)
+}
+
+/// Import one or more MCP servers from a pasted `mcpServers` JSON blob. Parses +
+/// validates the whole blob first, then upserts each server into `scope_id` via
+/// the SAME writer the Organizer form and Marketplace use. Returns one
+/// `RestoreInfo` per server (for a batch Undo).
+#[tauri::command]
+pub fn mcp_import_json(
+    harness: String,
+    scope_id: String,
+    json: String,
+    fallback_name: Option<String>,
+) -> Result<Vec<RestoreInfo>, WardError> {
+    let entries = parse_mcp_import(&json, fallback_name.as_deref())?;
+    let ops = ops_for(&harness)?;
+    let (ctx, scopes) = harness_ctx(&harness)?;
+    let mut infos = Vec::with_capacity(entries.len());
+    for (name, config) in entries {
+        infos.push(ops.upsert_mcp_entry(&ctx, &scope_id, &name, &config, None, &scopes)?);
+    }
+    Ok(infos)
+}
+
 /// Create a new skill (scaffold `<skills_dir>/<name>/SKILL.md`). Create-only —
 /// refuses to overwrite an existing skill dir. Returns a `skill-create`
 /// `RestoreInfo` whose undo removes the created dir (Plan 19).
@@ -1155,5 +1231,67 @@ mod tests {
         assert_eq!(info.kind, "mcp-upsert");
         let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&json).unwrap()).unwrap();
         assert_eq!(after["mcpServers"]["srv"]["command"], "c");
+    }
+
+    #[test]
+    fn parse_mcp_import_wrapped_multi() {
+        let json = r#"{"mcpServers":{"ctx7":{"command":"npx","args":["-y","@upstash/context7-mcp"]},"fs":{"command":"uvx","args":["mcp-fs"]}}}"#;
+        let mut got = parse_mcp_import(json, None).unwrap();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "ctx7");
+        assert_eq!(got[0].1["command"], "npx");
+        assert_eq!(got[1].0, "fs");
+    }
+
+    #[test]
+    fn parse_mcp_import_accepts_mcp_servers_alias() {
+        let json = r#"{"mcp_servers":{"a":{"url":"https://x/mcp","type":"http"}}}"#;
+        let got = parse_mcp_import(json, None).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "a");
+        assert_eq!(got[0].1["url"], "https://x/mcp");
+    }
+
+    #[test]
+    fn parse_mcp_import_bare_single_uses_fallback_name() {
+        let json = r#"{"command":"npx","args":["-y","srv"]}"#;
+        let got = parse_mcp_import(json, Some("my-server")).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "my-server");
+        assert_eq!(got[0].1["command"], "npx");
+    }
+
+    #[test]
+    fn parse_mcp_import_bare_single_without_name_errors() {
+        let json = r#"{"command":"npx"}"#;
+        let err = parse_mcp_import(json, None).unwrap_err();
+        assert!(matches!(err, WardError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn parse_mcp_import_bare_map() {
+        let json = r#"{"srv":{"command":"npx"}}"#;
+        let got = parse_mcp_import(json, None).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "srv");
+    }
+
+    #[test]
+    fn parse_mcp_import_invalid_json_errors() {
+        let err = parse_mcp_import("{not json", None).unwrap_err();
+        assert!(matches!(err, WardError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn parse_mcp_import_non_object_server_errors() {
+        let err = parse_mcp_import(r#"{"mcpServers":{"x":"nope"}}"#, None).unwrap_err();
+        assert!(matches!(err, WardError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn parse_mcp_import_empty_errors() {
+        assert!(matches!(parse_mcp_import("{}", None).unwrap_err(), WardError::InvalidInput(_)));
+        assert!(matches!(parse_mcp_import(r#"{"mcpServers":{}}"#, None).unwrap_err(), WardError::InvalidInput(_)));
     }
 }

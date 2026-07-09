@@ -18,6 +18,8 @@ pub enum WardError {
     Live(String),
     #[error("registry error: {0}")]
     Registry(String),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -35,6 +37,7 @@ enum ErrorKind {
     Autostart(String),
     Live(String),
     Registry(String),
+    InvalidInput(String),
     Io(String),
 }
 
@@ -54,6 +57,7 @@ impl serde::Serialize for WardError {
             WardError::Autostart(_) => ErrorKind::Autostart(message),
             WardError::Live(_) => ErrorKind::Live(message),
             WardError::Registry(_) => ErrorKind::Registry(message),
+            WardError::InvalidInput(_) => ErrorKind::InvalidInput(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
         kind.serialize(serializer)
@@ -86,5 +90,12 @@ mod tests {
             json,
             "{\"kind\":\"registry\",\"message\":\"registry error: refusing to install an unpinned version\"}"
         );
+    }
+
+    #[test]
+    fn invalid_input_serializes_camel_case() {
+        let e = WardError::InvalidInput("expected a JSON object".into());
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(json, "{\"kind\":\"invalidInput\",\"message\":\"invalid input: expected a JSON object\"}");
     }
 }

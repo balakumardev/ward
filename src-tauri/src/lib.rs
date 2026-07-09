@@ -336,6 +336,7 @@ pub fn run() {
             commands::mcp_set_policy,
             commands::mcp_check_policy,
             commands::mcp_upsert_entry,
+            commands::mcp_import_json,
             commands::skill_upsert,
             commands::marketplace_search,
             commands::marketplace_build_config,
