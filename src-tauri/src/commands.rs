@@ -383,9 +383,10 @@ type McpFetcher = fn(&str) -> Result<Vec<crate::marketplace::MarketEntry>, WardE
 
 /// Built-in MCP discovery sources. Each mints its own `source` string and does
 /// its own server-side search; a failing source is skipped, never fatal.
-/// (Glama/Smithery join this list in later Plan 25 tasks.)
+/// (Smithery joins this list in a later Plan 25 task.)
 const CURATED_MCP_SOURCES: &[(&str, McpFetcher)] = &[
     ("registry", crate::marketplace::registry::search_servers),
+    ("glama", crate::marketplace::glama::search),
 ];
 
 /// Fan out over the MCP sources (mirrors `search_skills_with`), merge, dedupe

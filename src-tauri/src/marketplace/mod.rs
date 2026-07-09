@@ -16,6 +16,7 @@
 //!   * Ward never collects secret values: `EnvVar { is_secret: true }` is
 //!     written as an empty string (never a typed-in token).
 
+pub mod glama;
 pub mod install;
 pub mod registry;
 pub mod skills;

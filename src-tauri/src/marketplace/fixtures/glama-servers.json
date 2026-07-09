@@ -1,0 +1,10 @@
+{
+  "pageInfo": { "endCursor": "abc", "hasNextPage": true },
+  "servers": [
+    { "id": "glama-1", "name": "acme-notes", "namespace": "acme", "slug": "acme-notes",
+      "description": "Notes server", "repository": { "url": "https://github.com/acme/notes-mcp" },
+      "spdxLicense": "MIT", "environmentVariablesJsonSchema": { "type": "object", "properties": { "NOTES_TOKEN": { "type": "string" } } },
+      "url": "https://glama.ai/mcp/servers/acme-notes" },
+    { "id": "glama-2", "name": "", "description": "no name — skipped", "url": "x" }
+  ]
+}
