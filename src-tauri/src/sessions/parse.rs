@@ -120,7 +120,7 @@ pub enum SessionRecord {
     /// auto-generated conversation title. Previously discarded as `Other`.
     Summary {
         text: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "leafUuid", default, skip_serializing_if = "Option::is_none")]
         leaf_uuid: Option<String>,
     },
     /// `{"type":"queue-operation",...}`
@@ -1079,5 +1079,13 @@ mod tests {
                 leaf_uuid: Some("abc-123".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn summary_record_serializes_leaf_uuid_as_camel_case() {
+        let rec = SessionRecord::Summary { text: "t".into(), leaf_uuid: Some("x".into()) };
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("\"leafUuid\":\"x\""), "expected camelCase leafUuid, got: {json}");
+        assert!(!json.contains("leaf_uuid"), "must not emit snake_case leaf_uuid, got: {json}");
     }
 }
