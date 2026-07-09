@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, createEffect, For, Index, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, createEffect, onCleanup, For, Index, Show } from 'solid-js';
 import type { Destination, HarnessItem, McpConfig, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope } from '../api';
 import '../styles/organizer.css';
 
@@ -103,6 +103,13 @@ export function Organizer(props: {
   const [destinations, setDestinations] = createSignal<Destination[]>([]);
   const [showMoveMenu, setShowMoveMenu] = createSignal(false);
   const [lastUndo, setLastUndo] = createSignal<RestoreInfo | RestoreInfo[] | null>(null);
+  // In-app confirmation dialog. Replaces window.confirm(), which in the native
+  // macOS WKWebView returns false WITHOUT showing a panel — so Delete silently
+  // no-op'd (no warning, no removal). `askConfirm` opens this and resolves the
+  // promise from the modal's buttons; works in both WKWebView and the browser.
+  const [confirmDialog, setConfirmDialog] = createSignal<
+    { message: string; confirmLabel: string; resolve: (ok: boolean) => void } | null
+  >(null);
   const [dirty, setDirty] = createSignal(false);
   const [statusMsg, setStatusMsg] = createSignal<string>('');
   const [selectedKeys, setSelectedKeys] = createSignal<Set<string>>(new Set());
@@ -294,6 +301,27 @@ export function Organizer(props: {
     void open(item);
   }
 
+  // ── Confirmation dialog ──
+
+  /** Open the in-app confirm modal; resolves true (confirmed) / false (cancelled). */
+  function askConfirm(message: string, confirmLabel = 'Delete'): Promise<boolean> {
+    return new Promise((resolve) => setConfirmDialog({ message, confirmLabel, resolve }));
+  }
+  function resolveConfirm(ok: boolean) {
+    const c = confirmDialog();
+    if (c) { c.resolve(ok); setConfirmDialog(null); }
+  }
+  // Keyboard: Escape cancels, Enter confirms — only while the dialog is open.
+  createEffect(() => {
+    if (!confirmDialog()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); resolveConfirm(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); resolveConfirm(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    onCleanup(() => window.removeEventListener('keydown', onKey));
+  });
+
   // ── Mutations ──
 
   async function doMove(item: HarnessItem, destScopeId: string) {
@@ -308,7 +336,7 @@ export function Organizer(props: {
   }
 
   async function doDelete(item: HarnessItem) {
-    if (!confirm(`Delete "${item.name}"?`)) return;
+    if (!(await askConfirm(`Delete "${item.name}"? This removes it from ${fileName(item.path)}.`))) return;
     try {
       const info = await props.api.deleteItem(item);
       setLastUndo(info);
@@ -360,7 +388,7 @@ export function Organizer(props: {
   async function doBulk(op: 'move' | 'delete') {
     const items = props.scan.items.filter((i) => selectedKeys().has(itemKey(i)));
     if (items.length < 1) return;
-    if (op === 'delete' && !confirm(`Delete ${items.length} items?`)) return;
+    if (op === 'delete' && !(await askConfirm(`Delete ${items.length} items? This cannot be undone except via the Undo button.`))) return;
     if (op === 'move' && !bulkDest()) {
       setStatusMsg('Pick a destination scope for bulk move.');
       return;
@@ -918,6 +946,24 @@ export function Organizer(props: {
           <span class="status">{statusMsg() || 'Action complete.'}</span>
           <button class="btn btn-ghost" data-testid="toast-undo" onClick={() => doUndo()}>↺ Undo</button>
         </div>
+      </Show>
+
+      {/* In-app confirmation dialog (see askConfirm). Native WKWebView's
+          window.confirm() silently returns false, so Delete needs a real modal. */}
+      <Show when={confirmDialog()} keyed>
+        {(c) => (
+          <div class="modal-overlay" data-testid="confirm-overlay" onClick={() => resolveConfirm(false)}>
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title"
+              onClick={(e) => e.stopPropagation()}>
+              <div class="modal-title" id="confirm-title">⚠ Confirm</div>
+              <div class="modal-body">{c.message}</div>
+              <div class="modal-actions">
+                <button class="btn btn-ghost" data-testid="confirm-cancel" onClick={() => resolveConfirm(false)}>Cancel</button>
+                <button class="btn btn-danger" data-testid="confirm-ok" onClick={() => resolveConfirm(true)}>{c.confirmLabel}</button>
+              </div>
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

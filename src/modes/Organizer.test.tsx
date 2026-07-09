@@ -192,22 +192,45 @@ test('clicking a destination calls api.moveItem', async () => {
   expect(moved[0].destScopeId).toBe('repo-a');
 });
 
-test('delete calls api.deleteItem and shows undo', async () => {
-  window.confirm = () => true;
+test('delete shows an in-app confirm, then calls api.deleteItem and shows undo', async () => {
   const deleted: any[] = [];
   const fakeApi: OrganizerApi = {
     ...noopApi,
     deleteItem: async (item) => { deleted.push(item); return { kind: 'file', originalPath: item.path }; },
   };
-  const { getAllByTestId, getByTestId } = render(() => (
+  const { getAllByTestId, getByTestId, queryByTestId } = render(() => (
     <Organizer scan={mutableScan} loadFile={async () => 'body'} api={fakeApi} />
   ));
   const rows = getAllByTestId('item-row');
   fireEvent.click(rows[0]);
   await waitFor(() => expect(getByTestId('delete-btn')).toBeTruthy());
   fireEvent.click(getByTestId('delete-btn'));
+  // The confirm modal appears — and NOTHING is deleted until it is confirmed.
+  await waitFor(() => expect(getByTestId('confirm-ok')).toBeTruthy());
+  expect(deleted.length).toBe(0);
+  fireEvent.click(getByTestId('confirm-ok'));
   await waitFor(() => expect(getByTestId('undo-btn')).toBeTruthy());
   expect(deleted.length).toBe(1);
+  expect(queryByTestId('confirm-ok')).toBeNull(); // modal closed
+});
+
+test('delete Cancel aborts without calling api.deleteItem', async () => {
+  const deleted: any[] = [];
+  const fakeApi: OrganizerApi = {
+    ...noopApi,
+    deleteItem: async (item) => { deleted.push(item); return { kind: 'file', originalPath: item.path }; },
+  };
+  const { getAllByTestId, getByTestId, queryByTestId } = render(() => (
+    <Organizer scan={mutableScan} loadFile={async () => 'body'} api={fakeApi} />
+  ));
+  const rows = getAllByTestId('item-row');
+  fireEvent.click(rows[0]);
+  await waitFor(() => expect(getByTestId('delete-btn')).toBeTruthy());
+  fireEvent.click(getByTestId('delete-btn'));
+  await waitFor(() => expect(getByTestId('confirm-cancel')).toBeTruthy());
+  fireEvent.click(getByTestId('confirm-cancel'));
+  await waitFor(() => expect(queryByTestId('confirm-ok')).toBeNull());
+  expect(deleted.length).toBe(0);
 });
 
 test('editor textarea edits and saves via api.saveFile', async () => {
@@ -247,7 +270,6 @@ test('shift-click extends selection; bulk bar appears', async () => {
 });
 
 test('bulk move calls api.bulk with dest and stores combined undo', async () => {
-  window.confirm = () => true;
   const bulked: Array<{ op: string; dest?: string; count: number }> = [];
   const fakeApi: OrganizerApi = {
     ...noopApi,
