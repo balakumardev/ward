@@ -54,6 +54,8 @@ function headLabel(rec: SessionRecord): string {
       return `System: ${rec.subtype}`;
     case 'aiTitle':
       return 'Title';
+    case 'summary':
+      return 'Summary';
     case 'queueOperation':
       return 'Queue';
     case 'other':

@@ -116,6 +116,13 @@ pub enum SessionRecord {
     },
     /// `{"type":"ai-title","aiTitle":"..."}`
     AiTitle { title: String },
+    /// `{"type":"summary","summary":"...","leafUuid":"..."}` — Claude Code's
+    /// auto-generated conversation title. Previously discarded as `Other`.
+    Summary {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        leaf_uuid: Option<String>,
+    },
     /// `{"type":"queue-operation",...}`
     QueueOperation { enqueue: bool },
     /// Anything we don't surface to the UI — preserved so the record
@@ -253,6 +260,17 @@ fn classify(v: Value) -> SessionRecord {
                 .get("enqueue")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+        },
+        ("summary", _) => SessionRecord::Summary {
+            text: obj
+                .get("summary")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            leaf_uuid: obj
+                .get("leafUuid")
+                .and_then(|s| s.as_str())
+                .map(str::to_string),
         },
         _ => SessionRecord::Other { record_type },
     }
@@ -1048,5 +1066,18 @@ mod tests {
         assert!(j.contains("\"outputTokens\":20"));
         assert!(j.contains("\"cacheRead\":100"));
         assert!(!j.contains("cacheWrite"), "None cacheWrite must be omitted");
+    }
+
+    #[test]
+    fn parse_line_summary_becomes_summary_record() {
+        let line = r#"{"type":"summary","summary":"Refactor the auth flow","leafUuid":"abc-123"}"#;
+        let rec = parse_line(line).expect("summary line parses");
+        assert_eq!(
+            rec,
+            SessionRecord::Summary {
+                text: "Refactor the auth flow".to_string(),
+                leaf_uuid: Some("abc-123".to_string()),
+            }
+        );
     }
 }

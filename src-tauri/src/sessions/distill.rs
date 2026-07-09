@@ -260,6 +260,11 @@ fn classify_for_distill(rec: &SessionRecord) -> DistillAction {
             }
         }
         SessionRecord::AiTitle { .. } => DistillAction::Drop,
+        // `summary` is Claude Code's auto-generated title — like `ai-title`,
+        // it's not conversation content, so drop it. This preserves the
+        // pre-existing behavior (it used to classify as `Other{"summary"}`,
+        // which fell through to `Drop` as well).
+        SessionRecord::Summary { .. } => DistillAction::Drop,
         SessionRecord::QueueOperation { .. } => DistillAction::PassThrough,
         SessionRecord::User { content, .. } => {
             // `content` is the flattened text derived from the structured

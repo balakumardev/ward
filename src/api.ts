@@ -229,6 +229,7 @@ export type SessionRecord =
   | { kind: 'assistant'; content: string; blocks: ContentBlock[]; model?: string; ts?: string; usage?: Usage }
   | { kind: 'system'; subtype: string; summary?: string }
   | { kind: 'aiTitle'; title: string }
+  | { kind: 'summary'; text: string; leafUuid?: string }
   | { kind: 'queueOperation'; enqueue: boolean }
   | { kind: 'other'; recordType: string };
 
