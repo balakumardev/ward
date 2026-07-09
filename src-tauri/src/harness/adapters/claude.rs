@@ -377,37 +377,15 @@ fn expand_home(raw: &str, home: &Path) -> PathBuf {
 fn scan_mcp(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessItem> {
     let mut items = Vec::new();
     if scope.id == "global" {
-        // ~/.claude/.mcp.json
-        if let Some(root) = &paths.claude_root {
-            for f in [".mcp.json"] {
-                let p = root.join(f);
-                if p.is_file() {
-                    if let Some(content) = std::fs::read_to_string(&p).ok() {
-                        if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(servers) = cfg.get("mcpServers").and_then(|v| v.as_object()) {
-                                for (name, server_config) in servers {
-                                    items.push(mcp_item(name, &p, scope, server_config));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // ~/.mcp.json (alternate user location)
-        let alt = home.join(".mcp.json");
-        if alt.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&alt) {
-                if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(servers) = cfg.get("mcpServers").and_then(|v| v.as_object()) {
-                        for (name, server_config) in servers {
-                            items.push(mcp_item(name, &alt, scope, server_config));
-                        }
-                    }
-                }
-            }
-        }
-        // ~/.claude.json — top-level mcpServers (user scope)
+        // Claude Code registers user-scope MCP servers ONLY in ~/.claude.json's
+        // top-level `mcpServers` (this is what `claude mcp add -s user` writes and
+        // `claude mcp list` reads). We previously also scanned ~/.claude/settings.json,
+        // ~/.mcp.json and ~/.claude/.mcp.json for a `mcpServers` block — but Claude
+        // Code does not register any of those: a `mcpServers` map in settings.json is
+        // inert, and `.mcp.json` is a project-root file, not a global source. Merging
+        // them (with no dedup) surfaced phantom servers (e.g. a `perplexity` that
+        // `claude mcp list` never shows) and duplicate rows (the same server present in
+        // two files). Read ONLY the authoritative source so Ward matches `claude mcp list`.
         let claude_json = home.join(".claude.json");
         if claude_json.is_file() {
             if let Ok(content) = std::fs::read_to_string(&claude_json) {
@@ -415,24 +393,6 @@ fn scan_mcp(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessItem> 
                     if let Some(servers) = cfg.get("mcpServers").and_then(|v| v.as_object()) {
                         for (name, server_config) in servers {
                             items.push(mcp_item(name, &claude_json, scope, server_config));
-                        }
-                    }
-                }
-            }
-        }
-        // MCP embedded in settings.json / settings.local.json (handled separately by category="hook" parser;
-        // we DO also surface mcpServers entries from settings as MCP items here).
-        if let Some(root) = &paths.claude_root {
-            for f in ["settings.json", "settings.local.json"] {
-                let p = root.join(f);
-                if p.is_file() {
-                    if let Ok(content) = std::fs::read_to_string(&p) {
-                        if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(servers) = cfg.get("mcpServers").and_then(|v| v.as_object()) {
-                                for (name, server_config) in servers {
-                                    items.push(mcp_item(name, &p, scope, server_config));
-                                }
-                            }
                         }
                     }
                 }
@@ -1037,6 +997,50 @@ mod tests {
         assert_eq!(expand_home("~/mem", home), PathBuf::from("/Users/x/mem"));
         assert_eq!(expand_home("~", home), PathBuf::from("/Users/x"));
         assert_eq!(expand_home("/abs/mem", home), PathBuf::from("/abs/mem"));
+    }
+
+    #[test]
+    fn scan_mcp_global_reads_only_claude_json_toplevel() {
+        // Claude Code registers user-scope MCP servers ONLY in ~/.claude.json's
+        // top-level `mcpServers` (what `claude mcp add -s user` writes and
+        // `claude mcp list` reads). A `mcpServers` block inside
+        // ~/.claude/settings.json (or ~/.mcp.json / ~/.claude/.mcp.json) is inert
+        // — Claude Code never registers it — so surfacing it produced phantom
+        // servers (a `perplexity` that `claude mcp list` omits) and duplicate rows
+        // (the same server present in two files). Global MCP must match reality.
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join(".claude");
+        fs::create_dir_all(&claude).unwrap();
+        // Authoritative user-scope registrations.
+        fs::write(
+            dir.path().join(".claude.json"),
+            r#"{"mcpServers":{"Context7":{"command":"npx","args":["-y","ctx"]},"reddit":{"command":"npx","args":["reddit"]}}}"#,
+        ).unwrap();
+        // Inert settings.json block — must NOT surface as registered MCP items.
+        fs::write(
+            claude.join("settings.json"),
+            r#"{"mcpServers":{"Context7":{"command":"npx"},"perplexity":{"command":"npx"}}}"#,
+        ).unwrap();
+        // A stray ~/.mcp.json (a project-root file, not a global registration).
+        fs::write(
+            dir.path().join(".mcp.json"),
+            r#"{"mcpServers":{"stray":{"command":"npx"}}}"#,
+        ).unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let scope = ClaudeAdapter.discover_scopes(&ctx).unwrap().remove(0);
+        let items = ClaudeAdapter.scan_category(&ctx, "mcp", &scope).unwrap();
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+
+        assert_eq!(items.len(), 2, "global MCP must equal ~/.claude.json top-level only: {names:?}");
+        assert!(names.contains(&"Context7"));
+        assert!(names.contains(&"reddit"));
+        assert!(!names.contains(&"perplexity"), "settings.json mcpServers must not surface");
+        assert!(!names.contains(&"stray"), "~/.mcp.json must not surface as global");
+        assert_eq!(names.iter().filter(|n| **n == "Context7").count(), 1, "Context7 must not duplicate");
+        // Every global MCP item must point at ~/.claude.json (the writable registration file).
+        assert!(items.iter().all(|i| i.path.ends_with(".claude.json")),
+            "global MCP path must be ~/.claude.json: {:?}", items.iter().map(|i| &i.path).collect::<Vec<_>>());
     }
 
     /// Helper: write an empty `~/.claude/projects/<encoded>/` dir,

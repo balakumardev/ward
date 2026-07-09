@@ -6,8 +6,10 @@
 //!     project scope, but NOT to a project whose `.claude` IS the global
 //!     `~/.claude` (home-overlap is rejected for file-based categories).
 //!   - mcp → can move to ANY scope (including home-overlap), because
-//!     MCP entries are stored in `~/.claude/.mcp.json` / `~/.mcp.json` /
-//!     `~/.claude.json` / per-repo `.mcp.json`, not in `.claude/skills/`.
+//!     MCP entries are stored in `~/.claude.json` top-level `mcpServers`
+//!     (global/user scope — what `claude mcp add -s user` writes and
+//!     `claude mcp list` reads) or per-repo `.mcp.json` (project scope),
+//!     not in `.claude/skills/`.
 //!   - plan / rule / config / hook / plugin / session / setting →
 //     locked (no destinations).
 //!   - `item.locked` always rejects.
@@ -110,7 +112,15 @@ pub fn resolve_rule_dir(scope_id: &str, scopes: &[Scope]) -> Option<PathBuf> {
 
 pub fn resolve_mcp_json(scope_id: &str, scopes: &[Scope]) -> Option<PathBuf> {
     if scope_id == "global" {
-        return Some(claude_root_for_scope_id(scope_id, scopes).join(".mcp.json"));
+        // Claude Code's user-scope MCP registry is the top-level `mcpServers` of
+        // ~/.claude.json — that's what `claude mcp add -s user` writes, what
+        // `claude mcp list` reads, and what `scan_mcp` reads. This previously
+        // returned ~/.claude/.mcp.json, which Claude Code never reads, so a server
+        // added via Ward's "+ Add" / Marketplace install never actually registered
+        // (invisible to `claude mcp list`). Point global writes at ~/.claude.json.
+        // `claude_root_for_scope_id("global")` is ~/.claude; its parent is home.
+        let claude_root = claude_root_for_scope_id(scope_id, scopes);
+        return Some(claude_root.parent()?.join(".claude.json"));
     }
     let scope = find_scope(scopes, scope_id)?;
     let repo = PathBuf::from(&scope.root);
@@ -1683,16 +1693,19 @@ mod tests {
     }
 
     #[test]
-    fn ops_upsert_add_new_resolves_global_mcp_json() {
+    fn ops_upsert_add_new_resolves_global_claude_json() {
         let (dir, _repo) = make_home_with_repo();
         let home = dir.path();
         let scopes = scopes_for(home, &home.join("work/project-a"));
         let ops = ClaudeOps;
-        // No target_path → resolves ~/.claude/.mcp.json (global) + flat mcpServers.
+        // No target_path → resolves ~/.claude.json top-level (Claude Code's user
+        // scope — what `claude mcp add -s user` writes) + flat mcpServers.
         let info = ops.upsert_mcp_entry(&ctx_for(home), "global", "brandnew",
             &serde_json::json!({"command":"npx","args":["-y","x@1.0.0"]}), None, &scopes).unwrap();
-        let target = home.join(".claude/.mcp.json");
-        assert!(target.exists(), "global add lands in ~/.claude/.mcp.json");
+        let target = home.join(".claude.json");
+        assert!(target.exists(), "global add lands in ~/.claude.json (Claude Code user scope)");
+        // The surgical write must not have created the non-authoritative legacy file.
+        assert!(!home.join(".claude/.mcp.json").exists(), "must NOT write the legacy ~/.claude/.mcp.json");
         let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(after["mcpServers"]["brandnew"]["command"], "npx");
         assert_eq!(info.mcp_parent_key.as_deref(), Some("mcpServers"));
