@@ -51,6 +51,14 @@ function writtenEnv(config: McpConfig): Record<string, string> {
   return config.env ?? config.headers ?? {};
 }
 
+/** Guard the "View source" href. `repoUrl` comes from untrusted community
+ *  sources (Glama `repository.url`, Smithery `homepage`), so a `javascript:` /
+ *  `data:` URL would execute in Ward's IPC-capable webview. Only http(s) URLs
+ *  become a link; anything else falls through to the shape note. */
+function safeHttpUrl(u: string | undefined): string | undefined {
+  return u && /^https?:\/\//i.test(u.trim()) ? u.trim() : undefined;
+}
+
 export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   const [tab, setTab] = createSignal<'mcp' | 'skills'>('mcp');
   const [query, setQuery] = createSignal('');
@@ -77,6 +85,10 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   const entries = createMemo(() => page()?.entries ?? []);
   const selected = createMemo(() => entries().find((e) => ekey(e) === selectedKey()) ?? null);
   const isSkill = createMemo(() => selected()?.kind === 'skill');
+  // Only `installable` MCP entries carry packages/remotes Ward can build + install.
+  // `discovery`/`container` entries have nothing to build, so the whole install
+  // sub-UI (picker/preview/policy) and the `built` resource are gated on this.
+  const isInstallable = createMemo(() => selected()?.installShape === 'installable');
 
   // Reset per-selection state whenever the chosen entry changes.
   createEffect(() => {
@@ -94,7 +106,13 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
   const [built] = createResource(
     () => {
       const e = selected();
-      return e && e.kind !== 'skill' ? { entry: e, idx: pkgIndex(), env: { ...envValues() } } : null;
+      // Build ONLY for an installable MCP entry. Skills have no packages;
+      // discovery/container entries have nothing to build — `build_mcp_config`
+      // returns Err for them, so we must not call it at all (a pointless
+      // erroring IPC that would paint a broken preview + stuck policy gate).
+      return e && e.kind !== 'skill' && e.installShape === 'installable'
+        ? { entry: e, idx: pkgIndex(), env: { ...envValues() } }
+        : null;
     },
     ({ entry, idx, env }) => props.api.buildConfig(entry, idx, env),
   );
@@ -313,7 +331,12 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                 <Show
                   when={isSkill()}
                   fallback={
-                    <>
+                    /* MCP install sub-UI — ONLY for installable entries.
+                       discovery/container entries have no packages/remotes to
+                       build, so they show just name/description + the source
+                       link below; rendering this block for them paints a red
+                       build-error preview and a stuck "policy: checking…". */
+                    <Show when={isInstallable()}>
                       {/* Package / transport picker */}
                       <div class="mkt-field">
                         <label class="mkt-label">Package</label>
@@ -403,7 +426,7 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                           )}
                         </Show>
                       </div>
-                    </>
+                    </Show>
                   }
                 >
                   {/* Skill definition — the real SKILL.md, fetched before install
@@ -516,7 +539,7 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                     when={isSkill() || selected()?.installShape === 'installable'}
                     fallback={
                       <Show
-                        when={selected()?.repoUrl}
+                        when={safeHttpUrl(selected()?.repoUrl)}
                         fallback={
                           <span class="mkt-shape-note" data-testid="market-shape-note">
                             {selected()?.installShape === 'container'
@@ -525,15 +548,17 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                           </span>
                         }
                       >
-                        <a
-                          class="mkt-view-btn"
-                          data-testid="market-view"
-                          href={selected()!.repoUrl}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                        >
-                          View source ↗
-                        </a>
+                        {(href) => (
+                          <a
+                            class="mkt-view-btn"
+                            data-testid="market-view"
+                            href={href()}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          >
+                            View source ↗
+                          </a>
+                        )}
                       </Show>
                     }
                   >

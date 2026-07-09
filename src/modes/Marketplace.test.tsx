@@ -73,9 +73,15 @@ const SCAN: ScanResult = {
 
 /** Realistic mock mirroring the Rust build_mcp_config (npm→npx, secrets omitted). */
 function buildConfigMock(entry: MarketEntry, idx: number, env: Record<string, string>): BuiltConfig {
+  // Mirror the real build_mcp_config (install.rs): an entry with no packages
+  // AND no remotes (discovery/container) has nothing to install, so the backend
+  // returns an Err. The mock MUST reject the same way — a benign empty preview
+  // would hide the bug where the `built` resource fires for un-installable
+  // entries and paints a broken detail pane.
+  if (!entry.packages.length && !entry.remotes.length) {
+    throw new Error(`entry '${entry.name}' has no packages or remotes to install`);
+  }
   const pkg = entry.packages[idx];
-  // Discovery/container entries carry no installable package — the real
-  // build_mcp_config isn't reached for them; return a benign empty preview.
   if (!pkg) return { name: entry.name, config: {}, commandPreview: [], env: [] };
   const command = pkg.registryType === 'npm' ? 'npx' : 'uvx';
   const args = pkg.registryType === 'npm' ? ['-y', `${pkg.identifier}@${pkg.version}`] : [`${pkg.identifier}==${pkg.version}`];
@@ -315,4 +321,54 @@ test('a container-shape entry without a repoUrl shows a shape note, not Install 
   expect(note.textContent).toContain('Container image');
   await waitFor(() => expect(queryByTestId('market-install')).toBeNull());
   expect(queryByTestId('market-view')).toBeNull();
+});
+
+test('a discovery entry hides ALL install sub-UI (no pkg picker, preview/error box, or policy) — only View source', async () => {
+  // FIX #1: build_mcp_config errors for pkg-less/remote-less discovery entries.
+  // The install sub-UI (package picker, "Will install" preview, policy verdict)
+  // must NOT render for them — otherwise 100% of discovery/container entries
+  // show a red build-error box + a stuck "policy: checking…". The detail pane
+  // must offer only name/description + the View-source link.
+  const api = makeApi({ search: vi.fn(async () => ({ entries: [DISCOVERY] })) });
+  const { findByTestId, queryByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
+  fireEvent.click(await findByTestId('market-card'));
+  await findByTestId('market-detail');
+
+  // The only affordance is the source link.
+  const view = await findByTestId('market-view');
+  expect(view.getAttribute('href')).toBe('https://github.com/x/y');
+
+  // None of the installable-MCP sub-UI is present. market-preview is the anchor
+  // assertion: with the un-gated resource it renders the "Will install" ERROR
+  // box (build_mcp_config rejected) — it must be absent after the fix.
+  await waitFor(() => expect(queryByTestId('market-preview')).toBeNull());
+  expect(queryByTestId('market-pkg-pick')).toBeNull();
+  expect(queryByTestId('market-policy-verdict')).toBeNull();
+
+  // And the gated resource never calls buildConfig for an un-installable entry
+  // (no pointless erroring IPC).
+  expect(api.buildConfig).not.toHaveBeenCalled();
+});
+
+test('View source is scheme-validated: a javascript: repoUrl is rejected, https: is allowed', async () => {
+  // FIX #2: repoUrl comes from untrusted community sources (Glama repository.url,
+  // Smithery homepage). A javascript:/data: URL would execute in Ward's
+  // IPC-capable webview, so the anchor renders only for http(s) URLs.
+  const EVIL: MarketEntry = { ...DISCOVERY, name: 'io.glama/evil', repoUrl: 'javascript:alert(1)' };
+  const evilApi = makeApi({ search: vi.fn(async () => ({ entries: [EVIL] })) });
+  const evil = render(() => <Marketplace scan={SCAN} api={evilApi} />);
+  fireEvent.click(await evil.findByTestId('market-card'));
+  await evil.findByTestId('market-detail');
+  // No View anchor — the unsafe URL falls through to the shape note.
+  await evil.findByTestId('market-shape-note');
+  expect(evil.queryByTestId('market-view')).toBeNull();
+  evil.unmount();
+
+  // A well-formed https URL still renders the anchor with that exact href.
+  const GOOD: MarketEntry = { ...DISCOVERY, name: 'io.glama/good', repoUrl: 'https://github.com/x/y' };
+  const goodApi = makeApi({ search: vi.fn(async () => ({ entries: [GOOD] })) });
+  const good = render(() => <Marketplace scan={SCAN} api={goodApi} />);
+  fireEvent.click(await good.findByTestId('market-card'));
+  const view = await good.findByTestId('market-view');
+  expect(view.getAttribute('href')).toBe('https://github.com/x/y');
 });
