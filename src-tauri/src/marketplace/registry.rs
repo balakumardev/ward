@@ -71,8 +71,9 @@ pub fn parse_servers(body: &str) -> Result<MarketPage, WardError> {
 /// Collapse multiple version rows of the same server name into one, keeping
 /// the highest version. Preserves first-appearance order of the surviving
 /// entries so the list stays stable. When versions are equal/unparseable the
-/// first-seen entry wins.
-fn dedupe_by_name(entries: Vec<MarketEntry>) -> Vec<MarketEntry> {
+/// first-seen entry wins. `pub(crate)` so the multi-source aggregator
+/// (`commands::search_mcp_with`) can dedupe across sources too.
+pub(crate) fn dedupe_by_name(entries: Vec<MarketEntry>) -> Vec<MarketEntry> {
     // index in `order` → surviving entry; `pos` maps name → that index.
     let mut order: Vec<MarketEntry> = Vec::with_capacity(entries.len());
     let mut pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -265,6 +266,33 @@ pub fn fetch_servers(cursor: Option<&str>) -> Result<MarketPage, WardError> {
         .into_string()
         .map_err(|e| WardError::Registry(format!("read registry response body: {e}")))?;
     parse_servers(&body)
+}
+
+/// Search the official registry server-side via its `search` param (name
+/// substring), returning entries (no cursor — the multi-source aggregator does
+/// not page). Empty query lists the first page. One MCP discovery source
+/// consumed by `commands::search_mcp_with`.
+pub fn search_servers(query: &str) -> Result<Vec<MarketEntry>, WardError> {
+    let mut req = ureq::get(REGISTRY_URL)
+        .timeout(Duration::from_secs(TIMEOUT_SECS))
+        .query("limit", PAGE_LIMIT);
+    let q = query.trim();
+    if !q.is_empty() {
+        req = req.query("search", q);
+    }
+    let resp = match req.call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, _)) => {
+            return Err(WardError::Registry(format!("the MCP registry returned HTTP {code}")));
+        }
+        Err(ureq::Error::Transport(t)) => {
+            return Err(WardError::Registry(format!("network error reaching the MCP registry: {t}")));
+        }
+    };
+    let body = resp
+        .into_string()
+        .map_err(|e| WardError::Registry(format!("read registry response body: {e}")))?;
+    Ok(parse_servers(&body)?.entries)
 }
 
 #[cfg(test)]

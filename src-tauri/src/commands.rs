@@ -378,9 +378,37 @@ where
     )
 }
 
-/// Search the marketplace for a `kind` of unit — `"mcp"` (the official MCP
-/// Registry, paged) or `"skill"` (the curated Claude skill marketplaces,
-/// aggregated + substring-filtered). Any other kind yields an empty page.
+/// A single MCP discovery source: server-side search over a query → entries.
+type McpFetcher = fn(&str) -> Result<Vec<crate::marketplace::MarketEntry>, WardError>;
+
+/// Built-in MCP discovery sources. Each mints its own `source` string and does
+/// its own server-side search; a failing source is skipped, never fatal.
+/// (Glama/Smithery join this list in later Plan 25 tasks.)
+const CURATED_MCP_SOURCES: &[(&str, McpFetcher)] = &[
+    ("registry", crate::marketplace::registry::search_servers),
+];
+
+/// Fan out over the MCP sources (mirrors `search_skills_with`), merge, dedupe
+/// by name (highest version wins across sources), then substring-filter.
+fn search_mcp_with(sources: &[(&str, McpFetcher)], query: &str) -> crate::marketplace::MarketPage {
+    let mut entries = Vec::new();
+    for (_id, fetch) in sources {
+        if let Ok(mut es) = fetch(query) {
+            entries.append(&mut es);
+        }
+        // A single failing source is skipped, never fatal.
+    }
+    let entries = crate::marketplace::registry::dedupe_by_name(entries);
+    filter_market_page(
+        crate::marketplace::MarketPage { entries, next_cursor: None },
+        query,
+    )
+}
+
+/// Search the marketplace for a `kind` of unit — `"mcp"` (curated MCP discovery
+/// sources, aggregated + deduped + substring-filtered) or `"skill"` (the curated
+/// Claude skill marketplaces, aggregated + substring-filtered). Any other kind
+/// yields an empty page.
 ///
 /// Network (fetch) is **user-triggered only** and runs on a worker thread via
 /// `spawn_blocking` — a sync command would do the HTTP round-trip on the main
@@ -392,17 +420,21 @@ pub async fn marketplace_search(
     query: String,
     cursor: Option<String>,
 ) -> Result<crate::marketplace::MarketPage, WardError> {
-    tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
-        "mcp" => {
-            let page = crate::marketplace::registry::fetch_servers(cursor.as_deref())?;
-            Ok(filter_market_page(page, &query))
+    tauri::async_runtime::spawn_blocking(move || {
+        // `cursor` is retained as a command param for wire-compat (it's a key in
+        // the JS `invoke` payload), but the multi-source `"mcp"` aggregator no
+        // longer pages, so no arm reads it. Bind it to `_` to keep the wire
+        // contract without an unused-variable warning.
+        let _ = &cursor;
+        match kind.as_str() {
+            "mcp" => Ok(search_mcp_with(CURATED_MCP_SOURCES, &query)),
+            "skill" => Ok(search_skills_with(
+                crate::marketplace::skills::CURATED_MARKETPLACES,
+                crate::marketplace::skills::fetch_marketplace,
+                &query,
+            )),
+            _ => Ok(crate::marketplace::MarketPage { entries: vec![], next_cursor: None }),
         }
-        "skill" => Ok(search_skills_with(
-            crate::marketplace::skills::CURATED_MARKETPLACES,
-            crate::marketplace::skills::fetch_marketplace,
-            &query,
-        )),
-        _ => Ok(crate::marketplace::MarketPage { entries: vec![], next_cursor: None }),
     })
     .await
     .map_err(|e| WardError::Registry(format!("marketplace search task failed: {e}")))?
@@ -908,6 +940,24 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Build a minimal MCP [`MarketEntry`] for the aggregator tests.
+    fn mk_entry(name: &str, version: &str, source: &str) -> crate::marketplace::MarketEntry {
+        crate::marketplace::MarketEntry {
+            kind: "mcp".into(),
+            name: name.into(),
+            display_name: name.into(),
+            description: String::new(),
+            source: source.into(),
+            version: Some(version.into()),
+            verified: true,
+            packages: vec![],
+            remotes: vec![],
+            install_shape: "discovery".into(),
+            repo_url: None,
+            skill_path: None,
+        }
+    }
+
     #[test]
     fn backup_log_impl_empty_then_lists_newest_first() {
         use crate::backup::git as g;
@@ -1016,6 +1066,26 @@ mod tests {
             "",
         );
         assert_eq!(all.entries.len(), 2);
+    }
+
+    #[test]
+    fn search_mcp_with_merges_and_dedupes_sources() {
+        fn src_a(_q: &str) -> Result<Vec<crate::marketplace::MarketEntry>, WardError> {
+            Ok(vec![mk_entry("io.x/dup", "1.0.0", "a"), mk_entry("io.x/only-a", "1.0.0", "a")])
+        }
+        fn src_b(_q: &str) -> Result<Vec<crate::marketplace::MarketEntry>, WardError> {
+            Ok(vec![mk_entry("io.x/dup", "2.0.0", "b"), mk_entry("io.x/only-b", "1.0.0", "b")])
+        }
+        fn src_fail(_q: &str) -> Result<Vec<crate::marketplace::MarketEntry>, WardError> {
+            Err(WardError::Registry("boom".into()))
+        }
+        let sources: &[(&str, McpFetcher)] = &[("a", src_a), ("b", src_b), ("fail", src_fail)];
+        let page = search_mcp_with(sources, "");
+        // A failing source is skipped, not fatal; dup collapses to the higher version.
+        assert_eq!(page.entries.len(), 3);
+        let dup = page.entries.iter().find(|e| e.name == "io.x/dup").unwrap();
+        assert_eq!(dup.version.as_deref(), Some("2.0.0"));
+        assert!(page.next_cursor.is_none()); // multi-source drops the single-cursor model
     }
 
     #[test]
