@@ -203,6 +203,34 @@ test('other/summary noise rows are hidden by default and revealed by the toggle'
   expect(getByTestId('sessions-record-2')).toBeTruthy();
 });
 
+// Whole-slice review — now that the header shows the derived title, the inline
+// `aiTitle` record is redundant, so it is hidden by default (like other/summary)
+// and only surfaced behind the "Show N system events" toggle.
+test('an ai-title row is hidden by default and revealed by the toggle', async () => {
+  const convo: Conversation = {
+    sessionId: 'abc',
+    title: 'Center a div with flexbox',
+    records: [
+      { kind: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { kind: 'aiTitle', title: 'Center a div with flexbox' },
+    ],
+  };
+  const { getByTestId, queryByTestId, findByTestId } = render(() => (
+    <Sessions scan={SCAN} api={makeApi(convo)} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  // The user turn (record #0) always renders.
+  expect(getByTestId('sessions-record-0')).toBeTruthy();
+  // The ai-title (record #1) is hidden by default — the header already shows it.
+  expect(queryByTestId('sessions-record-1')).toBeNull();
+
+  // The toggle reveals it — index preserved (still 1).
+  fireEvent.click(getByTestId('sessions-toggle-system'));
+  expect(getByTestId('sessions-record-1')).toBeTruthy();
+});
+
 // Task 6 — tool results are rendered as cards: JSON is pretty-printed
 // (multi-line, indented), and long results are folded behind a <details>.
 test('a JSON tool result is pretty-printed', async () => {

@@ -72,6 +72,8 @@ function metaBody(rec: SessionRecord): string {
       return rec.summary ?? '';
     case 'aiTitle':
       return rec.title;
+    case 'summary':
+      return rec.text;
     case 'queueOperation':
       return rec.enqueue ? 'enqueue' : 'dequeue';
     default:
@@ -83,10 +85,11 @@ function recordHasUsage(rec: SessionRecord): boolean {
   return rec.kind === 'assistant' && !!rec.usage;
 }
 
-/** Record kinds/types that render with no body — noise in the transcript.
- *  `other` records are always empty; `summary` is shown as the header title. */
+/** Record kinds/types that render with no body by default — noise in the
+ *  transcript. `other` records are always empty; `summary` and `aiTitle` are
+ *  both redundant with the header title (the derived title comes from them). */
 function isNoiseRecord(rec: SessionRecord): boolean {
-  return rec.kind === 'other' || rec.kind === 'summary';
+  return rec.kind === 'other' || rec.kind === 'summary' || rec.kind === 'aiTitle';
 }
 
 /** Pretty-print a tool-result string when it is JSON, else return it as-is. */
@@ -392,7 +395,7 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                     <button
                       type="button"
                       class="sx-convo-path"
-                      title="Copy path"
+                      title={selectedPath()}
                       onClick={() => navigator.clipboard?.writeText(selectedPath())}
                       data-testid="sessions-path"
                     >
