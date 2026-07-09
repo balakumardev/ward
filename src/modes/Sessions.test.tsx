@@ -202,3 +202,32 @@ test('other/summary noise rows are hidden by default and revealed by the toggle'
   expect(getByTestId('sessions-record-1')).toBeTruthy();
   expect(getByTestId('sessions-record-2')).toBeTruthy();
 });
+
+// Task 6 — tool results are rendered as cards: JSON is pretty-printed
+// (multi-line, indented), and long results are folded behind a <details>.
+test('a JSON tool result is pretty-printed', async () => {
+  const convo: Conversation = {
+    sessionId: 'abc',
+    title: 'T',
+    records: [{ kind: 'user', content: '', blocks: [{ type: 'toolResult', content: '{"a":1,"b":2}' }] }],
+  };
+  const { getByTestId, findByTestId } = render(() => <Sessions scan={SCAN} api={makeApi(convo)} />);
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  const body = await findByTestId('sessions-block-toolresult');
+  // Pretty-printed JSON spans multiple lines with indentation.
+  expect(body.textContent).toContain('"a": 1');
+  expect(body.textContent).toContain('\n');
+});
+
+test('a long tool result is collapsed in a <details>', async () => {
+  const long = 'x'.repeat(600);
+  const convo: Conversation = {
+    sessionId: 'abc',
+    title: 'T',
+    records: [{ kind: 'user', content: '', blocks: [{ type: 'toolResult', content: long }] }],
+  };
+  const { getByTestId, findByTestId, container } = render(() => <Sessions scan={SCAN} api={makeApi(convo)} />);
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-block-toolresult');
+  expect(container.querySelector('[data-testid="sessions-block-toolresult"] details')).toBeTruthy();
+});

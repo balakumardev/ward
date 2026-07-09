@@ -89,6 +89,19 @@ function isNoiseRecord(rec: SessionRecord): boolean {
   return rec.kind === 'other' || rec.kind === 'summary';
 }
 
+/** Pretty-print a tool-result string when it is JSON, else return it as-is. */
+function prettyIfJson(s: string): { text: string; isJson: boolean } {
+  const t = s.trim();
+  if (t.length > 1 && (t[0] === '{' || t[0] === '[')) {
+    try {
+      return { text: JSON.stringify(JSON.parse(t), null, 2), isJson: true };
+    } catch {
+      /* not JSON — fall through */
+    }
+  }
+  return { text: s, isJson: false };
+}
+
 /** Render a single structured content block as its own distinct row:
  *  normal text, a foldable dimmed `thinking` row, a `🔧 tool call` row,
  *  a `↳ result` row, or an image placeholder. */
@@ -120,13 +133,25 @@ function BlockRow(props: { block: ContentBlock }): JSX.Element {
           </Show>
         </div>
       );
-    case 'toolResult':
+    case 'toolResult': {
+      const { text, isJson } = prettyIfJson(b.content);
+      const lines = text.split('\n').length;
+      const long = text.length > 400 || lines > 8;
+      const body = (
+        <pre class="sx-block-result-body" classList={{ 'is-json': isJson }}>{text}</pre>
+      );
       return (
         <div data-testid="sessions-block-toolresult" class="sx-block sx-block--toolresult">
           <span class="sx-block-result-arrow" aria-hidden="true">↳</span>
-          <span class="sx-block-result-body">{b.content}</span>
+          <Show when={long} fallback={body}>
+            <details class="sx-result-details">
+              <summary class="sx-result-summary">tool result · {isJson ? 'JSON' : 'text'} · {lines} lines</summary>
+              {body}
+            </details>
+          </Show>
         </div>
       );
+    }
     case 'image':
       return (
         <div data-testid="sessions-block-image" class="sx-block sx-block--image">
