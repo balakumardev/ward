@@ -135,3 +135,37 @@ test('assistant turn that is ONLY a tool call still renders its text', async () 
   expect(toolUse.textContent).toContain('Bash');
   expect(toolUse.textContent).toContain('cargo test');
 });
+
+// Task 4 — the viewer header shows the derived title (falling back to the
+// sessionId) plus the selected `.jsonl` path as a copy-to-clipboard control.
+test('viewer header shows the derived title and the copyable .jsonl path', async () => {
+  const titled: Conversation = {
+    sessionId: 'sess-1',
+    title: 'Refactor the auth flow',
+    records: [],
+  };
+  const { getByTestId, findByText, findByTestId } = render(() => (
+    <Sessions scan={SCAN} api={makeApi(titled)} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  // Header shows the derived title, not the bare sessionId.
+  expect(await findByText('Refactor the auth flow')).toBeTruthy();
+
+  // Header shows the `.jsonl` path as a copy-to-clipboard control.
+  const pathEl = await findByTestId('sessions-path');
+  expect(pathEl.textContent).toContain('/x/projects/p/sess-1.jsonl');
+});
+
+test('viewer header falls back to the sessionId when the conversation has no title', async () => {
+  // CONVO carries no `title`; the header must fall back to `sessionId`.
+  const { getByTestId, findByTestId, container } = render(() => (
+    <Sessions scan={SCAN} api={makeApi()} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  const titleEl = container.querySelector('.sx-convo-title');
+  expect(titleEl?.textContent).toBe('sess-1');
+});

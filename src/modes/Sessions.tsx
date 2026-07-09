@@ -353,9 +353,21 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
           }>
             {(c) => (
               <div data-testid="sessions-records" class="sx-records">
-                <h2 class="sx-convo-head">
-                  {c().sessionId} · {c().records.length} records
-                </h2>
+                <header class="sx-convo-head">
+                  <div class="sx-convo-title">{c().title || c().sessionId}</div>
+                  <div class="sx-convo-meta">
+                    <span>{c().records.length} records</span>
+                    <button
+                      type="button"
+                      class="sx-convo-path"
+                      title="Copy path"
+                      onClick={() => navigator.clipboard?.writeText(selectedPath())}
+                      data-testid="sessions-path"
+                    >
+                      {selectedPath()}
+                    </button>
+                  </div>
+                </header>
                 <For each={c().records}>
                   {(rec, i) => {
                     const isAssistant = rec.kind === 'assistant';
