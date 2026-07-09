@@ -67,67 +67,68 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, WardError> {
                         if win.is_visible().unwrap_or(false) {
                             let _ = win.hide();
                         } else {
-                            // Anchor the popover just under the tray icon, centered on
-                            // the click point and CLAMPED to the monitor the click
-                            // landed on — a raw physical coord valid on one display can
-                            // otherwise spill onto another (multi-monitor setups with
-                            // mixed scale factors, e.g. Retina 2× + external 1×). We
-                            // position manually rather than via tauri-plugin-positioner,
-                            // whose TrayCenter path calls `current_monitor().unwrap()`
-                            // on the still-hidden window and panics with `None` on macOS.
-                            let size = win.outer_size().ok();
-                            let w = size.map(|s| s.width as f64).unwrap_or(320.0);
-                            let h = size.map(|s| s.height as f64).unwrap_or(300.0);
+                            // Anchor the popover just under the tray icon, on the
+                            // display the click landed on. The `TrayIconEvent::Click`
+                            // position arrives in PHYSICAL coords uniformly scaled by
+                            // the PRIMARY display's factor, while macOS hit-tests
+                            // monitors in LOGICAL points — so we recover the logical
+                            // point and select/clamp in logical space (see
+                            // native::anchor). Feeding the physical point to
+                            // `monitor_from_point` mis-resolved the monitor on Retina
+                            // (usually to None → primary), pinning the popover to the
+                            // primary display. We position manually rather than via
+                            // tauri-plugin-positioner, whose TrayCenter path calls
+                            // `current_monitor().unwrap()` on the still-hidden window
+                            // and panics with `None` on macOS.
+                            use crate::native::anchor::{popover_anchor, MonitorRect};
 
-                            // The monitor under the click point; fall back to the
-                            // window's current monitor, then the primary.
-                            let monitor = win
-                                .monitor_from_point(position.x, position.y)
+                            // Window logical size: width is the fixed 320; height is
+                            // the current outer size (the Popover grows it to content)
+                            // over the window's scale. Height only feeds the bottom
+                            // clamp, so an estimate is fine.
+                            let win_scale = win.scale_factor().unwrap_or(1.0).max(0.1);
+                            let os = win.outer_size().ok();
+                            let win_w = os.map(|s| s.width as f64 / win_scale).unwrap_or(320.0);
+                            let win_h = os.map(|s| s.height as f64 / win_scale).unwrap_or(300.0);
+
+                            let primary_scale = win
+                                .primary_monitor()
                                 .ok()
                                 .flatten()
-                                .or_else(|| win.current_monitor().ok().flatten())
-                                .or_else(|| win.primary_monitor().ok().flatten());
+                                .map(|m| m.scale_factor())
+                                .unwrap_or(win_scale);
 
-                            // Center under the click; drop a scale-aware gap so the
-                            // popover clears the menu bar.
-                            let scale = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
-                            let mut x = position.x - w / 2.0;
-                            let mut y = position.y + (6.0 * scale).round();
+                            let monitors: Vec<MonitorRect> = win
+                                .available_monitors()
+                                .unwrap_or_default()
+                                .iter()
+                                .map(|m| {
+                                    let p = m.position();
+                                    let s = m.size();
+                                    MonitorRect {
+                                        phys_x: p.x as f64,
+                                        phys_y: p.y as f64,
+                                        phys_w: s.width as f64,
+                                        phys_h: s.height as f64,
+                                        scale: m.scale_factor(),
+                                    }
+                                })
+                                .collect();
 
-                            // Clamp the whole rect inside the resolved monitor so it
-                            // never spills onto an adjacent display. Guard the ranges:
-                            // if the window is larger than the monitor, pin to origin.
-                            if let Some(m) = monitor.as_ref() {
-                                let mp = m.position();
-                                let ms = m.size();
-                                let (mx, my) = (mp.x as f64, mp.y as f64);
-                                let max_x = (mx + ms.width as f64 - w).max(mx);
-                                let max_y = (my + ms.height as f64 - h).max(my);
-                                x = x.clamp(mx, max_x);
-                                y = y.clamp(my, max_y);
-                            } else {
-                                // No monitor info — keep it at least near the origin.
-                                x = x.max(0.0);
-                                y = y.max(0.0);
-                            }
+                            let anchor = popover_anchor(
+                                position.x, position.y, primary_scale, &monitors, win_w, win_h, 6.0,
+                            );
 
                             // Opt-in diagnostics for verifying multi-monitor placement
                             // on real hardware (WARD_TRAY_DEBUG=1) without a rebuild.
                             if std::env::var("WARD_TRAY_DEBUG").is_ok() {
                                 eprintln!(
-                                    "ward tray: click=({:.1},{:.1}) monitor={} pos={:?} size={:?} scale={} -> set=({},{})",
-                                    position.x,
-                                    position.y,
-                                    monitor.as_ref().and_then(|m| m.name().cloned()).unwrap_or_else(|| "<none>".into()),
-                                    monitor.as_ref().map(|m| *m.position()),
-                                    monitor.as_ref().map(|m| *m.size()),
-                                    scale,
-                                    x as i32,
-                                    y as i32,
+                                    "ward tray: click=({:.1},{:.1}) primary_scale={} monitors={} -> logical set=({:.1},{:.1})",
+                                    position.x, position.y, primary_scale, monitors.len(), anchor.x, anchor.y,
                                 );
                             }
 
-                            let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+                            let _ = win.set_position(tauri::LogicalPosition::new(anchor.x, anchor.y));
                             let _ = win.show();
                             let _ = win.set_focus();
                         }

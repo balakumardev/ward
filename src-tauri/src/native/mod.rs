@@ -1,6 +1,7 @@
 //! Plan 10 — native shell primitives.
 //!
 //! Submodules:
+//!   - `anchor`    — pure multi-monitor placement math for the tray popover.
 //!   - `autostart` — launch-at-login via `tauri-plugin-autostart` (Plan 13).
 //!   - `lifecycle` — close-to-tray vs. genuine quit gating (Plan 13).
 //!   - `notify`    — hash-based notification dedup so the user only sees a
@@ -14,6 +15,7 @@
 //! verified manually; `notify` and `watch` have unit tests exercising the
 //! core logic.
 
+pub mod anchor;
 pub mod autostart;
 pub mod lifecycle;
 pub mod notify;

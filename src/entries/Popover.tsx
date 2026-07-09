@@ -190,7 +190,17 @@ export default function Popover() {
       ]);
       const win = getCurrentWindow();
       setWindowSize = (h: number) => {
-        try { void win.setSize(new LogicalSize(320, h)); } catch { /* window API unavailable — ignore */ }
+        // setSize is async; a rejected promise (e.g. a missing window
+        // capability — the exact bug that used to leave the popover stuck at
+        // its initial height and forced an internal scroll) is otherwise
+        // swallowed silently. Attach a .catch so any regression is visible.
+        try {
+          void win.setSize(new LogicalSize(320, h)).catch((e) => {
+            console.error('ward popover: setSize rejected', e);
+          });
+        } catch (e) {
+          console.error('ward popover: setSize threw', e);
+        }
       };
     } catch {
       /* non-Tauri window API — ignore */

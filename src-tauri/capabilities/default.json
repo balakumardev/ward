@@ -5,6 +5,7 @@
   "windows": ["main", "popover"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "core:window:allow-set-size"
   ]
 }
