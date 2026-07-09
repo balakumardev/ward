@@ -169,3 +169,36 @@ test('viewer header falls back to the sessionId when the conversation has no tit
   const titleEl = container.querySelector('.sx-convo-title');
   expect(titleEl?.textContent).toBe('sess-1');
 });
+
+// Task 5 — `other` records ("#N · attachment" etc.) render with empty bodies
+// and `summary` is redundant with the header title. Both are hidden by
+// default behind a "Show N system events" toggle. The `<For>` still
+// iterates ALL records, so the preserved `sessions-record-N` indices don't
+// renumber — a hidden record's testid is simply absent from the DOM.
+test('other/summary noise rows are hidden by default and revealed by the toggle', async () => {
+  const convo: Conversation = {
+    sessionId: 'abc',
+    title: 'T',
+    records: [
+      { kind: 'user', content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { kind: 'other', recordType: 'attachment' },
+      { kind: 'summary', text: 'T' },
+    ],
+  };
+  const { getByTestId, queryByTestId, findByTestId } = render(() => (
+    <Sessions scan={SCAN} api={makeApi(convo)} />
+  ));
+  fireEvent.click(getByTestId('sessions-btn-open'));
+  await findByTestId('sessions-records');
+
+  // The user turn (record #0) always renders.
+  expect(getByTestId('sessions-record-0')).toBeTruthy();
+  // The `other` (record #1) and `summary` (record #2) are hidden by default.
+  expect(queryByTestId('sessions-record-1')).toBeNull();
+  expect(queryByTestId('sessions-record-2')).toBeNull();
+
+  // The toggle reveals them — indices are preserved (still 1 and 2).
+  fireEvent.click(getByTestId('sessions-toggle-system'));
+  expect(getByTestId('sessions-record-1')).toBeTruthy();
+  expect(getByTestId('sessions-record-2')).toBeTruthy();
+});

@@ -83,6 +83,12 @@ function recordHasUsage(rec: SessionRecord): boolean {
   return rec.kind === 'assistant' && !!rec.usage;
 }
 
+/** Record kinds/types that render with no body — noise in the transcript.
+ *  `other` records are always empty; `summary` is shown as the header title. */
+function isNoiseRecord(rec: SessionRecord): boolean {
+  return rec.kind === 'other' || rec.kind === 'summary';
+}
+
 /** Render a single structured content block as its own distinct row:
  *  normal text, a foldable dimmed `thinking` row, a `🔧 tool call` row,
  *  a `↳ result` row, or an image placeholder. */
@@ -154,6 +160,7 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
   const [trimInfo, setTrimInfo] = createSignal<RestoreInfo | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [showSystem, setShowSystem] = createSignal(false);
 
   async function openSelected(path: string) {
     setSelectedPath(path);
@@ -368,6 +375,16 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                     </button>
                   </div>
                 </header>
+                <Show when={c().records.filter(isNoiseRecord).length > 0}>
+                  <button
+                    type="button"
+                    class="sx-system-toggle"
+                    data-testid="sessions-toggle-system"
+                    onClick={() => setShowSystem((v) => !v)}
+                  >
+                    {showSystem() ? 'Hide' : 'Show'} {c().records.filter(isNoiseRecord).length} system events
+                  </button>
+                </Show>
                 <For each={c().records}>
                   {(rec, i) => {
                     const isAssistant = rec.kind === 'assistant';
@@ -376,6 +393,7 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                     const blocks = () =>
                       (rec as Extract<SessionRecord, { kind: 'user' | 'assistant' }>).blocks ?? [];
                     return (
+                      <Show when={showSystem() || !isNoiseRecord(rec)}>
                       <div
                         data-testid={`sessions-record-${i()}`}
                         data-kind={rec.kind}
@@ -413,6 +431,7 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
                           </div>
                         </Show>
                       </div>
+                      </Show>
                     );
                   }}
                 </For>
