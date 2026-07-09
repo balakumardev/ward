@@ -20,6 +20,7 @@ pub mod glama;
 pub mod install;
 pub mod registry;
 pub mod skills;
+pub mod smithery;
 
 use serde::{Deserialize, Serialize};
 

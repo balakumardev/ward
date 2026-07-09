@@ -1,0 +1,8 @@
+{
+  "servers": [
+    { "qualifiedName": "@acme/weather", "displayName": "Weather", "description": "Weather MCP",
+      "homepage": "https://smithery.ai/server/@acme/weather", "remote": true, "isDeployed": true, "useCount": 42, "verified": true, "iconUrl": "x" },
+    { "qualifiedName": "", "description": "no name — skipped" }
+  ],
+  "pagination": { "currentPage": 1, "pageSize": 50, "totalPages": 1, "totalCount": 1 }
+}
