@@ -239,6 +239,7 @@ fn build_skill_entry(
         verified: true,
         packages: vec![],
         remotes: vec![],
+        install_shape: "discovery".into(),
         repo_url: Some(repo_url),
         skill_path: Some(skill_path),
     }

@@ -977,6 +977,7 @@ mod tests {
                 verified: true,
                 packages: vec![],
                 remotes: vec![],
+                install_shape: "discovery".into(),
                 repo_url: None,
                 skill_path: Some(format!("https://x/{name}/SKILL.md")),
             }
@@ -1190,7 +1191,8 @@ mod tests {
         let mk = |name: &str, display: &str, desc: &str| MarketEntry {
             kind: "mcp".into(), name: name.into(), display_name: display.into(),
             description: desc.into(), source: "registry".into(), version: None,
-            verified: true, packages: vec![], remotes: vec![], repo_url: None, skill_path: None,
+            verified: true, packages: vec![], remotes: vec![],
+            install_shape: "discovery".into(), repo_url: None, skill_path: None,
         };
         let page = MarketPage {
             entries: vec![

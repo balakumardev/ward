@@ -385,6 +385,7 @@ mod tests {
                 runtime_hint: None,
             }],
             remotes: vec![],
+            install_shape: "installable".into(),
             repo_url: None,
             skill_path: None,
         }
@@ -408,6 +409,7 @@ mod tests {
                 runtime_hint: Some("uvx".into()),
             }],
             remotes: vec![],
+            install_shape: "installable".into(),
             repo_url: None,
             skill_path: None,
         }
@@ -431,6 +433,7 @@ mod tests {
                     EnvVar { name: "X-Acme-Region".into(), is_required: false, is_secret: false },
                 ],
             }],
+            install_shape: "installable".into(),
             repo_url: None,
             skill_path: None,
         }
@@ -536,7 +539,8 @@ mod tests {
         let empty = MarketEntry {
             kind: "mcp".into(), name: "x/empty".into(), display_name: "x".into(),
             description: String::new(), source: "registry".into(), version: None,
-            verified: true, packages: vec![], remotes: vec![], repo_url: None, skill_path: None,
+            verified: true, packages: vec![], remotes: vec![],
+            install_shape: "installable".into(), repo_url: None, skill_path: None,
         };
         assert!(build_mcp_config(&empty, 0, &HashMap::new()).is_err());
     }
@@ -602,6 +606,7 @@ mod tests {
             verified: true,
             packages: vec![],
             remotes: vec![],
+            install_shape: "discovery".into(),
             repo_url: Some("https://raw.githubusercontent.com/acme/agent-skills/main".into()),
             skill_path: Some(
                 "https://raw.githubusercontent.com/acme/agent-skills/main/skills/brainstorming/SKILL.md".into(),

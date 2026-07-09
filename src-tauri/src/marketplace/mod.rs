@@ -46,6 +46,10 @@ pub struct MarketEntry {
     /// MCP remotes (hosted http/sse). Empty for package-only or skill entries.
     #[serde(default)]
     pub remotes: Vec<Remote>,
+    /// How this entry installs: `"installable"` | `"container"` | `"discovery"`.
+    /// Computed at parse time via `classify_install_shape`.
+    #[serde(default)]
+    pub install_shape: String,
     /// Skills only — source repo (Plan 22).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
@@ -89,6 +93,25 @@ pub struct Remote {
     pub url: String,
     #[serde(default)]
     pub headers: Vec<EnvVar>,
+}
+
+/// Classify how an entry can be installed today, so the UI shows Install only
+/// for what `build_mcp_config` can emit. `"installable"` = an npm/pypi package
+/// or an http/sse remote (buildable now); `"container"` = an OCI image (needs
+/// the container installer, Plan 26); `"discovery"` = repo/env only (browse, no
+/// direct install).
+pub fn classify_install_shape(packages: &[Package], remotes: &[Remote]) -> String {
+    let installable_pkg = packages
+        .iter()
+        .any(|p| matches!(p.registry_type.as_str(), "npm" | "pypi"));
+    let has_remote = !remotes.is_empty();
+    if installable_pkg || has_remote {
+        return "installable".into();
+    }
+    if packages.iter().any(|p| p.registry_type == "oci") {
+        return "container".into();
+    }
+    "discovery".into()
 }
 
 /// One install destination — a harness × scope pair. Kept as a data
@@ -166,6 +189,7 @@ mod tests {
                 runtime_hint: None,
             }],
             remotes: vec![],
+            install_shape: "installable".into(),
             repo_url: None,
             skill_path: None,
         };
@@ -174,6 +198,7 @@ mod tests {
         assert!(json.contains("\"registryType\":\"npm\""));
         assert!(json.contains("\"isSecret\":true"));
         assert!(json.contains("\"isRequired\":true"));
+        assert!(json.contains("\"installShape\":\"installable\""));
         // Skill-only fields omitted when None.
         assert!(!json.contains("repoUrl"));
         assert!(!json.contains("skillPath"));
@@ -203,5 +228,16 @@ mod tests {
         assert!(json.contains("\"ok\":true"));
         assert!(!json.contains("error"));
         assert!(!json.contains("restore"));
+    }
+
+    #[test]
+    fn classify_install_shape_covers_the_three_cases() {
+        let npm = Package { registry_type: "npm".into(), identifier: "x".into(), version: "1.0.0".into(), transport: "stdio".into(), env: vec![], runtime_hint: None };
+        let oci = Package { registry_type: "oci".into(), identifier: "img".into(), version: "1.0.0".into(), transport: "stdio".into(), env: vec![], runtime_hint: None };
+        let http = Remote { transport: "streamable-http".into(), url: "https://x/mcp".into(), headers: vec![] };
+        assert_eq!(classify_install_shape(&[npm.clone()], &[]), "installable");     // npm/pypi package
+        assert_eq!(classify_install_shape(&[], &[http]), "installable");            // http/sse remote
+        assert_eq!(classify_install_shape(&[oci], &[]), "container");               // oci image
+        assert_eq!(classify_install_shape(&[], &[]), "discovery");                  // repo/env only
     }
 }

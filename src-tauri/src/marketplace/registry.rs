@@ -140,16 +140,17 @@ fn parse_one(server: &Value) -> Option<MarketEntry> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let packages = server
+    let packages: Vec<Package> = server
         .get("packages")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(parse_package).collect())
         .unwrap_or_default();
-    let remotes = server
+    let remotes: Vec<Remote> = server
         .get("remotes")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(parse_remote).collect())
         .unwrap_or_default();
+    let install_shape = super::classify_install_shape(&packages, &remotes);
 
     Some(MarketEntry {
         kind: "mcp".into(),
@@ -161,6 +162,7 @@ fn parse_one(server: &Value) -> Option<MarketEntry> {
         verified: true, // every registry-listed server is registry-verified
         packages,
         remotes,
+        install_shape,
         repo_url: None,
         skill_path: None,
     })

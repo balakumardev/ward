@@ -398,6 +398,7 @@ export interface MarketEntry {
   verified: boolean;
   packages: Package[];
   remotes: Remote[];
+  installShape?: string; // "installable" | "container" | "discovery"
   repoUrl?: string;
   skillPath?: string;
 }
