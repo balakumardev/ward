@@ -196,16 +196,43 @@ pub fn parse_line(line: &str) -> Option<SessionRecord> {
 /// read keeps the Sessions *list* cheap even for large files.
 pub const SESSION_HEAD_CAP: usize = 256 * 1024;
 
-/// Cheap title for the sessions LIST: read at most `cap` bytes and derive a
-/// title without parsing the whole transcript. `None` if nothing usable is in
-/// the head window (caller falls back to the file stem).
+/// Cheap title for the sessions LIST: stream at most `cap` bytes line-by-line
+/// and early-out on the first auto-title (`ai-title`/`summary`) so a
+/// title-bearing file reads only a few KB instead of the full window. Falls
+/// back to the first user text seen within `cap`; `None` if nothing usable is
+/// in the head window (caller falls back to the file stem).
 pub fn session_head_title(path: &Path, cap: usize) -> Option<String> {
     let file = File::open(path).ok()?;
-    let mut bytes = Vec::new();
-    BufReader::new(file).take(cap as u64).read_to_end(&mut bytes).ok()?;
-    let text = String::from_utf8_lossy(&bytes);
-    let records: Vec<SessionRecord> = text.lines().filter_map(parse_line).collect();
-    derive_title(&records)
+    let mut reader = BufReader::new(file).take(cap as u64);
+    let mut first_user: Option<String> = None;
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        // `from_utf8_lossy` tolerates a mid-UTF8 cut at the `cap` boundary.
+        let line = String::from_utf8_lossy(&buf);
+        match parse_line(&line) {
+            Some(SessionRecord::AiTitle { title }) if !title.trim().is_empty() => {
+                return Some(title.trim().to_string())
+            }
+            Some(SessionRecord::Summary { text, .. }) if !text.trim().is_empty() => {
+                return Some(text.trim().to_string())
+            }
+            Some(SessionRecord::User { blocks, .. }) if first_user.is_none() => {
+                first_user = blocks.iter().find_map(|b| match b {
+                    ContentBlock::Text { text } if !text.trim().is_empty() => {
+                        Some(one_line_truncate(text.trim(), 80))
+                    }
+                    _ => None,
+                });
+            }
+            _ => {}
+        }
+    }
+    first_user
 }
 
 // ── Classifier ─────────────────────────────────────────────────────────
@@ -606,12 +633,16 @@ fn one_line_truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// A human-readable title for a session: Claude Code's auto-generated summary
-/// when present (the last one — later summaries reflect the most recent state
-/// after compaction), else the first real user text prompt (first line,
-/// truncated), else `None`.
+/// A human-readable title for a session: Claude Code's auto-generated title
+/// when present, else the first real user text prompt (first line, truncated),
+/// else `None`.
 fn derive_title(records: &[SessionRecord]) -> Option<String> {
-    if let Some(t) = records.iter().rev().find_map(|r| match r {
+    // Claude Code's auto-generated title. Current CC writes `ai-title`
+    // ({"type":"ai-title","aiTitle":"…"}); older/other variants may write a
+    // `summary` line. Either counts; take the first (they sit at the head of
+    // the transcript, so the bounded list head-scan agrees with this full parse).
+    if let Some(t) = records.iter().find_map(|r| match r {
+        SessionRecord::AiTitle { title } if !title.trim().is_empty() => Some(title.trim().to_string()),
         SessionRecord::Summary { text, .. } if !text.trim().is_empty() => Some(text.trim().to_string()),
         _ => None,
     }) {
@@ -619,9 +650,7 @@ fn derive_title(records: &[SessionRecord]) -> Option<String> {
     }
     records.iter().find_map(|r| match r {
         SessionRecord::User { blocks, .. } => blocks.iter().find_map(|b| match b {
-            ContentBlock::Text { text } if !text.trim().is_empty() => {
-                Some(one_line_truncate(text.trim(), 80))
-            }
+            ContentBlock::Text { text } if !text.trim().is_empty() => Some(one_line_truncate(text.trim(), 80)),
             _ => None,
         }),
         _ => None,
@@ -1142,6 +1171,15 @@ mod tests {
     }
 
     #[test]
+    fn derive_title_prefers_ai_title_over_user_text() {
+        let recs = vec![
+            SessionRecord::User { content: "how do I center a div".into(), blocks: vec![ContentBlock::Text { text: "how do I center a div".into() }], ts: None },
+            SessionRecord::AiTitle { title: "Debug voice command not pausing Spotify".into() },
+        ];
+        assert_eq!(derive_title(&recs), Some("Debug voice command not pausing Spotify".to_string()));
+    }
+
+    #[test]
     fn derive_title_falls_back_to_first_user_text() {
         let recs = vec![
             // A tool-result-only user record must be skipped in favour of real text.
@@ -1168,6 +1206,20 @@ mod tests {
         writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
         drop(f);
         assert_eq!(session_head_title(&path, SESSION_HEAD_CAP), Some("Wire the popover".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_head_title_reads_ai_title() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("ward-sess-ait-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
+        writeln!(f, r#"{{"type":"ai-title","aiTitle":"Center a div with flexbox"}}"#).unwrap();
+        drop(f);
+        assert_eq!(session_head_title(&path, SESSION_HEAD_CAP), Some("Center a div with flexbox".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
