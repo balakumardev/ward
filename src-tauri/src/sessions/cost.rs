@@ -224,7 +224,7 @@ mod tests {
     use crate::sessions::parse::{Conversation, SessionRecord, Usage};
 
     fn conv_with(records: Vec<SessionRecord>) -> Conversation {
-        Conversation { session_id: "x".into(), records }
+        Conversation { session_id: "x".into(), title: None, records }
     }
 
     fn assistant(model: &str, usage: Usage) -> SessionRecord {

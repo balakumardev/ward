@@ -236,6 +236,7 @@ export type SessionRecord =
 /** Parsed conversation returned by `session_preview`. */
 export interface Conversation {
   sessionId: string;
+  title?: string;
   records: SessionRecord[];
 }
 

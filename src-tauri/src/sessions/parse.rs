@@ -140,12 +140,14 @@ pub enum SessionRecord {
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub records: Vec<SessionRecord>,
 }
 
 impl Conversation {
     fn empty(session_id: String) -> Self {
-        Self { session_id, records: Vec::new() }
+        Self { session_id, title: None, records: Vec::new() }
     }
 }
 
@@ -174,6 +176,7 @@ pub fn parse_file(path: &Path) -> Result<Conversation, WardError> {
             conv.records.push(rec);
         }
     }
+    conv.title = derive_title(&conv.records);
     Ok(conv)
 }
 
@@ -586,6 +589,28 @@ fn one_line_truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// A human-readable title for a session: Claude Code's auto-generated summary
+/// when present (the last one — later summaries reflect the most recent state
+/// after compaction), else the first real user text prompt (first line,
+/// truncated), else `None`.
+fn derive_title(records: &[SessionRecord]) -> Option<String> {
+    if let Some(t) = records.iter().rev().find_map(|r| match r {
+        SessionRecord::Summary { text, .. } if !text.trim().is_empty() => Some(text.trim().to_string()),
+        _ => None,
+    }) {
+        return Some(t);
+    }
+    records.iter().find_map(|r| match r {
+        SessionRecord::User { blocks, .. } => blocks.iter().find_map(|b| match b {
+            ContentBlock::Text { text } if !text.trim().is_empty() => {
+                Some(one_line_truncate(text.trim(), 80))
+            }
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
 fn parse_usage(v: &Value) -> Option<Usage> {
     let obj = v.as_object()?;
     let input = obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -762,6 +787,7 @@ mod tests {
     fn conversation_serializes_camel_case() {
         let c = Conversation {
             session_id: "x".into(),
+            title: None,
             records: vec![SessionRecord::User {
                 content: "hi".into(),
                 blocks: vec![ContentBlock::Text { text: "hi".into() }],
@@ -1087,5 +1113,30 @@ mod tests {
         let json = serde_json::to_string(&rec).unwrap();
         assert!(json.contains("\"leafUuid\":\"x\""), "expected camelCase leafUuid, got: {json}");
         assert!(!json.contains("leaf_uuid"), "must not emit snake_case leaf_uuid, got: {json}");
+    }
+
+    #[test]
+    fn derive_title_prefers_summary_line() {
+        let recs = vec![
+            SessionRecord::User { content: "hi".into(), blocks: vec![ContentBlock::Text { text: "hi".into() }], ts: None },
+            SessionRecord::Summary { text: "Fix the login bug".into(), leaf_uuid: None },
+        ];
+        assert_eq!(derive_title(&recs), Some("Fix the login bug".to_string()));
+    }
+
+    #[test]
+    fn derive_title_falls_back_to_first_user_text() {
+        let recs = vec![
+            // A tool-result-only user record must be skipped in favour of real text.
+            SessionRecord::User { content: "tool out".into(), blocks: vec![ContentBlock::ToolResult { content: "tool out".into() }], ts: None },
+            SessionRecord::User { content: "Please add a logout button".into(), blocks: vec![ContentBlock::Text { text: "Please add a logout button".into() }], ts: None },
+        ];
+        assert_eq!(derive_title(&recs), Some("Please add a logout button".to_string()));
+    }
+
+    #[test]
+    fn derive_title_none_when_no_summary_or_user_text() {
+        let recs = vec![SessionRecord::Other { record_type: "attachment".into() }];
+        assert_eq!(derive_title(&recs), None);
     }
 }
