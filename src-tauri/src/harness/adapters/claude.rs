@@ -325,15 +325,13 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
                 }
             }
         }
-        // Auto-memory for this project. When `autoMemoryDirectory` is NOT set,
-        // it lives at ~/.claude/projects/<enc>/memory/. When it IS set, all
-        // projects share the override dir (already surfaced under global), so
-        // skip the per-project dir here to avoid duplicating the same files.
-        if override_dir.is_none() {
-            if let Some(pdir) = &paths.project_dir {
-                let memory_dir = pdir.join("memory");
-                scan_md_dir(&memory_dir, scope, "memory", &mut items, true, true, true);
-            }
+        // Per-project auto-memory lives at ~/.claude/projects/<enc>/memory/.
+        // Scan it regardless of any autoMemoryDirectory override — the override
+        // relocates only the global/home auto-memory (surfaced under Global);
+        // each project keeps its own distinct notes here.
+        if let Some(pdir) = &paths.project_dir {
+            let memory_dir = pdir.join("memory");
+            scan_md_dir(&memory_dir, scope, "memory", &mut items, true, true, true);
         }
     }
     items
@@ -994,6 +992,47 @@ mod tests {
         assert!(paths.iter().any(|p| p.contains("my-memory") && p.ends_with("MEMORY.md")),
             "override MEMORY.md must be surfaced: {paths:?}");
         assert!(paths.iter().any(|p| p.contains("my-memory") && p.ends_with("api.md")));
+    }
+
+    #[test]
+    fn memory_scans_per_project_dir_even_with_override() {
+        // Regression: `autoMemoryDirectory` relocates only the GLOBAL/home
+        // auto-memory (surfaced under the global scope). Each project keeps its
+        // own distinct notes at ~/.claude/projects/<enc>/memory/ — a location
+        // that never equals the override dir. A guard used to skip the
+        // per-project dir entirely whenever the override was set, hiding every
+        // project's memory notes (and dropping memory-only projects from the
+        // list). The per-project dir must be scanned unconditionally.
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join(".claude");
+        fs::create_dir_all(&claude).unwrap();
+        // autoMemoryDirectory override -> a real, existing global override dir.
+        let custom = dir.path().join("my-memory");
+        fs::create_dir_all(&custom).unwrap();
+        fs::write(custom.join("MEMORY.md"), "# custom index\n").unwrap();
+        fs::write(
+            claude.join("settings.json"),
+            format!(r#"{{"autoMemoryDirectory":"{}"}}"#, custom.display()),
+        ).unwrap();
+        // A project whose per-project auto-memory dir holds a distinct note.
+        let encoded = "-work-proj-with-memory";
+        make_project_dir(dir.path(), encoded, None);
+        let pmem = dir.path().join(".claude").join("projects").join(encoded).join("memory");
+        fs::create_dir_all(&pmem).unwrap();
+        fs::write(pmem.join("proj-note.md"), "project note").unwrap();
+
+        // Scan the memory category for the PROJECT (non-global) scope.
+        let scope = Scope {
+            id: encoded.into(),
+            kind: "project-unresolved".into(),
+            label: "proj".into(),
+            root: dir.path().join(".claude").join("projects").join(encoded).display().to_string(),
+        };
+        let paths = ScopePaths::for_scope(dir.path(), &scope);
+        let items = scan_memories(&scope, dir.path(), &paths);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.contains(&"proj-note"),
+            "per-project memory note must be scanned even with autoMemoryDirectory set: {names:?}");
     }
 
     #[test]
