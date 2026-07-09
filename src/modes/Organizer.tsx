@@ -43,6 +43,42 @@ function fileName(path: string): string {
   return base.includes('#') ? base.split('#').pop() ?? base : base;
 }
 
+/** Replace the macOS/Linux home prefix with `~` for display. */
+export function homeRelative(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+/, '~');
+}
+
+/** Compact, tail-priority path for the header chip. Config paths read from the
+ *  end — every plugin lives under the same `.../plugins/cache/...` root, so the
+ *  tail (`claude-md-management/1.0.0`) is what identifies it. Keep the harness
+ *  root and the last two segments, eliding the middle; short paths pass through.
+ *  Full path stays in the chip's `title` tooltip. */
+export function prettyPath(path: string): string {
+  const rel = homeRelative(path);
+  const segs = rel.split('/');
+  if (segs.length <= 5) return rel;
+  return `${segs.slice(0, 2).join('/')}/…/${segs.slice(-2).join('/')}`;
+}
+
+/** Best-effort clipboard copy: native Clipboard API first (works in the Tauri
+ *  WKWebView on a user gesture), falling back to a hidden-textarea execCommand. */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through to the legacy path */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
 function langTag(item: HarnessItem): string {
   const p = item.path.toLowerCase();
   if (p.endsWith('.md')) return 'markdown';
@@ -110,6 +146,8 @@ export function Organizer(props: {
   const [confirmDialog, setConfirmDialog] = createSignal<
     { message: string; confirmLabel: string; resolve: (ok: boolean) => void } | null
   >(null);
+  // Path that was just copied (for the header chip's transient "✓ copied" flash).
+  const [copiedPath, setCopiedPath] = createSignal<string | null>(null);
   const [dirty, setDirty] = createSignal(false);
   const [statusMsg, setStatusMsg] = createSignal<string>('');
   const [selectedKeys, setSelectedKeys] = createSignal<Set<string>>(new Set());
@@ -299,6 +337,13 @@ export function Organizer(props: {
       setLastClickKey(itemKey(item));
     }
     void open(item);
+  }
+
+  async function doCopyPath(path: string) {
+    if (await copyToClipboard(path)) {
+      setCopiedPath(path);
+      setTimeout(() => setCopiedPath((p) => (p === path ? null : p)), 1300);
+    }
   }
 
   // ── Confirmation dialog ──
@@ -749,7 +794,13 @@ export function Organizer(props: {
                       <Show when={detailBadge()}>
                         {(badge) => <span class="badge" data-testid="policy-badge-detail" style={{ color: badge().color }}>{badge().label}</span>}
                       </Show>
-                      <span class="chip chip-path" title={item().path}>{item().path}</span>
+                      <span
+                        classList={{ chip: true, 'chip-path': true, copyable: true, copied: copiedPath() === item().path }}
+                        role="button" tabindex="0"
+                        title={copiedPath() === item().path ? 'Copied to clipboard' : `Copy path — ${item().path}`}
+                        onClick={() => doCopyPath(item().path)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void doCopyPath(item().path); } }}
+                      >{copiedPath() === item().path ? '✓ copied' : prettyPath(item().path)}</span>
                     </div>
                   </div>
                   <div class="toolbar">
@@ -1022,7 +1073,7 @@ function MetaCard(props: { item: HarnessItem }) {
           <Show when={props.item.description}>
             <MetaRow label="Details" value={props.item.description ?? ''} />
           </Show>
-          <MetaRow label="Install path" value={props.item.path} mono block />
+          <MetaRow label="Install path" value={homeRelative(props.item.path)} mono block />
         </div>
         <div class="meta-note">
           Managed by Claude Code's plugin system. Toggle it with

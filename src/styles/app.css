@@ -183,7 +183,11 @@
   padding: 2px 8px; border-radius: var(--r-pill);
 }
 .chip .cat-dot { width: 6px; height: 6px; }
-.chip-path { font-family: var(--font-mono); font-size: 10px; color: var(--text-mute); max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-path { font-family: var(--font-mono); font-size: 10px; color: var(--text-mute); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-path.copyable { cursor: pointer; transition: color .12s ease, border-color .12s ease, background .12s ease; }
+.chip-path.copyable:hover { color: var(--text-dim); border-color: var(--border-strong); background: rgba(255,255,255,0.06); }
+.chip-path.copyable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip-path.copied { color: var(--accent); border-color: rgba(143,240,168,0.4); background: var(--accent-bg); }
 
 .toolbar { display: flex; align-items: center; gap: 8px; flex: none; }
 .btn { font-size: 12px; padding: 6px 12px; border-radius: var(--r-sm); }
