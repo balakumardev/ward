@@ -29,6 +29,25 @@ const BLANK_MCP_ITEM: HarnessItem = {
   movable: false, deletable: true, locked: false, mcpConfig: {},
 };
 
+/** Mirror of the backend `parse_mcp_import` precedence, for the live paste
+ *  preview: returns the server names found (or a parse error). */
+function previewMcpImport(json: string): { servers: string[]; single: boolean; error?: string } {
+  const t = json.trim();
+  if (!t) return { servers: [], single: false };
+  let root: unknown;
+  try { root = JSON.parse(t); } catch (e) { return { servers: [], single: false, error: `invalid JSON: ${(e as Error).message}` }; }
+  if (typeof root !== 'object' || root === null || Array.isArray(root)) return { servers: [], single: false, error: 'expected a JSON object' };
+  const obj = root as Record<string, unknown>;
+  const wrap = (obj.mcpServers ?? obj.mcp_servers) as Record<string, unknown> | undefined;
+  if (wrap && typeof wrap === 'object') {
+    const names = Object.keys(wrap);
+    return names.length ? { servers: names, single: false } : { servers: [], single: false, error: 'no MCP servers found' };
+  }
+  if (typeof obj.command === 'string' || typeof obj.url === 'string') return { servers: [], single: true };
+  const names = Object.keys(obj);
+  return names.length ? { servers: names, single: false } : { servers: [], single: false, error: 'no MCP servers found' };
+}
+
 /** Category → accent colour (drives the dot on category rows and item rows). */
 const CAT_COLORS: Record<string, string> = {
   skill: 'var(--cat-skill)', memory: 'var(--cat-memory)', mcp: 'var(--cat-mcp)',
@@ -118,6 +137,10 @@ export interface OrganizerApi {
   // Plan 18 — MCP marketplace: upsert (install/edit) a server entry into a
   // scope's shared config file. Persists the structured MCP form's Save.
   upsertMcpEntry: (item: HarnessItem, config: McpConfig) => Promise<RestoreInfo>;
+  // Plan 24 — import one or more MCP servers from a pasted mcpServers JSON
+  // blob. Fans out to the SAME upsert engine; returns one RestoreInfo per
+  // server for a batch Undo. The App bridge injects the harness + re-scans.
+  mcpImportJson: (scopeId: string, json: string, fallbackName?: string) => Promise<RestoreInfo[]>;
   // Plan 19 — creatable skills: scaffold a new `<skills_dir>/<name>/SKILL.md`
   // in the chosen scope. The App bridge injects the harness + re-scans.
   skillUpsert: (scopeId: string, name: string, content: string) => Promise<RestoreInfo>;
@@ -160,6 +183,10 @@ export function Organizer(props: {
   const [addingMcp, setAddingMcp] = createSignal(false);
   const [newName, setNewName] = createSignal('');
   const [chosenScope, setChosenScope] = createSignal('');
+  // Plan 24 — the Add-MCP pane has two tabs: the structured Form (default) and
+  // a Paste JSON view that imports an `mcpServers` blob (or a single server).
+  const [addTab, setAddTab] = createSignal<'form' | 'paste'>('form');
+  const [pasteJson, setPasteJson] = createSignal('');
 
   // Plan 19 — "Add Skill" flow. `addingSkill` gates the detail pane onto a
   // name+scope dialog; on Create we scaffold a starter SKILL.md and upsert it.
@@ -496,6 +523,8 @@ export function Organizer(props: {
     if (!mcpEditable()) return;
     setNewName('');
     setChosenScope(props.scan.scopes[0]?.id ?? 'global');
+    setAddTab('form');
+    setPasteJson('');
     setSelected('');
     setSelectedKeys(new Set<string>());
     setStatusMsg('');
@@ -519,6 +548,26 @@ export function Organizer(props: {
       setStatusMsg(`Added "${name}". Click Undo to reverse.`);
     } catch (e) {
       setStatusMsg(`MCP add failed: ${String(e)}`);
+    }
+  }
+
+  // Plan 24 — import a pasted `mcpServers` JSON blob (or a single bare server
+  // object) into the chosen scope. Mirrors the backend precedence for the
+  // pre-flight preview, forwards a fallback name only for a single server, and
+  // stores the batch RestoreInfo[] the same array form `doBulk` uses for Undo.
+  async function doImportMcp(): Promise<void> {
+    const prev = previewMcpImport(pasteJson());
+    if (prev.error) { setStatusMsg(`MCP import failed: ${prev.error}`); return; }
+    if (prev.single && !newName().trim()) { setStatusMsg('MCP import failed: a single server needs a name.'); return; }
+    try {
+      const infos = await props.api.mcpImportJson(chosenScope(), pasteJson(), prev.single ? newName().trim() : undefined);
+      setAddingMcp(false);
+      setPasteJson('');
+      setAddTab('form');
+      setLastUndo(infos);
+      setStatusMsg(`Imported ${infos.length} server(s). Click Undo to reverse.`);
+    } catch (e) {
+      setStatusMsg(`MCP import failed: ${String((e as { message?: string })?.message ?? e)}`);
     }
   }
 
@@ -929,17 +978,58 @@ export function Organizer(props: {
                 <button class="btn btn-ghost" data-testid="mcp-add-cancel" onClick={() => setAddingMcp(false)}>Cancel</button>
               </div>
             </div>
-            <McpForm
-              mode="add"
-              item={BLANK_MCP_ITEM}
-              scopes={props.scan.scopes}
-              name={newName()}
-              onName={setNewName}
-              scopeId={chosenScope()}
-              onScope={setChosenScope}
-              onSave={addMcp}
-              harness={props.scan.harnessId}
-            />
+            {/* Plan 24 — Form / Paste JSON tabs. Form is the structured add;
+                Paste imports an mcpServers blob (or a single server object). */}
+            <div class="seg mcp-add-tabs">
+              <button classList={{ 'seg-btn': true, active: addTab() === 'form' }}
+                data-testid="mcp-form-tab" onClick={() => setAddTab('form')}>Form</button>
+              <button classList={{ 'seg-btn': true, active: addTab() === 'paste' }}
+                data-testid="mcp-paste-tab" onClick={() => setAddTab('paste')}>Paste JSON</button>
+            </div>
+            <Show when={addTab() === 'paste'} fallback={
+              <McpForm
+                mode="add"
+                item={BLANK_MCP_ITEM}
+                scopes={props.scan.scopes}
+                name={newName()}
+                onName={setNewName}
+                scopeId={chosenScope()}
+                onScope={setChosenScope}
+                onSave={addMcp}
+                harness={props.scan.harnessId}
+              />
+            }>
+              <div class="mcp-paste" data-testid="mcp-paste">
+                <label class="mcp-label">Scope</label>
+                <select class="mcp-input mcp-scope-select" data-testid="mcp-paste-scope"
+                  value={chosenScope()} onChange={(e) => setChosenScope(e.currentTarget.value)}>
+                  <For each={props.scan.scopes}>{(s) => <option value={s.id}>{s.label}</option>}</For>
+                </select>
+                <label class="mcp-label">Paste an mcpServers JSON block (or a single server object)</label>
+                <textarea class="mcp-input mcp-paste-area" data-testid="mcp-paste-json" spellcheck={false}
+                  placeholder={'{\n  "mcpServers": {\n    "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] }\n  }\n}'}
+                  value={pasteJson()} onInput={(e) => setPasteJson(e.currentTarget.value)} />
+                {/* single-server paste needs a name */}
+                <Show when={previewMcpImport(pasteJson()).single}>
+                  <label class="mcp-label">Name (single server)</label>
+                  <input class="mcp-input" data-testid="mcp-paste-name" placeholder="server-name" spellcheck={false}
+                    value={newName()} onInput={(e) => setNewName(e.currentTarget.value)} />
+                </Show>
+                <div class="mcp-paste-preview" data-testid="mcp-paste-preview">
+                  <Show when={previewMcpImport(pasteJson()).error}>
+                    <span class="mcp-paste-err">{previewMcpImport(pasteJson()).error}</span>
+                  </Show>
+                  <Show when={previewMcpImport(pasteJson()).servers.length > 0}>
+                    <span>Will add: {previewMcpImport(pasteJson()).servers.join(', ')}</span>
+                  </Show>
+                </div>
+                <div class="editor-foot">
+                  <button class="btn btn-primary" data-testid="mcp-paste-import"
+                    disabled={previewMcpImport(pasteJson()).servers.length === 0 && !previewMcpImport(pasteJson()).single}
+                    onClick={() => void doImportMcp()}>Import</button>
+                </div>
+              </div>
+            </Show>
             <Show when={statusMsg()}>
               <div class="editor-foot">
                 <span style={{ flex: 1 }} />

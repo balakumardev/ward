@@ -299,3 +299,10 @@
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+
+/* Plan 24 — Add-MCP "Paste JSON" tab (segmented toggle + import textarea). */
+.mcp-add-tabs { margin-bottom: 10px; }
+.mcp-paste { display: flex; flex-direction: column; gap: 8px; }
+.mcp-paste-area { min-height: 160px; font-family: var(--font-mono); font-size: 12px; resize: vertical; white-space: pre; }
+.mcp-paste-preview { min-height: 18px; font-size: 12px; color: var(--text-dim); }
+.mcp-paste-err { color: var(--danger); }

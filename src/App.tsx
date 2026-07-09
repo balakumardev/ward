@@ -76,6 +76,14 @@ export default function App() {
       await refetch();
       return r;
     },
+    // Plan 24 — import a pasted mcpServers JSON blob into the chosen scope,
+    // then re-scan so every newly-added server row appears (App injects the
+    // current harness; a single bare-server paste carries a fallback name).
+    mcpImportJson: async (scopeId: string, json: string, fallbackName?: string) => {
+      const r = await api.mcpImportJson(harness(), scopeId, json, fallbackName);
+      await refetch();
+      return r;
+    },
     // Plan 19 — creatable skills: scaffold a new SKILL.md in the chosen scope,
     // then re-scan so the new item appears (App injects the current harness).
     skillUpsert: async (scopeId: string, name: string, content: string) => {

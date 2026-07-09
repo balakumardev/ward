@@ -477,6 +477,10 @@ export const api = {
   mcpUpsertEntry: (harness: string, scopeId: string, name: string, config: McpConfig, targetPath?: string) =>
     invokeOrThrow<RestoreInfo>('mcp_upsert_entry', { harness, scopeId, name, config, targetPath }),
 
+  // Plan 24 — import one or more MCP servers from a pasted mcpServers JSON blob.
+  mcpImportJson: (harness: string, scopeId: string, json: string, fallbackName?: string) =>
+    invokeOrThrow<RestoreInfo[]>('mcp_import_json', { harness, scopeId, json, fallbackName }),
+
   // Plan 19 — creatable skills: scaffold a new `<skills_dir>/<name>/SKILL.md`
   // (create-only). Returns a `skill-create` RestoreInfo for Undo.
   skillUpsert: (harness: string, scopeId: string, name: string, content: string) =>

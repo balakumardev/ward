@@ -25,6 +25,7 @@ const noopApi: OrganizerApi = {
   mcpSetDisabled: async () => ({ kind: 'mcp-disabled', originalPath: '/Users/x/.claude.json' }),
   mcpGetPolicy: async () => ({ allowlist: [], denylist: [] }),
   upsertMcpEntry: async () => ({ kind: 'mcp-upsert', originalPath: '/Users/x/.claude.json' }),
+  mcpImportJson: async () => [],
   skillUpsert: async () => ({ kind: 'skill-create', originalPath: '/Users/x/.claude/skills/x' }),
 };
 
@@ -736,4 +737,26 @@ it('hides Add Skill when skillCreatable is false', () => {
   renderOrganizer({ scan, api: fakeApi });
   fireEvent.click(screen.getByTestId('category-skill'));
   expect(screen.queryByTestId('skill-add-button')).not.toBeInTheDocument();
+});
+
+// ── Plan 24: Paste JSON tab in the Add-MCP pane ──
+
+it('Add-MCP Paste JSON tab previews server names and imports the blob', async () => {
+  const calls: string[] = [];
+  const importSpy = vi.fn(async (_scopeId: string, json: string) => { calls.push(json); return []; });
+  const scan = makeScanWithMcp({ name: 'context7', scopeId: 'global',
+    path: '/Users/x/.claude.json', mcpConfig: { command: 'npx' } });
+  renderOrganizer({ scan, api: { ...fakeApi, mcpImportJson: importSpy } });
+  fireEvent.click(screen.getByTestId('category-mcp'));
+  fireEvent.click(screen.getByTestId('mcp-add-button'));
+  // Switch the Add pane from the Form tab to the Paste JSON tab.
+  fireEvent.click(await screen.findByTestId('mcp-paste-tab'));
+  const ta = await screen.findByTestId('mcp-paste-json') as HTMLTextAreaElement;
+  fireEvent.input(ta, { target: { value: '{"mcpServers":{"ctx7":{"command":"npx"}}}' } });
+  // (a) the live preview lists the parsed server name.
+  expect(await screen.findByText(/ctx7/)).toBeInTheDocument();
+  // (b) Import calls mcpImportJson with the pasted blob.
+  fireEvent.click(screen.getByTestId('mcp-paste-import'));
+  await waitFor(() => expect(importSpy).toHaveBeenCalled());
+  expect(calls[0]).toContain('ctx7');
 });
