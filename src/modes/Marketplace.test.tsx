@@ -23,6 +23,7 @@ const NOTES: MarketEntry = {
   displayName: 'Acme Notes',
   description: 'Read and write notes from your editor.',
   source: 'registry',
+  installShape: 'installable',
   version: '2.1.0',
   verified: true,
   packages: [
@@ -38,6 +39,22 @@ const NOTES: MarketEntry = {
     },
   ],
   remotes: [],
+};
+
+/** A discovery-only source entry (Plan 25) — has a repo to view but nothing
+ *  Ward can install directly, so the detail sheet offers "View source" not
+ *  an Install button. */
+const DISCOVERY: MarketEntry = {
+  kind: 'mcp',
+  name: 'io.glama/disco',
+  displayName: 'Glama Disco',
+  description: 'A discovery-only server surfaced by the Glama source.',
+  source: 'glama',
+  installShape: 'discovery',
+  verified: false,
+  packages: [],
+  remotes: [],
+  repoUrl: 'https://github.com/x/y',
 };
 
 const SCAN: ScanResult = {
@@ -57,6 +74,9 @@ const SCAN: ScanResult = {
 /** Realistic mock mirroring the Rust build_mcp_config (npm→npx, secrets omitted). */
 function buildConfigMock(entry: MarketEntry, idx: number, env: Record<string, string>): BuiltConfig {
   const pkg = entry.packages[idx];
+  // Discovery/container entries carry no installable package — the real
+  // build_mcp_config isn't reached for them; return a benign empty preview.
+  if (!pkg) return { name: entry.name, config: {}, commandPreview: [], env: [] };
   const command = pkg.registryType === 'npm' ? 'npx' : 'uvx';
   const args = pkg.registryType === 'npm' ? ['-y', `${pkg.identifier}@${pkg.version}`] : [`${pkg.identifier}==${pkg.version}`];
   const config: McpConfig = { command, args };
@@ -250,4 +270,49 @@ test('duplicate-named entries (different versions) select independently, not tog
   await waitFor(() => expect(cards[1].classList.contains('active')).toBe(true));
   expect(cards[0].classList.contains('active')).toBe(false);
   expect(cards.filter((c) => c.classList.contains('active')).length).toBe(1);
+});
+
+test('cards show a source badge; discovery entries show View source (no Install), installable entries keep Install', async () => {
+  // One installable (registry) + one discovery (glama) entry in the same page.
+  const api = makeApi({ search: vi.fn(async () => ({ entries: [NOTES, DISCOVERY] })) });
+  const { findAllByTestId, findByTestId, getByTestId, queryByTestId } = render(() => (
+    <Marketplace scan={SCAN} api={api} />
+  ));
+  const cards = await findAllByTestId('market-card');
+  expect(cards.length).toBe(2);
+
+  // (a) Every card carries a source badge showing its `source`.
+  const badges = await findAllByTestId('market-source');
+  expect(badges.length).toBeGreaterThanOrEqual(2);
+  expect(badges.map((b) => b.textContent)).toEqual(expect.arrayContaining(['registry', 'glama']));
+
+  // (b) Selecting the discovery entry → a View-source link to its repoUrl and
+  //     NO Install button (nothing installable to click).
+  fireEvent.click(cards[1]);
+  await findByTestId('market-detail');
+  const view = await findByTestId('market-view');
+  expect(view.getAttribute('href')).toBe('https://github.com/x/y');
+  expect(view.getAttribute('target')).toBe('_blank');
+  await waitFor(() => expect(queryByTestId('market-install')).toBeNull());
+
+  // (c) Selecting the installable entry → Install button is rendered again.
+  fireEvent.click(cards[0]);
+  expect(await findByTestId('market-install')).toBeTruthy();
+  expect(queryByTestId('market-view')).toBeNull();
+  expect(getByTestId('market-install')).toBeTruthy();
+});
+
+test('a container-shape entry without a repoUrl shows a shape note, not Install or View', async () => {
+  const CONTAINER: MarketEntry = {
+    ...DISCOVERY, name: 'io.glama/img', displayName: 'Container Only',
+    source: 'smithery', installShape: 'container', repoUrl: undefined,
+  };
+  const api = makeApi({ search: vi.fn(async () => ({ entries: [CONTAINER] })) });
+  const { findByTestId, queryByTestId } = render(() => <Marketplace scan={SCAN} api={api} />);
+  fireEvent.click(await findByTestId('market-card'));
+  await findByTestId('market-detail');
+  const note = await findByTestId('market-shape-note');
+  expect(note.textContent).toContain('Container image');
+  await waitFor(() => expect(queryByTestId('market-install')).toBeNull());
+  expect(queryByTestId('market-view')).toBeNull();
 });

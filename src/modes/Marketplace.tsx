@@ -271,6 +271,7 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                         <Show when={e.verified}>
                           <span class="mkt-badge ok" data-testid="market-verified" title="Verified">✓ verified</span>
                         </Show>
+                        <span class="mkt-source" data-testid="market-source" title="Source">{e.source}</span>
                       </div>
                       <div class="mkt-card-id">
                         <code>{e.name}</code>
@@ -505,22 +506,52 @@ export function Marketplace(props: { scan: ScanResult; api: MarketplaceApi }) {
                   </Show>
                 </div>
 
-                {/* Install action + per-target results (shared). */}
+                {/* Install action + per-target results (shared). Skills and
+                    `installable` MCP entries get the real Install button;
+                    `container`/`discovery` entries can't be installed from Ward,
+                    so they offer a "View source" link (or a shape note when no
+                    repo is known) instead of a fabricated install. */}
                 <div class="mkt-actions">
-                  <button
-                    data-testid="market-install"
-                    class="mkt-install-btn"
-                    disabled={!canInstall()}
-                    onClick={doInstall}
+                  <Show
+                    when={isSkill() || selected()?.installShape === 'installable'}
+                    fallback={
+                      <Show
+                        when={selected()?.repoUrl}
+                        fallback={
+                          <span class="mkt-shape-note" data-testid="market-shape-note">
+                            {selected()?.installShape === 'container'
+                              ? 'Container image — install with your container runtime.'
+                              : 'Discovery only — no direct install.'}
+                          </span>
+                        }
+                      >
+                        <a
+                          class="mkt-view-btn"
+                          data-testid="market-view"
+                          href={selected()!.repoUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                        >
+                          View source ↗
+                        </a>
+                      </Show>
+                    }
                   >
-                    {installing()
-                      ? 'Installing…'
-                      : `Install to ${selectedTargets().length} target${selectedTargets().length === 1 ? '' : 's'}`}
-                  </button>
-                  <Show when={!isSkill() && verdict() === 'denied'}>
-                    <span class="mkt-deny-note" data-testid="market-deny-note">
-                      Blocked by your MCP policy — adjust it in the Organizer to install this server.
-                    </span>
+                    <button
+                      data-testid="market-install"
+                      class="mkt-install-btn"
+                      disabled={!canInstall()}
+                      onClick={doInstall}
+                    >
+                      {installing()
+                        ? 'Installing…'
+                        : `Install to ${selectedTargets().length} target${selectedTargets().length === 1 ? '' : 's'}`}
+                    </button>
+                    <Show when={!isSkill() && verdict() === 'denied'}>
+                      <span class="mkt-deny-note" data-testid="market-deny-note">
+                        Blocked by your MCP policy — adjust it in the Organizer to install this server.
+                      </span>
+                    </Show>
                   </Show>
                 </div>
 

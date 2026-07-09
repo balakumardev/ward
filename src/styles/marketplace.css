@@ -400,3 +400,13 @@
 .mkt-toast.err { border-color: transparent; background: var(--crit-bg); color: var(--crit); }
 .mkt-toast-target { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
 .mkt-toast-status { font-size: 12.5px; }
+
+/* Plan 25 — multi-source: per-card source badge + install-shape gating.
+   The source badge sits with the verified badge at the card's trailing edge
+   (the name takes the remaining width). Discovery/container entries swap the
+   Install button for a "View source" link or a shape note. */
+.mkt-card-name { margin-right: auto; }
+.mkt-source { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 1px 6px; white-space: nowrap; }
+.mkt-view-btn { display: inline-block; text-decoration: none; color: var(--accent); border: 1px solid var(--border-accent); border-radius: var(--r-sm); padding: 6px 12px; font-size: 13px; }
+.mkt-view-btn:hover { background: var(--accent-bg-2); }
+.mkt-shape-note { color: var(--text-dim); font-size: 12px; }
