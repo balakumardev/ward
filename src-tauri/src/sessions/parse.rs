@@ -25,7 +25,7 @@
 //! exposed as `parse_line` for tests and reuse.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -189,6 +189,23 @@ pub fn parse_line(line: &str) -> Option<SessionRecord> {
     }
     let value: Value = serde_json::from_str(trimmed).ok()?;
     Some(classify(value))
+}
+
+/// Max bytes read by `session_head_title`. Titles (the summary line or the
+/// first user prompt) live near the top of a transcript, so a bounded head
+/// read keeps the Sessions *list* cheap even for large files.
+pub const SESSION_HEAD_CAP: usize = 256 * 1024;
+
+/// Cheap title for the sessions LIST: read at most `cap` bytes and derive a
+/// title without parsing the whole transcript. `None` if nothing usable is in
+/// the head window (caller falls back to the file stem).
+pub fn session_head_title(path: &Path, cap: usize) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    BufReader::new(file).take(cap as u64).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let records: Vec<SessionRecord> = text.lines().filter_map(parse_line).collect();
+    derive_title(&records)
 }
 
 // ── Classifier ─────────────────────────────────────────────────────────
@@ -1138,5 +1155,19 @@ mod tests {
     fn derive_title_none_when_no_summary_or_user_text() {
         let recs = vec![SessionRecord::Other { record_type: "attachment".into() }];
         assert_eq!(derive_title(&recs), None);
+    }
+
+    #[test]
+    fn session_head_title_reads_summary_from_head() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("ward-sess-head-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.jsonl");
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, r#"{{"type":"summary","summary":"Wire the popover","leafUuid":"x"}}"#).unwrap();
+        writeln!(f, r#"{{"type":"user","message":{{"role":"user","content":"hello"}}}}"#).unwrap();
+        drop(f);
+        assert_eq!(session_head_title(&path, SESSION_HEAD_CAP), Some("Wire the popover".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

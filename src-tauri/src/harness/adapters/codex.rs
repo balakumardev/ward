@@ -724,10 +724,15 @@ fn scan_sessions(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
     for path in paths {
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let session_id = extract_session_id(&file_name);
+        let title = crate::sessions::parse::session_head_title(
+            &path,
+            crate::sessions::parse::SESSION_HEAD_CAP,
+        )
+        .unwrap_or_else(|| session_id.clone());
         items.push(HarnessItem {
             category: "session".into(),
             scope_id: scope.id.clone(),
-            name: session_id.clone(),
+            name: title,
             description: file_name,
             path: path.display().to_string(),
             movable: false, deletable: false, locked: false,

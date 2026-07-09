@@ -793,10 +793,15 @@ fn scan_sessions(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
         if p.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
         let name = entry.file_name().to_string_lossy().to_string();
         let stem = name.trim_end_matches(".jsonl").to_string();
+        let title = crate::sessions::parse::session_head_title(
+            &p,
+            crate::sessions::parse::SESSION_HEAD_CAP,
+        )
+        .unwrap_or_else(|| stem.clone());
         items.push(HarnessItem {
             category: "session".into(),
             scope_id: scope.id.clone(),
-            name: stem,
+            name: title,
             description: String::new(),
             path: p.display().to_string(),
             movable: false, deletable: false, locked: true,
