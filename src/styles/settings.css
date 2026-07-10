@@ -317,7 +317,9 @@
   background: var(--surface-3);
 }
 
-/* Inert "Edit…" for array/object rows (bespoke editors land in a later task). */
+/* "Edit…" for array/object rows. The base (inert) style is the bespoke object
+   editors still pending (permissions / hooks / sandbox / statusLine); `.is-active`
+   is the live trigger for the array / env / json modal editors. */
 .set-edit {
   appearance: none;
   border: 1px dashed var(--border-strong);
@@ -330,6 +332,25 @@
   border-radius: var(--r-md);
   cursor: not-allowed;
 }
+.set-edit.is-active {
+  border-style: solid;
+  border-color: var(--border-strong);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 60ms ease;
+}
+.set-edit.is-active:hover:not(:disabled) {
+  border-color: var(--border-accent);
+  background: var(--surface-3);
+  color: var(--text);
+}
+.set-edit.is-active:active:not(:disabled) { transform: translateY(1px); }
+.set-edit.is-active:focus-visible {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.set-edit.is-active:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Toggle switch (role=switch button). */
 .set-toggle {
@@ -429,4 +450,146 @@
 @keyframes setToastIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
+}
+
+/* ── Complex-value editor modal (array / env / generic JSON) ──
+   Reuses the global .modal / .modal-overlay shell (app.css) but wider, laid out
+   as a column so the body scrolls while the title + actions stay pinned. */
+.set-editor-modal {
+  width: min(600px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  max-height: min(78vh, 620px);
+}
+.set-editor-key {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-top: 3px;
+}
+.set-editor-body {
+  color: var(--text);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Shared empty-state line + × remove control for the array + env lists. */
+.set-arr-empty {
+  margin: 2px 0 10px;
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+.set-arr-rm {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-mute);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.set-arr-rm:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+/* ── Array editor ── */
+.set-arr { display: flex; flex-direction: column; gap: 10px; }
+.set-arr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.set-arr-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.set-arr-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-arr-add { display: flex; gap: 8px; align-items: center; }
+.set-arr-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  padding: 8px 11px;
+  border-radius: var(--r-md);
+}
+.set-arr-input:focus {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.set-arr-addbtn { flex: 0 0 auto; }
+
+/* ── Env key/value editor ── */
+.set-env { display: flex; flex-direction: column; gap: 10px; }
+.set-env-table { display: flex; flex-direction: column; gap: 6px; }
+.set-env-row { display: flex; gap: 8px; align-items: center; }
+.set-env-name,
+.set-env-value {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 11px;
+  border-radius: var(--r-md);
+}
+.set-env-name { flex: 0 0 38%; }
+.set-env-value { flex: 1 1 auto; }
+.set-env-name:focus,
+.set-env-value:focus {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.set-env-add { align-self: flex-start; }
+
+/* ── Generic JSON editor ── */
+.set-json { display: flex; flex-direction: column; gap: 8px; }
+.set-json-area {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  tab-size: 2;
+}
+.set-json-area:focus {
+  outline: none;
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.set-json-err {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger);
+  font-family: var(--font-mono);
 }

@@ -90,6 +90,24 @@ function makeCatalog(): SettingRow[] {
       },
       effective: true, sourceScope: 'user', isSet: true,
     },
+    {
+      def: {
+        key: 'env', label: 'Environment variables',
+        description: 'Environment variables applied to every Claude Code session.',
+        category: 'Environment', valueType: 'object', editor: 'env',
+        enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
+      },
+      effective: {}, sourceScope: 'user', isSet: true,
+    },
+    {
+      def: {
+        key: 'worktree', label: 'Worktree settings',
+        description: 'Advanced worktree configuration edited as raw JSON.',
+        category: 'Advanced', valueType: 'object', editor: 'json',
+        enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
+      },
+      effective: {}, sourceScope: 'user', isSet: true,
+    },
   ];
 }
 
@@ -234,18 +252,111 @@ test('managed row editor is read-only with an indicator and no reset', async () 
   expect(row.querySelector('[data-testid="setting-reset"]')).toBeNull();
 });
 
-test('array/object rows show an inert Edit… button (no crash, no editor yet)', async () => {
+test('bespoke object editors stay inert; array/env/json rows are now editable', async () => {
   const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={makeApi()} />);
   await findByTestId('settings-mode');
 
-  const arrRow = await waitFor(() => rowByKey(container, 'enabledMcpjsonServers'));
-  const arrEdit = arrRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+  // Array/env/json editors ship in Task 12 → their Edit… button is enabled.
+  const arrEdit = (await waitFor(() => rowByKey(container, 'enabledMcpjsonServers')))
+    .querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
   expect(arrEdit).toBeTruthy();
-  expect(arrEdit.disabled).toBe(true);
+  expect(arrEdit.disabled).toBe(false);
 
+  const envEdit = rowByKey(container, 'env').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+  expect(envEdit.disabled).toBe(false);
+
+  const jsonEdit = rowByKey(container, 'worktree').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+  expect(jsonEdit.disabled).toBe(false);
+
+  // The bespoke object editors (permissions/hooks/sandbox/statusLine) land in
+  // Tasks 13-14 → still an inert, disabled Edit… button (no crash, no editor).
   const objEdit = rowByKey(container, 'permissions').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
   expect(objEdit).toBeTruthy();
   expect(objEdit.disabled).toBe(true);
+});
+
+// ── Task 12: array + env + JSON object editors ───────────────────────────────
+
+test('array editor add/remove entry then save calls set with the new array', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const arrRow = await waitFor(() => rowByKey(container, 'enabledMcpjsonServers'));
+  fireEvent.click(arrRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  // The modal seeds from the row's current entries (context7, postman).
+  const modal = await findByTestId('setting-array-editor');
+  const items = () => modal.querySelectorAll('[data-testid="setting-array-item"]');
+  expect(items().length).toBe(2);
+
+  // Remove the first entry (context7).
+  fireEvent.click(modal.querySelector('[data-testid="setting-array-remove"]') as HTMLButtonElement);
+  await waitFor(() => expect(items().length).toBe(1));
+
+  // Add a new entry "x".
+  const input = modal.querySelector('[data-testid="setting-array-input"]') as HTMLInputElement;
+  fireEvent.input(input, { target: { value: 'x' } });
+  fireEvent.click(modal.querySelector('[data-testid="setting-array-add"]') as HTMLButtonElement);
+  await waitFor(() => expect(items().length).toBe(2));
+
+  // Save writes the composed string[] (postman + x) to user scope.
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'enabledMcpjsonServers', 'settings.json', ['postman', 'x'],
+  ]);
+});
+
+test('env editor add key/value then save calls set with the composed object', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const envRow = await waitFor(() => rowByKey(container, 'env'));
+  fireEvent.click(envRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-env-editor');
+  // Add a variable row, then fill its name + value.
+  fireEvent.click(modal.querySelector('[data-testid="setting-env-add"]') as HTMLButtonElement);
+  const nameInput = await waitFor(() => modal.querySelector('[data-testid="setting-env-name"]') as HTMLInputElement);
+  const valueInput = modal.querySelector('[data-testid="setting-env-value"]') as HTMLInputElement;
+  fireEvent.input(nameInput, { target: { value: 'API_HOST' } });
+  fireEvent.input(valueInput, { target: { value: 'example.com' } });
+
+  // Save composes { name: value } and writes the whole env object.
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'env', 'settings.json', { API_HOST: 'example.com' },
+  ]);
+});
+
+test('json editor blocks invalid JSON (error, no set) and saves valid JSON as the parsed object', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const jsonRow = await waitFor(() => rowByKey(container, 'worktree'));
+  fireEvent.click(jsonRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-json-editor');
+  const area = modal.querySelector('[data-testid="setting-json-textarea"]') as HTMLTextAreaElement;
+  const save = () => modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement;
+
+  // Invalid JSON surfaces an inline error and blocks the write entirely.
+  fireEvent.input(area, { target: { value: '{ not valid' } });
+  fireEvent.click(save());
+  await findByTestId('setting-json-error');
+  expect(api.set).not.toHaveBeenCalled();
+
+  // Valid JSON writes the parsed object.
+  fireEvent.input(area, { target: { value: '{ "auto": true }' } });
+  fireEvent.click(save());
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'worktree', 'settings.json', { auto: true },
+  ]);
 });
 
 test('category filter and search narrow the list', async () => {

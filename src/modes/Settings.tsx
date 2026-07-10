@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show } from 'solid-js';
 import type { RestoreInfo, ScanResult, SettingRow } from '../api';
 import '../styles/settings.css';
 
@@ -117,6 +117,10 @@ function SettingsBody(props: { api: SettingsApi }) {
   // Set alongside every successful set/unset; drives the toast's Undo button.
   const [undoInfo, setUndoInfo] = createSignal<RestoreInfo | null>(null);
   const [busy, setBusy] = createSignal(false);
+  // The row whose complex-value editor (array / env / generic JSON) is open in a
+  // modal, or null when none. Keyed rendering reseeds the editor's working state
+  // each time it opens (see EditorModal).
+  const [editorRow, setEditorRow] = createSignal<SettingRow | null>(null);
 
   const rows = () => catalog() ?? [];
 
@@ -259,7 +263,15 @@ function SettingsBody(props: { api: SettingsApi }) {
                 fallback={<div class="set-status" data-testid="settings-empty">No settings match. Clear the search or pick another category.</div>}
               >
                 <For each={filtered()}>
-                  {(row) => <SettingRowView row={row} busy={busy()} onSet={applySet} onReset={applyReset} />}
+                  {(row) => (
+                    <SettingRowView
+                      row={row}
+                      busy={busy()}
+                      onSet={applySet}
+                      onReset={applyReset}
+                      onEdit={(r) => setEditorRow(r)}
+                    />
+                  )}
                 </For>
               </Show>
             </Show>
@@ -295,6 +307,21 @@ function SettingsBody(props: { api: SettingsApi }) {
           </div>
         )}
       </Show>
+
+      {/* Complex-value editor. `keyed` reseeds the modal's working state from the
+          row every time it opens; the write routes through the same user-scope
+          `applySet` (so it gets a toast + Undo). WKWebView's confirm()/prompt()
+          are silent no-ops, so this is a real in-app modal. */}
+      <Show when={editorRow()} keyed>
+        {(row) => (
+          <EditorModal
+            row={row}
+            busy={busy()}
+            onSave={(value) => applySet(row, value)}
+            onClose={() => setEditorRow(null)}
+          />
+        )}
+      </Show>
     </div>
   );
 }
@@ -307,6 +334,7 @@ function SettingRowView(props: {
   busy: boolean;
   onSet: (row: SettingRow, value: unknown) => void;
   onReset: (row: SettingRow) => void;
+  onEdit: (row: SettingRow) => void;
 }) {
   const row = () => props.row;
   const def = () => props.row.def;
@@ -348,7 +376,7 @@ function SettingRowView(props: {
 
       <div class="set-row-ctl">
         <div class="set-editor">
-          <SettingEditor row={props.row} busy={props.busy} onSet={props.onSet} />
+          <SettingEditor row={props.row} busy={props.busy} onSet={props.onSet} onEdit={props.onEdit} />
         </div>
 
         <div class="set-row-meta">
@@ -392,27 +420,55 @@ function SettingEditor(props: {
   row: SettingRow;
   busy: boolean;
   onSet: (row: SettingRow, value: unknown) => void;
+  onEdit: (row: SettingRow) => void;
 }) {
   const def = () => props.row.def;
   const managed = () => isManaged(props.row);
   const disabled = () => props.busy || managed();
   const eff = () => effectiveOf(props.row);
 
+  // Which complex-value rows have a working modal editor today: every `array`
+  // plus the `env` (key/value) and generic `json` object editors. The four
+  // bespoke object editors (permissions / hooks / sandbox / statusLine) land in
+  // Tasks 13-14 and stay inert; managed rows are never user-editable.
+  const canEditComplex = () =>
+    !managed() &&
+    (def().valueType === 'array' ||
+      (def().valueType === 'object' && (def().editor === 'env' || def().editor === 'json')));
+
   return (
     <Show when={def().valueType === 'bool'} fallback={
       <Show when={def().valueType === 'enum'} fallback={
         <Show when={def().valueType === 'number'} fallback={
           <Show when={def().valueType === 'string'} fallback={
-            // array / object — no inline editor yet (Tasks 12-14).
-            <button
-              type="button"
-              class="set-edit"
-              data-testid="setting-edit"
-              disabled
-              title="Editor coming in a later step"
+            // array / object — an "Edit…" affordance that opens a modal editor
+            // for array / env / json rows; the bespoke object editors and managed
+            // rows stay inert (a disabled button that never opens anything).
+            <Show
+              when={canEditComplex()}
+              fallback={
+                <button
+                  type="button"
+                  class="set-edit"
+                  data-testid="setting-edit"
+                  disabled
+                  title="Editor coming in a later step"
+                >
+                  Edit…
+                </button>
+              }
             >
-              Edit…
-            </button>
+              <button
+                type="button"
+                class="set-edit is-active"
+                data-testid="setting-edit"
+                disabled={props.busy}
+                title={`Edit ${def().label}`}
+                onClick={() => props.onEdit(props.row)}
+              >
+                Edit…
+              </button>
+            </Show>
           }>
             <input
               class="set-text"
@@ -471,5 +527,324 @@ function SettingEditor(props: {
         <span class="set-toggle-track"><span class="set-toggle-knob" /></span>
       </button>
     </Show>
+  );
+}
+
+/** Modal editor for a complex-value setting — dispatched on the row:
+ *
+ *   • `array`            → an add/remove list of string entries.
+ *   • object `editor='env'`  → a NAME/value key-value table.
+ *   • object `editor='json'` → a raw JSON textarea, parsed (and validated)
+ *                              before it can save.
+ *
+ *  The four bespoke object editors (permissions / hooks / sandbox / statusLine)
+ *  never reach here — their row keeps the inert "Edit…" button until Tasks 13-14.
+ *  Working state is seeded once from `row.effective` (the modal is rendered
+ *  `keyed`, so re-opening reseeds). On save the composed value routes back
+ *  through the caller's user-scope `applySet`, which re-reads the catalog and
+ *  shows the toast + Undo. Shares the global `.modal` shell (WKWebView's
+ *  confirm()/prompt() are silent no-ops) with Esc-to-cancel, a focus trap, and
+ *  focus restoration to the trigger. */
+function EditorModal(props: {
+  row: SettingRow;
+  busy: boolean;
+  onSave: (value: unknown) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const def = () => props.row.def;
+  const mode: 'array' | 'env' | 'json' =
+    def().valueType === 'array' ? 'array' : def().editor === 'env' ? 'env' : 'json';
+
+  // ── Working state, seeded once from the row's effective value ──
+  const seedEntries = (): string[] => {
+    const v = props.row.effective;
+    return Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))) : [];
+  };
+  const seedPairs = (): { name: string; value: string }[] => {
+    const v = props.row.effective;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return Object.entries(v as Record<string, unknown>).map(([name, val]) => ({
+        name,
+        value: typeof val === 'string' ? val : JSON.stringify(val),
+      }));
+    }
+    return [];
+  };
+  const seedJson = (): string => JSON.stringify(props.row.effective ?? {}, null, 2);
+
+  const [entries, setEntries] = createSignal<string[]>(seedEntries());
+  const [draft, setDraft] = createSignal(''); // the array add-row input
+  const [pairs, setPairs] = createSignal<{ name: string; value: string }[]>(seedPairs());
+  const [text, setText] = createSignal(seedJson());
+  const [jsonErr, setJsonErr] = createSignal<string | null>(null);
+
+  // ── Array ops ──
+  function addEntry() {
+    const val = draft().trim();
+    if (!val) return;
+    setEntries([...entries(), val]);
+    setDraft('');
+  }
+  const removeEntry = (i: number) => setEntries(entries().filter((_, idx) => idx !== i));
+
+  // ── Env ops (an <Index> keeps the inputs mounted so typing never loses focus) ──
+  const addPair = () => setPairs([...pairs(), { name: '', value: '' }]);
+  const updatePair = (i: number, field: 'name' | 'value', v: string) =>
+    setPairs(pairs().map((p, idx) => (idx === i ? { ...p, [field]: v } : p)));
+  const removePair = (i: number) => setPairs(pairs().filter((_, idx) => idx !== i));
+  function composeEnv(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const p of pairs()) {
+      const name = p.name.trim();
+      if (name) out[name] = p.value; // last write wins on a duplicate name
+    }
+    return out;
+  }
+
+  // ── Commit paths (managed rows never open this modal, so no guard here) ──
+  async function commit(value: unknown) {
+    await props.onSave(value);
+    props.onClose();
+  }
+  function save() {
+    if (mode === 'array') {
+      void commit(entries());
+    } else if (mode === 'env') {
+      void commit(composeEnv());
+    } else {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text());
+      } catch (e) {
+        // Block the write and surface the parse error inline (never write bad JSON).
+        setJsonErr(e instanceof Error ? e.message : 'Invalid JSON');
+        return;
+      }
+      setJsonErr(null);
+      void commit(parsed);
+    }
+  }
+
+  const title = () =>
+    mode === 'array' ? 'Edit list' : mode === 'env' ? 'Edit environment variables' : 'Edit JSON';
+  const testid = () =>
+    mode === 'array' ? 'setting-array-editor' : mode === 'env' ? 'setting-env-editor' : 'setting-json-editor';
+
+  // ── Modal a11y: Esc cancels, Tab is trapped, focus starts inside + restores ──
+  let dialogRef: HTMLDivElement | undefined;
+  let firstFocus: HTMLElement | undefined;
+  createEffect(() => {
+    const prevFocused = document.activeElement as HTMLElement | null;
+    queueMicrotask(() =>
+      (firstFocus ?? dialogRef?.querySelector<HTMLElement>('button, input, textarea, select'))?.focus(),
+    );
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        props.onClose();
+      } else if (e.key === 'Tab') {
+        const nodes = dialogRef?.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        if (!nodes || nodes.length === 0) return;
+        const list = Array.from(nodes).filter((n) => !(n as HTMLButtonElement).disabled);
+        if (list.length === 0) return;
+        const first = list[0];
+        const last = list[list.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    onCleanup(() => {
+      window.removeEventListener('keydown', onKey);
+      // Restore focus to the trigger; a re-render may have removed it — never throw.
+      if (prevFocused && document.contains(prevFocused) && typeof prevFocused.focus === 'function') {
+        prevFocused.focus();
+      }
+    });
+  });
+
+  return (
+    <div class="modal-overlay" data-testid="settings-modal-overlay" onClick={() => props.onClose()}>
+      <div
+        ref={dialogRef}
+        class="modal set-editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-editor-title"
+        data-testid={testid()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div class="modal-title is-info" id="settings-editor-title">{title()}</div>
+        <code class="set-editor-key">{def().key}</code>
+
+        <div class="modal-body set-editor-body">
+          {/* ── Array: add/remove string entries ── */}
+          <Show when={mode === 'array'}>
+            <div class="set-arr" data-testid="setting-array">
+              <Show
+                when={entries().length > 0}
+                fallback={<p class="set-arr-empty">No entries yet. Add one below.</p>}
+              >
+                <ul class="set-arr-list">
+                  <For each={entries()}>
+                    {(entry, i) => (
+                      <li class="set-arr-item" data-testid="setting-array-item">
+                        <span class="set-arr-val">{entry}</span>
+                        <button
+                          type="button"
+                          class="set-arr-rm"
+                          data-testid="setting-array-remove"
+                          title="Remove entry"
+                          disabled={props.busy}
+                          onClick={() => removeEntry(i())}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </Show>
+              <div class="set-arr-add">
+                <input
+                  ref={(el) => (firstFocus = el)}
+                  class="set-arr-input"
+                  data-testid="setting-array-input"
+                  type="text"
+                  placeholder="Add an entry…"
+                  value={draft()}
+                  disabled={props.busy}
+                  onInput={(e) => setDraft(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addEntry();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  class="btn set-arr-addbtn"
+                  data-testid="setting-array-add"
+                  disabled={props.busy || !draft().trim()}
+                  onClick={addEntry}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </Show>
+
+          {/* ── Env: NAME/value key-value table ── */}
+          <Show when={mode === 'env'}>
+            <div class="set-env" data-testid="setting-env">
+              <Show
+                when={pairs().length > 0}
+                fallback={<p class="set-arr-empty">No variables yet. Add one below.</p>}
+              >
+                <div class="set-env-table">
+                  <Index each={pairs()}>
+                    {(p, i) => (
+                      <div class="set-env-row" data-testid="setting-env-row">
+                        <input
+                          ref={(el) => { if (i === 0) firstFocus = el; }}
+                          class="set-env-name"
+                          data-testid="setting-env-name"
+                          type="text"
+                          placeholder="NAME"
+                          value={p().name}
+                          disabled={props.busy}
+                          onInput={(e) => updatePair(i, 'name', e.currentTarget.value)}
+                        />
+                        <input
+                          class="set-env-value"
+                          data-testid="setting-env-value"
+                          type="text"
+                          placeholder="value"
+                          value={p().value}
+                          disabled={props.busy}
+                          onInput={(e) => updatePair(i, 'value', e.currentTarget.value)}
+                        />
+                        <button
+                          type="button"
+                          class="set-arr-rm"
+                          data-testid="setting-env-remove"
+                          title="Remove variable"
+                          disabled={props.busy}
+                          onClick={() => removePair(i)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
+                  </Index>
+                </div>
+              </Show>
+              <button
+                type="button"
+                class="btn set-env-add"
+                data-testid="setting-env-add"
+                disabled={props.busy}
+                onClick={addPair}
+              >
+                + Add variable
+              </button>
+            </div>
+          </Show>
+
+          {/* ── JSON: raw textarea, parsed + validated before save ── */}
+          <Show when={mode === 'json'}>
+            <div class="set-json">
+              <textarea
+                ref={(el) => (firstFocus = el)}
+                class="set-json-area"
+                data-testid="setting-json-textarea"
+                spellcheck={false}
+                disabled={props.busy}
+                value={text()}
+                onInput={(e) => {
+                  setText(e.currentTarget.value);
+                  if (jsonErr()) setJsonErr(null); // typing clears the stale parse error
+                }}
+              />
+              <Show when={jsonErr()}>
+                <p class="set-json-err" data-testid="setting-json-error">
+                  <span>Invalid JSON: {jsonErr()}</span>
+                </p>
+              </Show>
+            </div>
+          </Show>
+        </div>
+
+        <div class="modal-actions">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            data-testid="settings-editor-cancel"
+            disabled={props.busy}
+            onClick={() => props.onClose()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-testid="settings-editor-save"
+            disabled={props.busy}
+            onClick={save}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
