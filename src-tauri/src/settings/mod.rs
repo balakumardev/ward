@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod read;
+pub mod schema;
 pub mod write;
 
 /// One curated setting definition — the metadata Ward shows for a single
