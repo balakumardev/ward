@@ -764,6 +764,7 @@
       "description": "Deprecated: superseded by the attribution setting, which takes precedence. Historically added the Co-authored-by: Claude trailer to git commits and PRs. To hide all attribution, set attribution.commit and attribution.pr to empty strings and sessionUrl to false.",
       "category": "General",
       "valueType": "bool",
+      "default": true,
       "targetFile": "settings.json",
       "scopes": ["user", "project", "local"],
       "docsUrl": "https://code.claude.com/docs/en/settings"

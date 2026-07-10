@@ -481,6 +481,29 @@ test('statusLine editor saves { type, command } (padding omitted when blank)', a
   ]);
 });
 
+test('statusLine editor omits the command key when the command is blank/whitespace', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'statusLine'));
+  fireEvent.click(row.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-statusline-editor');
+  // Type a whitespace-only command, then save. A blank command must NEVER be
+  // persisted as `statusLine.command: ""` — Claude Code would try to run it as an
+  // empty command. `command` is symmetric with `type`/`padding`: omitted when blank.
+  const cmd = modal.querySelector('[data-testid="setting-statusline-command"]') as HTMLInputElement;
+  fireEvent.input(cmd, { target: { value: '   ' } });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  const saved = (api.set as ReturnType<typeof vi.fn>).mock.calls[0][3] as Record<string, unknown>;
+  expect(saved).not.toHaveProperty('command');
+  // `type` still writes (defaults to the fixed "command"); no leftover command key.
+  expect(saved).toEqual({ type: 'command' });
+});
+
 test('sandbox editor composes the nested filesystem/network object (omits empty sub-arrays)', async () => {
   const api = makeApi();
   const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);

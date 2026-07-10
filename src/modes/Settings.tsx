@@ -862,7 +862,9 @@ function EditorModal(props: {
     const t = slType().trim();
     if (t) out.type = t;
     else delete out.type;
-    out.command = slCommand();
+    const c = slCommand().trim();
+    if (c) out.command = c;
+    else delete out.command; // symmetric with type/padding — never persist statusLine.command: ""
     const p = slPadding().trim();
     if (p === '') delete out.padding;
     else {
