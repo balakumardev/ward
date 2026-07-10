@@ -9,6 +9,7 @@ pub mod marketplace;
 mod model;
 pub mod mcp;
 pub mod native;
+pub mod plugins;
 pub mod security;
 pub mod sessions;
 pub mod tokenizer;
