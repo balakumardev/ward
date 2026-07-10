@@ -11,6 +11,7 @@ use crate::harness::adapters::codex_ops::CodexOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
 use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
 use crate::plugins::{catalog, cli, enable, PluginScan};
+use crate::settings::{self, env::EnvVarDef, schema::SchemaDiff, SettingRow};
 use crate::sessions::{cost as session_cost, distill as session_distill, parse as session_parse, trim as session_trim};
 
 pub fn build_registry() -> Registry {
@@ -603,6 +604,99 @@ pub async fn plugins_marketplace_update(
     })
     .await
     .map_err(|e| WardError::Plugin(format!("plugins marketplace-update task failed: {e}")))?
+}
+
+// ── Settings mode (Plan 29) ─────────────────────────────────────────────
+
+/// Plan 29 — the full curated settings catalog, each def paired with its
+/// effective value across Claude Code's scope chain. Reads the user + managed +
+/// `~/.claude.json` scopes; a global project/local read needs a "current
+/// project" context Ward lacks here, so `project_dir` is `None` — consistent
+/// with the user-scope write model (`settings::write` is user-scope-only for
+/// the same reason).
+///
+/// The multi-file read + JSON parse is blocking I/O, so it runs on a worker
+/// thread via `spawn_blocking` to keep the event loop responsive (see the
+/// async-command gotcha in CLAUDE.md).
+#[tauri::command]
+pub async fn settings_catalog() -> Result<Vec<SettingRow>, WardError> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<Vec<SettingRow>, WardError> {
+        let home = dirs::home_dir().ok_or_else(|| WardError::Settings("no home dir".into()))?;
+        Ok(settings::read::scan_settings(&home, None))
+    })
+    .await
+    .map_err(|e| WardError::Settings(format!("settings catalog task failed: {e}")))?
+}
+
+/// Plan 29 — surgically set ONE user-scope setting `key` to `value` in
+/// `target_file` (`"settings.json"` or `"claudeJson"`), preserving every other
+/// key. `value` is the WHOLE value for the key (for an object-typed setting,
+/// pass the entire object). Returns a `setting-write` [`RestoreInfo`] for
+/// byte-exact undo. From JS the args arrive as `{scope, key, targetFile, value}`
+/// (Tauri camelCase→snake_case).
+///
+/// Writing a `managed`/`project`/`local` scope is refused inside
+/// [`settings::write::set_setting`] (user scope only today); the read + parse +
+/// write is blocking I/O, so it runs on a worker thread via `spawn_blocking`.
+#[tauri::command]
+pub async fn settings_set(
+    scope: String,
+    key: String,
+    target_file: String,
+    value: serde_json::Value,
+) -> Result<RestoreInfo, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<RestoreInfo, WardError> {
+        let home = dirs::home_dir().ok_or_else(|| WardError::Settings("no home dir".into()))?;
+        settings::write::set_setting(&home, &scope, &key, &target_file, value)
+    })
+    .await
+    .map_err(|e| WardError::Settings(format!("settings set task failed: {e}")))?
+}
+
+/// Plan 29 — remove ONE user-scope setting `key` from `target_file`, preserving
+/// every other key (the empty-remove path — it never writes `null`/`[]`). An
+/// absent file or key is still a success and still returns a [`RestoreInfo`]
+/// capturing the prior bytes, so undo stays consistent. From JS the args arrive
+/// as `{scope, key, targetFile}`.
+#[tauri::command]
+pub async fn settings_unset(
+    scope: String,
+    key: String,
+    target_file: String,
+) -> Result<RestoreInfo, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<RestoreInfo, WardError> {
+        let home = dirs::home_dir().ok_or_else(|| WardError::Settings("no home dir".into()))?;
+        settings::write::unset_setting(&home, &scope, &key, &target_file)
+    })
+    .await
+    .map_err(|e| WardError::Settings(format!("settings unset task failed: {e}")))?
+}
+
+/// Plan 29 — the schema-drift tripwire: fetch the community JSON Schema for
+/// Claude Code settings and diff its top-level keys against Ward's curated
+/// catalog (a maintainer aid — surfaces newly-published keys that need a def
+/// added). On-demand only, never a background poll. The network round-trip is
+/// blocking I/O, so it runs on a worker thread via `spawn_blocking`.
+#[tauri::command]
+pub async fn settings_schema_diff() -> Result<SchemaDiff, WardError> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<SchemaDiff, WardError> {
+        settings::schema::schema_diff(&settings::load_catalog())
+    })
+    .await
+    .map_err(|e| WardError::Settings(format!("settings schema-diff task failed: {e}")))?
+}
+
+/// Plan 29 — the curated environment-variable catalog Ward shows in Settings
+/// mode (descriptive metadata only; a variable's value is written via the `env`
+/// object of `settings.json` elsewhere). The data is a pure in-memory table, but
+/// this stays `async` + `spawn_blocking` for a uniform Settings command surface.
+#[tauri::command]
+pub async fn settings_env_list() -> Result<Vec<EnvVarDef>, WardError> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<Vec<EnvVarDef>, WardError> {
+        Ok(settings::env::env_catalog())
+    })
+    .await
+    .map_err(|e| WardError::Settings(format!("settings env-list task failed: {e}")))?
 }
 
 // ── Security Scanner (Plan 05) ─────────────────────────────────────────
@@ -1510,5 +1604,19 @@ mod tests {
         ))
         .unwrap_err();
         assert!(matches!(err, WardError::InvalidInput(_)));
+    }
+
+    /// Task 8 wiring: the five `settings_*` commands are thin async wrappers
+    /// that delegate to the (already-tested) Task 3-7 read/write/schema/env
+    /// functions, so `cargo check` + the `generate_handler!` registration guard
+    /// that they compile + register. `settings_env_list` is the one command with
+    /// no `home` and no network dependency — the clean pure seam — so it drives
+    /// the whole async wrapper (`spawn_blocking` → `env_catalog` → `Ok`) to
+    /// completion via `block_on` (same precedent as the plugins Task-7 test) and
+    /// confirms the curated catalog is wired through non-empty.
+    #[test]
+    fn settings_env_list_command_returns_curated_catalog() {
+        let list = tauri::async_runtime::block_on(settings_env_list()).unwrap();
+        assert!(!list.is_empty(), "env catalog must expose curated vars");
     }
 }
