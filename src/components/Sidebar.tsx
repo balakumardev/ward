@@ -8,6 +8,7 @@ export const MODES = [
   { id: 'backups', label: 'Backups', icon: '↺' },
   { id: 'marketplace', label: 'Marketplace', icon: '◱' },
   { id: 'plugins', label: 'Plugins', icon: '⊞' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
 ] as const;
 
 /** Plan 09 — Harness dropdown options. Order matches `commands.rs::build_registry`. */

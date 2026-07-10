@@ -9,6 +9,7 @@ import { Sessions } from './modes/Sessions';
 import { Backups } from './modes/Backups';
 import { Marketplace } from './modes/Marketplace';
 import { Plugins } from './modes/Plugins';
+import { Settings } from './modes/Settings';
 import { api, isTauri, TauriUnavailableError } from './api';
 import type { HarnessItem, InstallTarget, MarketEntry, McpConfig, McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -150,6 +151,21 @@ export default function App() {
     cliAvailable: () => api.pluginsCliAvailable(),
   };
 
+  // Plan 29 — Settings bridge. A thin pass-through: `catalog` reads the curated
+  // catalog joined with live per-scope state; `set`/`unset` are surgical
+  // single-key writes to the def-routed target file (returning a `setting-write`
+  // RestoreInfo for Undo). Ward writes user scope only, so the mode always sends
+  // 'user' as the scope. Settings are Claude-only (the mode self-gates on
+  // `settingsEditable` inside Settings.tsx), so restore always targets 'claude'.
+  const settingsApi = {
+    catalog: () => api.settingsCatalog(),
+    set: (scope: string, key: string, targetFile: string, value: unknown) =>
+      api.settingsSet(scope, key, targetFile, value),
+    unset: (scope: string, key: string, targetFile: string) =>
+      api.settingsUnset(scope, key, targetFile),
+    restore: (info: RestoreInfo) => api.restore('claude', info),
+  };
+
   return (
     <Shell
       active={mode()}
@@ -201,7 +217,11 @@ export default function App() {
                   <Show when={mode() === 'backups'} fallback={
                     <Show when={mode() === 'marketplace'} fallback={
                       <Show when={mode() === 'plugins'} fallback={
-                        <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                        <Show when={mode() === 'settings'} fallback={
+                          <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                        }>
+                          <Settings scan={result()} api={settingsApi} />
+                        </Show>
                       }>
                         <Plugins scan={result()} api={pluginsApi} />
                       </Show>

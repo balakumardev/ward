@@ -1,7 +1,7 @@
 import { render } from '@solidjs/testing-library';
 import { Sidebar, MODES, HARNESSES } from './Sidebar';
 
-test('renders all seven modes', () => {
+test('renders all eight modes', () => {
   const { getByText } = render(() => (
     <Sidebar
       active="organizer"
@@ -11,7 +11,7 @@ test('renders all seven modes', () => {
     />
   ));
   for (const m of MODES) getByText(m.label);
-  expect(MODES.map((m) => m.id)).toEqual(['organizer', 'security', 'budget', 'sessions', 'backups', 'marketplace', 'plugins']);
+  expect(MODES.map((m) => m.id)).toEqual(['organizer', 'security', 'budget', 'sessions', 'backups', 'marketplace', 'plugins', 'settings']);
 });
 
 test('renders all registered harnesses in the dropdown', () => {
