@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "fetchedAt": 1750000000,
+  "catalog": {
+    "generated_at": 1749990000,
+    "installs_generated_at": 1749985000,
+    "marketplace_sha": "0000000000000000000000000000000000000000",
+    "models": ["claude-opus-4-7", "claude-sonnet-4-6"],
+    "plugins": {
+      "code-formatter@claude-plugins-official": {
+        "plugin": "code-formatter",
+        "tokens": {
+          "claude-opus-4-7": { "always_on": 1005, "on_invoke": 15353 },
+          "claude-sonnet-4-6": { "always_on": 740, "on_invoke": 11431 }
+        },
+        "components": {
+          "commands": [{ "name": "fmt" }],
+          "agents": [],
+          "skills": [{ "name": "style-guide" }, { "name": "lint-rules" }],
+          "hooks": [],
+          "mcpServers": [{ "name": "formatter-mcp" }],
+          "lspServers": []
+        },
+        "unique_installs": 682,
+        "last_updated": 1749980000,
+        "marketplace_entry": { "name": "code-formatter" },
+        "version": "2.1.0",
+        "source": {
+          "source": "github",
+          "repo": "anthropics/code-formatter"
+        }
+      }
+    }
+  }
+}

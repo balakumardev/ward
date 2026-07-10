@@ -785,7 +785,7 @@ fn scan_plugins(home: &Path) -> Vec<HarnessItem> {
 
 /// Read `enabledPlugins` from `~/.claude/settings.json` — a map of
 /// `"<name>@<marketplace>"` → bool. Absent keys default to enabled.
-fn plugin_enabled_map(home: &Path) -> std::collections::HashMap<String, bool> {
+pub(crate) fn plugin_enabled_map(home: &Path) -> std::collections::HashMap<String, bool> {
     let mut map = std::collections::HashMap::new();
     let p = home.join(".claude").join("settings.json");
     let Ok(content) = std::fs::read_to_string(&p) else { return map };

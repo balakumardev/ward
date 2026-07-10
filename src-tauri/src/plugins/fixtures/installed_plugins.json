@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "plugins": {
+    "code-formatter@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/home/tester/.claude/plugins/cache/claude-plugins-official/code-formatter/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-01-01T00:00:00.000Z",
+        "lastUpdated": "2026-01-01T00:00:00.000Z"
+      },
+      {
+        "scope": "project",
+        "projectPath": "/home/tester/proj",
+        "installPath": "/home/tester/.claude/plugins/cache/claude-plugins-official/code-formatter/2.1.0",
+        "version": "2.1.0",
+        "installedAt": "2026-02-01T00:00:00.000Z",
+        "lastUpdated": "2026-06-15T00:00:00.000Z"
+      }
+    ],
+    "orphan-tool@side-marketplace": [
+      {
+        "scope": "user",
+        "installPath": "/home/tester/.claude/plugins/cache/side-marketplace/orphan-tool/0.3.0",
+        "version": "0.3.0",
+        "installedAt": "2026-03-01T00:00:00.000Z",
+        "lastUpdated": "2026-03-01T00:00:00.000Z"
+      }
+    ]
+  }
+}

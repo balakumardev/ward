@@ -1,0 +1,46 @@
+{
+  "name": "claude-plugins-official",
+  "owner": {
+    "name": "Anthropic",
+    "url": "https://github.com/anthropics"
+  },
+  "plugins": [
+    {
+      "name": "code-formatter",
+      "description": "Formats your source code on save.",
+      "author": { "name": "Anthropic" },
+      "category": "dev",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/anthropics/claude-plugins-official",
+        "path": "plugins/code-formatter",
+        "ref": "main"
+      },
+      "homepage": "https://example.com/code-formatter"
+    },
+    {
+      "name": "doc-writer",
+      "description": "Drafts documentation from code.",
+      "author": "Anthropic",
+      "category": "docs",
+      "version": "1.2.0",
+      "tags": ["docs", "writing"],
+      "displayName": "Doc Writer",
+      "source": {
+        "source": "github",
+        "repo": "anthropics/doc-writer"
+      }
+    },
+    {
+      "name": "legacy-linter",
+      "description": "Lints legacy code.",
+      "author": { "name": "Community" },
+      "category": "dev",
+      "keywords": ["lint", "legacy"],
+      "source": {
+        "source": "github",
+        "repo": "community/legacy-linter"
+      }
+    }
+  ]
+}

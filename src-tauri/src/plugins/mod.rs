@@ -22,6 +22,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod catalog;
+
 /// A single plugin as Ward presents it — merges an installed record
 /// (`installed_plugins.json`) with catalog metadata
 /// (`plugin-catalog-cache.json`) when available. `installed` /
