@@ -35,7 +35,7 @@ fn claude_json_path(home: &Path) -> std::path::PathBuf { home.join(".claude.json
 /// reads three files (settings.json, settings.local.json,
 /// managed-settings.json) but its POST endpoint writes only
 /// `settings.json`. We follow the write path: policy goes here.
-fn policy_settings_path(home: &Path) -> std::path::PathBuf { home.join(".claude").join("settings.json") }
+pub(crate) fn policy_settings_path(home: &Path) -> std::path::PathBuf { home.join(".claude").join("settings.json") }
 
 // ── Disabled list (per project) ────────────────────────────────────────
 
@@ -295,7 +295,7 @@ fn parse_policy_entries(v: Option<&Value>) -> Vec<PolicyEntry> {
     arr.iter().filter_map(|item| serde_json::from_value::<PolicyEntry>(item.clone()).ok()).collect()
 }
 
-fn write_json_pretty(path: &Path, value: &Value) -> Result<(), WardError> {
+pub(crate) fn write_json_pretty(path: &Path, value: &Value) -> Result<(), WardError> {
     let s = serde_json::to_string_pretty(value)
         .map_err(|e| WardError::NotFound(format!("serialize: {e}")))?;
     std::fs::write(path, format!("{s}\n"))?;

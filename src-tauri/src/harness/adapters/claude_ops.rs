@@ -314,7 +314,7 @@ impl HarnessOps for ClaudeOps {
         match info.kind.as_str() {
             "file" => restore_file(ctx, info),
             "mcp-entry" => restore_mcp_entry(ctx, info),
-            "mcp-disabled" | "mcp-policy" | "mcp-upsert" =>
+            "mcp-disabled" | "mcp-policy" | "mcp-upsert" | "plugin-enable" =>
                 crate::harness::adapters::claude_mcp::restore_mcp_file(ctx.home, info),
             "skill-create" => {
                 let dir = ensure_under_home(Path::new(&info.original_path), ctx.home)?;
