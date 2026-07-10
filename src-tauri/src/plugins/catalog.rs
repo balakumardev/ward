@@ -12,9 +12,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::error::WardError;
 use crate::plugins::{plugin_key, ComponentCounts, MarketplaceRef, PluginEntry, PluginScan};
 
 /// Collapsed install record for one plugin key, distilled from the (possibly
@@ -290,6 +292,35 @@ pub fn scan_plugins(home: &Path, cli_available: bool) -> PluginScan {
 }
 
 // ---------------------------------------------------------------------------
+// Remote fetch (thin `ureq` wrapper, not unit-tested).
+// ---------------------------------------------------------------------------
+
+/// Fetch a raw `marketplace.json` from `url` (e.g. a GitHub raw link) and
+/// parse it into [`PluginEntry`]s via the pure [`parse_marketplace_manifest`].
+/// User-triggered only (add-a-marketplace-by-URL) — never a background poll.
+///
+/// 10 s timeout; any network / HTTP / body-read / JSON-parse failure maps to
+/// [`WardError::Plugin`]. The marketplace name is taken from the manifest's
+/// top-level `name` field, falling back to `"remote"` when absent or empty.
+///
+/// Thin network wrapper mirroring `marketplace::registry::fetch_servers`: the
+/// glue is not unit-tested; the parse it delegates to is covered by
+/// [`parse_marketplace_manifest`]'s tests.
+pub fn fetch_remote_marketplace(url: &str) -> Result<Vec<PluginEntry>, WardError> {
+    let resp = ureq::get(url)
+        .timeout(Duration::from_secs(10))
+        .call()
+        .map_err(|e| WardError::Plugin(format!("fetch {url}: {e}")))?;
+    let body = resp
+        .into_string()
+        .map_err(|e| WardError::Plugin(format!("read {url}: {e}")))?;
+    let value: Value = serde_json::from_str(&body)
+        .map_err(|e| WardError::Plugin(format!("parse {url}: {e}")))?;
+    let name = nonempty_str(value.get("name")).unwrap_or_else(|| "remote".to_string());
+    Ok(parse_marketplace_manifest(&value, &name))
+}
+
+// ---------------------------------------------------------------------------
 // Merge + JSON helpers.
 // ---------------------------------------------------------------------------
 
@@ -479,6 +510,26 @@ mod tests {
         assert_eq!(cc.hooks, 0);
         assert_eq!(cc.mcp_servers, 1);
         assert_eq!(cc.lsp_servers, 0);
+    }
+
+    #[test]
+    fn fetch_marketplace_uses_manifest_parser() {
+        // `fetch_remote_marketplace` is a thin `ureq` wrapper and is NOT
+        // unit-tested (network) — mirroring `registry.rs`'s tested-parser /
+        // untested-fetch split. This locks the parse path the fetch delegates
+        // to: the same top-level `name` derivation + `parse_marketplace_manifest`
+        // it runs on the fetched body. (The `ureq` call is exercised in the
+        // hands-on smoke.)
+        let value = v(MANIFEST);
+        let name = nonempty_str(value.get("name")).unwrap_or_else(|| "remote".to_string());
+        assert_eq!(name, "claude-plugins-official");
+        let entries = parse_marketplace_manifest(&value, &name);
+        assert!(!entries.is_empty(), "remote manifest yields >=1 plugin entry");
+        let cf = entries
+            .iter()
+            .find(|e| e.name == "code-formatter")
+            .expect("code-formatter present in remote manifest");
+        assert_eq!(cf.marketplace, "claude-plugins-official");
     }
 
     #[test]
