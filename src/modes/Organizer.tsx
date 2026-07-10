@@ -339,6 +339,12 @@ export function Organizer(props: {
   }
 
   function onItemClick(item: HarnessItem, e: MouseEvent) {
+    // Selecting any item dismisses an open Add-MCP / Add-Skill pane. Those
+    // views are gated AHEAD of `selectedItem()` in the detail <Show> chain, so
+    // without this reset the add form stays pinned over the newly-clicked item.
+    // Placed before the shift/⌘ multi-select branches so every path clears it.
+    setAddingMcp(false);
+    setAddingSkill(false);
     if (e.shiftKey && lastClickKey()) {
       // Extend selection from last click to this one (within visible items).
       const list = visibleItems();
@@ -639,7 +645,7 @@ export function Organizer(props: {
             <div
               classList={{ cat: true, active: activeCat() === c.id, zero: c.count === 0 }}
               data-testid={`category-${c.id}`}
-              onClick={() => { setActiveCat(c.id); setQuery(''); }}
+              onClick={() => { setActiveCat(c.id); setQuery(''); setAddingMcp(false); setAddingSkill(false); }}
             >
               <span class="cat-dot" style={{ '--dot': catDot(c.id) }} />
               <span class="cat-label">{c.label}</span>

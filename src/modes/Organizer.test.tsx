@@ -607,6 +607,68 @@ it('adds a new MCP server via the Add flow (no targetPath → scope resolves)', 
   expect(config.command).toBe('npx');
 });
 
+// ── Regression: the Add pane must dismiss on any selection ──
+// The detail <Show> chain gates the Add-MCP / Add-Skill views AHEAD of the
+// current selection, so unless the add flags are reset when the user selects
+// something else, the add pane stays pinned over the newly-selected item.
+
+it('dismisses the Add MCP pane when a different item is selected', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'mcp', scopeId: 'global', name: 'ctx', path: '/Users/x/.claude.json',
+        movable: true, deletable: true, locked: false, mcpConfig: { command: 'npx' } },
+      { category: 'mcp', scopeId: 'global', name: 'other', path: '/Users/x/.claude.json',
+        movable: true, deletable: true, locked: false, mcpConfig: { command: 'pw' } },
+    ],
+  });
+  renderOrganizer({ scan, api: fakeApi });
+  fireEvent.click(screen.getByTestId('category-mcp'));
+  fireEvent.click(screen.getByTestId('mcp-add-button'));
+  // The Add-MCP pane is open (its Cancel + tabs are unique to the add view).
+  expect(await screen.findByTestId('mcp-add-cancel')).toBeInTheDocument();
+  // Select an existing MCP item — the add pane must give way to its detail.
+  fireEvent.click(screen.getByText('ctx'));
+  await waitFor(() => expect(screen.queryByTestId('mcp-add-cancel')).toBeNull());
+  expect(screen.queryByText('Add MCP Server')).toBeNull();
+});
+
+it('dismisses the Add MCP pane when a different category is selected', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'mcp', scopeId: 'global', name: 'ctx', path: '/Users/x/.claude.json',
+        movable: true, deletable: true, locked: false, mcpConfig: { command: 'npx' } },
+      { category: 'skill', scopeId: 'global', name: 'brainstorming', path: '/g/SKILL.md',
+        movable: true, deletable: true, locked: false },
+    ],
+  });
+  renderOrganizer({ scan, api: fakeApi });
+  fireEvent.click(screen.getByTestId('category-mcp'));
+  fireEvent.click(screen.getByTestId('mcp-add-button'));
+  expect(await screen.findByTestId('mcp-add-cancel')).toBeInTheDocument();
+  // Switch to another category — the add pane must dismiss (empty state shows).
+  fireEvent.click(screen.getByTestId('category-skill'));
+  await waitFor(() => expect(screen.queryByTestId('mcp-add-cancel')).toBeNull());
+  expect(screen.getByText('Select an item to view or edit')).toBeInTheDocument();
+});
+
+it('dismisses the Add Skill pane when a different item is selected', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'skill', scopeId: 'global', name: 'alpha', path: '/g/a/SKILL.md',
+        movable: true, deletable: true, locked: false },
+      { category: 'skill', scopeId: 'global', name: 'beta', path: '/g/b/SKILL.md',
+        movable: true, deletable: true, locked: false },
+    ],
+  });
+  renderOrganizer({ scan, api: fakeApi });
+  fireEvent.click(screen.getByTestId('category-skill'));
+  fireEvent.click(screen.getByTestId('skill-add-button'));
+  expect(await screen.findByTestId('skill-add-form')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('alpha'));
+  await waitFor(() => expect(screen.queryByTestId('skill-add-form')).toBeNull());
+  expect(screen.queryByText('Add Skill')).toBeNull();
+});
+
 // ── Plan 18 review-fix 1: gate the editable form on capabilities.mcpEditable ──
 
 it('renders a READ-ONLY MCP pane (no form, no add button) when mcpEditable is false', async () => {
