@@ -5578,6 +5578,7 @@
 "effective": true,
 "backup": true,
 "mcpEditable": true,
-"skillCreatable": true
+"skillCreatable": true,
+"pluginsManageable": true
 }
 }

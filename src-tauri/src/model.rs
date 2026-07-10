@@ -20,6 +20,11 @@ pub struct Capabilities {
     /// control. Claude `true`; Codex `false` until its write path lands.
     /// Serializes as `skillCreatable`.
     pub skill_creatable: bool,
+    /// Plan 28 — true when this harness exposes a manageable plugin surface
+    /// (the Plugins mode can list/enable/disable/install plugins). Claude
+    /// `true`; Codex `false` (no plugin system). Serializes as
+    /// `pluginsManageable`.
+    pub plugins_manageable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

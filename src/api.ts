@@ -43,6 +43,9 @@ export interface Capabilities {
    *  `<skills_dir>/<name>/SKILL.md`), gating the Organizer's "+ Add Skill".
    *  Claude true; Codex false until its write path lands. */
   skillCreatable: boolean;
+  /** Plan 28 — true when this harness exposes a manageable plugin surface,
+   *  gating the Plugins mode. Claude true; Codex false (no plugin system). */
+  pluginsManageable: boolean;
 }
 export interface Category { id: string; label: string; count: number; }
 export interface Scope { id: string; kind: string; label: string; root: string; }

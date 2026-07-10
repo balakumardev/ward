@@ -128,6 +128,9 @@ impl Harness for CodexAdapter {
             // servers are add/edit/remove-able and skills are creatable.
             mcp_editable: true,
             skill_creatable: true,
+            // Plan 28: Codex has no plugin system, so the Plugins mode is
+            // inapplicable.
+            plugins_manageable: false,
         }
     }
 

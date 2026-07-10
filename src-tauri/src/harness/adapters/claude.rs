@@ -175,6 +175,7 @@ impl Harness for ClaudeAdapter {
             mcp_security: true, sessions: true, effective: true, backup: true,
             mcp_editable: true,
             skill_creatable: true,
+            plugins_manageable: true,
         }
     }
 
