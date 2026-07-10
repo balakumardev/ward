@@ -29,7 +29,7 @@ Four features requested together:
 | Session title source | **Summary line → first user message → UUID** |
 | Transcript cleanup | **Hide noise rows + collapsible, pretty-printed tool results + show path** |
 | MCP paste placement | **A "Paste JSON" tab inside the existing Add-MCP pane** |
-| MCP source behaviour | **Discovery + build new installers** (OCI container + `.mcpb` bundle) |
+| MCP source behaviour | **Discovery + build the OCI/container installer.** The `.mcpb` bundle installer was **DROPPED** (user decision 2026-07-09) — Smithery stdio-bundle servers show as discovery-only |
 | Skill source behaviour | **SkillsMP + GitHub Git-Trees SKILL.md discovery + regression test** |
 
 ### Plan decomposition
@@ -39,8 +39,9 @@ Four features requested together:
 - **Plan 25** — Marketplace: source-registry refactor + MCP discovery sources
   (Glama, Smithery, official-registry search) + UI source badges / install-shape
   gating.
-- **Plan 26** — Marketplace: MCP install adapters — OCI/container + `.mcpb`
-  bundle (the security-sensitive download-and-run path).
+- **Plan 26** — Marketplace: MCP install adapter — **OCI/container ONLY**. (The
+  `.mcpb` bundle installer was DROPPED — user decision 2026-07-09 — to avoid the
+  download-and-run risk; Smithery stdio-bundle servers surface as discovery-only.)
 - **Plan 27** — Marketplace: Skills — SkillsMP source + GitHub Git-Trees
   SKILL.md discovery + `obra/superpowers` regression fix.
 
@@ -287,9 +288,10 @@ highest-risk path. Design for safety:
 - **Fallback:** if download/extract/consent is declined or fails, no config is
   written and the error is explicit.
 
-> This is the riskiest feature in the batch. If review prefers, 5b can ship
-> behind a feature flag or be deferred to a follow-up while 5a (container) and
-> the discovery sources ship first. Flagged for the review gate.
+> **DROPPED — user decision 2026-07-09.** The `.mcpb` download-and-run path is
+> NOT built. Smithery stdio-bundle servers surface as discovery-only (View). §5b
+> is retained only as a record of what a future opt-in would need. Plan 26 ships
+> the OCI/container adapter (§5a) only.
 
 ### Tests
 - OCI: config emits `-e NAME` (no values); digest pin; missing-Docker preflight
