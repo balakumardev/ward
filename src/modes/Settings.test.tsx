@@ -108,6 +108,37 @@ function makeCatalog(): SettingRow[] {
       },
       effective: {}, sourceScope: 'user', isSet: true,
     },
+    // object (editor: hooks) — stays inert (Task 14).
+    {
+      def: {
+        key: 'hooks', label: 'Hooks',
+        description: 'Shell commands the harness runs on lifecycle events.',
+        category: 'Hooks', valueType: 'object', editor: 'hooks',
+        enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
+      },
+      isSet: false,
+    },
+    // object (editor: statusLine) — UNSET; a unique category so it doesn't
+    // collide with `theme`'s Appearance in the category-filter test.
+    {
+      def: {
+        key: 'statusLine', label: 'Status line',
+        description: 'A custom command whose output replaces the default status line.',
+        category: 'Status Line', valueType: 'object', editor: 'statusLine',
+        enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
+      },
+      isSet: false,
+    },
+    // object (editor: sandbox) — UNSET.
+    {
+      def: {
+        key: 'sandbox', label: 'Sandbox',
+        description: 'Filesystem and network allow / deny rules for the command sandbox.',
+        category: 'Sandbox', valueType: 'object', editor: 'sandbox',
+        enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
+      },
+      isSet: false,
+    },
   ];
 }
 
@@ -252,7 +283,7 @@ test('managed row editor is read-only with an indicator and no reset', async () 
   expect(row.querySelector('[data-testid="setting-reset"]')).toBeNull();
 });
 
-test('bespoke object editors stay inert; array/env/json rows are now editable', async () => {
+test('array/env/json + bespoke permissions/statusLine/sandbox rows are editable; hooks stays inert', async () => {
   const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={makeApi()} />);
   await findByTestId('settings-mode');
 
@@ -268,11 +299,18 @@ test('bespoke object editors stay inert; array/env/json rows are now editable', 
   const jsonEdit = rowByKey(container, 'worktree').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
   expect(jsonEdit.disabled).toBe(false);
 
-  // The bespoke object editors (permissions/hooks/sandbox/statusLine) land in
-  // Tasks 13-14 → still an inert, disabled Edit… button (no crash, no editor).
-  const objEdit = rowByKey(container, 'permissions').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
-  expect(objEdit).toBeTruthy();
-  expect(objEdit.disabled).toBe(true);
+  // The bespoke permissions/statusLine/sandbox editors ship in Task 13 → enabled.
+  for (const key of ['permissions', 'statusLine', 'sandbox']) {
+    const edit = rowByKey(container, key).querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+    expect(edit, `${key} Edit… should exist`).toBeTruthy();
+    expect(edit.disabled, `${key} Edit… should be enabled`).toBe(false);
+  }
+
+  // hooks is the last bespoke editor → still inert (a disabled Edit… button)
+  // until Task 14 (no crash, no editor).
+  const hooksEdit = rowByKey(container, 'hooks').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+  expect(hooksEdit).toBeTruthy();
+  expect(hooksEdit.disabled).toBe(true);
 });
 
 // ── Task 12: array + env + JSON object editors ───────────────────────────────
@@ -390,4 +428,94 @@ test('category filter and search narrow the list', async () => {
     expect(rows.length).toBe(1);
     expect(rows[0].getAttribute('data-key')).toBe('cleanupPeriodDays');
   });
+});
+
+// ── Task 13: bespoke permissions / statusLine / sandbox editors ──────────────
+
+test('permissions editor composes and saves the permissions object (omits empty, preserves unmanaged keys)', async () => {
+  const catalog = makeCatalog();
+  // Seed a clean slate (no allow/ask/deny) plus a key this editor does NOT
+  // manage, to assert both the omit-empty rules and the merge/preserve path.
+  const perms = catalog.find((r) => r.def.key === 'permissions')!;
+  perms.effective = { defaultMode: 'acceptEdits', disableBypassPermissionsMode: 'disable' };
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'permissions'));
+  fireEvent.click(row.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-perms-editor');
+  // Change defaultMode acceptEdits → plan.
+  const dm = modal.querySelector('[data-testid="setting-perms-defaultmode"]') as HTMLSelectElement;
+  fireEvent.change(dm, { target: { value: 'plan' } });
+  // Add a single deny rule; leave allow / ask / additionalDirectories empty.
+  const denyInput = modal.querySelector('[data-testid="setting-list-deny-input"]') as HTMLInputElement;
+  fireEvent.input(denyInput, { target: { value: 'Bash(rm *)' } });
+  fireEvent.click(modal.querySelector('[data-testid="setting-list-deny-add"]') as HTMLButtonElement);
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // Empty allow/ask/additionalDirectories are omitted; defaultMode + deny are
+  // written; the unmanaged disableBypassPermissionsMode key is preserved.
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'permissions', 'settings.json',
+    { defaultMode: 'plan', deny: ['Bash(rm *)'], disableBypassPermissionsMode: 'disable' },
+  ]);
+});
+
+test('statusLine editor saves { type, command } (padding omitted when blank)', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'statusLine'));
+  fireEvent.click(row.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-statusline-editor');
+  // type defaults to the fixed "command"; fill the command, leave padding blank.
+  const cmd = modal.querySelector('[data-testid="setting-statusline-command"]') as HTMLInputElement;
+  fireEvent.input(cmd, { target: { value: '~/bin/statusline.sh' } });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'statusLine', 'settings.json', { type: 'command', command: '~/bin/statusline.sh' },
+  ]);
+});
+
+test('sandbox editor composes the nested filesystem/network object (omits empty sub-arrays)', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'sandbox'));
+  fireEvent.click(row.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-sandbox-editor');
+  // Add one filesystem allow-write path and one network allowed-domain; every
+  // other list stays empty and must be omitted.
+  const fsInput = modal.querySelector('[data-testid="setting-list-fs-allowWrite-input"]') as HTMLInputElement;
+  fireEvent.input(fsInput, { target: { value: '/tmp/build' } });
+  fireEvent.click(modal.querySelector('[data-testid="setting-list-fs-allowWrite-add"]') as HTMLButtonElement);
+  const netInput = modal.querySelector('[data-testid="setting-list-net-allowedDomains-input"]') as HTMLInputElement;
+  fireEvent.input(netInput, { target: { value: 'github.com' } });
+  fireEvent.click(modal.querySelector('[data-testid="setting-list-net-allowedDomains-add"]') as HTMLButtonElement);
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'sandbox', 'settings.json',
+    { filesystem: { allowWrite: ['/tmp/build'] }, network: { allowedDomains: ['github.com'] } },
+  ]);
+});
+
+test('hooks editor stays inert (its Edit… button is still disabled)', async () => {
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={makeApi()} />);
+  await findByTestId('settings-mode');
+
+  const hooksEdit = (await waitFor(() => rowByKey(container, 'hooks')))
+    .querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
+  expect(hooksEdit).toBeTruthy();
+  expect(hooksEdit.disabled).toBe(true);
 });

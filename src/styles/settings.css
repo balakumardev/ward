@@ -568,6 +568,57 @@
 }
 .set-env-add { align-self: flex-start; }
 
+/* ── Bespoke object editors (permissions / statusLine / sandbox) ──
+   Stacked field groups. Each array field reuses the .set-arr list sub-UI above;
+   these rules add the group scaffolding + per-field labels around it. */
+.set-perms,
+.set-sl,
+.set-sandbox {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* A labelled single-control field (defaultMode select, statusLine inputs). */
+.set-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.set-field-label,
+.set-sandbox-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-mute);
+}
+.set-field .set-text,
+.set-field .set-number,
+.set-field .set-enum {
+  width: 100%;
+  min-width: 0;
+}
+
+/* The heading above each array list inside a bespoke editor. */
+.set-list-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* Sandbox: a Filesystem block and a Network block, each a column of lists. */
+.set-sandbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.set-sandbox-group + .set-sandbox-group {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
 /* ── Generic JSON editor ── */
 .set-json { display: flex; flex-direction: column; gap: 8px; }
 .set-json-area {

@@ -10,10 +10,10 @@ import '../styles/settings.css';
  * **effective value** resolved across the scope chain, a **source-scope chip**
  * (which scope actually set it), and an inline editor picked by the setting's
  * `valueType`. Simple scalars (bool / enum / number / string) edit in place;
- * complex `array` / `object` settings surface an "Edit…" affordance that a later
- * task wires to bespoke editors (permissions / hooks / env / sandbox /
- * statusLine) — it is intentionally inert here so those rows never crash the
- * list.
+ * complex `array` / `object` settings open a modal editor — the generic array /
+ * env / json editors plus the bespoke permissions / statusLine / sandbox
+ * editors. Only the `hooks` object editor is still inert (a disabled "Edit…"
+ * button that never opens), landing in a later task so its row never crashes.
  *
  * Ward writes the **user** scope only (`~/.claude/settings.json`, or
  * `~/.claude.json` for the handful of global-config keys — routed by the def's
@@ -46,6 +46,32 @@ export interface SettingsApi {
  *  `settings_set`/`settings_unset` commands accept a scope string, so
  *  project/local lands later without churn. */
 const SETTINGS_SCOPE = 'user';
+
+/** Object `editor` kinds that have a working modal editor. `hooks` is
+ *  deliberately absent — it stays inert until Task 14. */
+const EDITABLE_OBJECT_EDITORS = ['env', 'json', 'permissions', 'statusLine', 'sandbox'];
+
+/** `permissions.defaultMode` options (Claude Code's permission modes). The empty
+ *  choice leaves the key unset so it inherits from a broader scope. */
+const PERM_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
+
+/** The `sandbox.filesystem.*` path lists Ward edits — the real Claude Code
+ *  sandbox schema (read/write × allow/deny), not a generic allow/deny pair. Any
+ *  other filesystem sub-key present in the value is preserved via merge. */
+const SANDBOX_FS_FIELDS: { key: string; label: string; placeholder: string }[] = [
+  { key: 'allowRead', label: 'Allow read paths', placeholder: 'e.g. ~/.kube' },
+  { key: 'allowWrite', label: 'Allow write paths', placeholder: 'e.g. /tmp/build' },
+  { key: 'denyRead', label: 'Deny read paths', placeholder: 'e.g. ~/.aws/credentials' },
+  { key: 'denyWrite', label: 'Deny write paths', placeholder: 'e.g. ~/.ssh' },
+];
+
+/** The `sandbox.network.*` domain lists Ward edits (Claude Code's real field
+ *  names). Other network sub-keys (allowUnixSockets, allowLocalBinding, …) are
+ *  preserved via merge. */
+const SANDBOX_NET_FIELDS: { key: string; label: string; placeholder: string }[] = [
+  { key: 'allowedDomains', label: 'Allowed domains', placeholder: 'e.g. github.com, *.npmjs.org' },
+  { key: 'deniedDomains', label: 'Denied domains', placeholder: 'e.g. uploads.github.com' },
+];
 
 /** Human label for a target file — routes the "where does this write" caption. */
 function targetFileLabel(targetFile: string): string {
@@ -428,13 +454,13 @@ function SettingEditor(props: {
   const eff = () => effectiveOf(props.row);
 
   // Which complex-value rows have a working modal editor today: every `array`
-  // plus the `env` (key/value) and generic `json` object editors. The four
-  // bespoke object editors (permissions / hooks / sandbox / statusLine) land in
-  // Tasks 13-14 and stay inert; managed rows are never user-editable.
+  // plus the object editors `env` (key/value), generic `json`, and the three
+  // bespoke editors `permissions` / `statusLine` / `sandbox`. Only `hooks`
+  // remains inert (Task 14); managed rows are never user-editable.
   const canEditComplex = () =>
     !managed() &&
     (def().valueType === 'array' ||
-      (def().valueType === 'object' && (def().editor === 'env' || def().editor === 'json')));
+      (def().valueType === 'object' && EDITABLE_OBJECT_EDITORS.includes(def().editor ?? '')));
 
   return (
     <Show when={def().valueType === 'bool'} fallback={
@@ -442,8 +468,9 @@ function SettingEditor(props: {
         <Show when={def().valueType === 'number'} fallback={
           <Show when={def().valueType === 'string'} fallback={
             // array / object — an "Edit…" affordance that opens a modal editor
-            // for array / env / json rows; the bespoke object editors and managed
-            // rows stay inert (a disabled button that never opens anything).
+            // for array / env / json / permissions / statusLine / sandbox rows;
+            // only the `hooks` editor and managed rows stay inert (a disabled
+            // button that never opens anything).
             <Show
               when={canEditComplex()}
               fallback={
@@ -530,21 +557,113 @@ function SettingEditor(props: {
   );
 }
 
+/** A controlled add/remove list of string entries — the shared sub-UI behind
+ *  the generic `array` editor AND every array field inside the bespoke
+ *  permissions / sandbox editors. The parent owns `entries` + `onChange`; only
+ *  the add-row draft is local. `prefix` scopes the data-testids so multiple
+ *  instances in one modal stay individually addressable (the generic array
+ *  editor passes `setting-array`, preserving its Task-12 testids exactly). */
+function ArrayListEditor(props: {
+  prefix: string;
+  entries: string[];
+  onChange: (next: string[]) => void;
+  busy: boolean;
+  label?: string;
+  placeholder?: string;
+  inputRef?: (el: HTMLInputElement) => void;
+}) {
+  const [draft, setDraft] = createSignal('');
+  function add() {
+    const val = draft().trim();
+    if (!val) return;
+    props.onChange([...props.entries, val]);
+    setDraft('');
+  }
+  const remove = (i: number) => props.onChange(props.entries.filter((_, idx) => idx !== i));
+
+  return (
+    <div class="set-arr" data-testid={props.prefix}>
+      <Show when={props.label}>
+        <div class="set-list-label">{props.label}</div>
+      </Show>
+      <Show
+        when={props.entries.length > 0}
+        fallback={<p class="set-arr-empty">No entries yet. Add one below.</p>}
+      >
+        <ul class="set-arr-list">
+          <For each={props.entries}>
+            {(entry, i) => (
+              <li class="set-arr-item" data-testid={`${props.prefix}-item`}>
+                <span class="set-arr-val">{entry}</span>
+                <button
+                  type="button"
+                  class="set-arr-rm"
+                  data-testid={`${props.prefix}-remove`}
+                  title="Remove entry"
+                  disabled={props.busy}
+                  onClick={() => remove(i())}
+                >
+                  ×
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </Show>
+      <div class="set-arr-add">
+        <input
+          ref={(el) => props.inputRef?.(el)}
+          class="set-arr-input"
+          data-testid={`${props.prefix}-input`}
+          type="text"
+          placeholder={props.placeholder ?? 'Add an entry…'}
+          value={draft()}
+          disabled={props.busy}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button
+          type="button"
+          class="btn set-arr-addbtn"
+          data-testid={`${props.prefix}-add`}
+          disabled={props.busy || !draft().trim()}
+          onClick={add}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Modal editor for a complex-value setting — dispatched on the row:
  *
  *   • `array`            → an add/remove list of string entries.
  *   • object `editor='env'`  → a NAME/value key-value table.
+ *   • object `editor='permissions'` → defaultMode select + allow/ask/deny +
+ *                              additionalDirectories lists → the `permissions`
+ *                              object (empty arrays / unset mode omitted).
+ *   • object `editor='statusLine'`  → type + command + optional padding.
+ *   • object `editor='sandbox'`     → filesystem + network path/domain lists →
+ *                              the nested `{filesystem,network}` object.
  *   • object `editor='json'` → a raw JSON textarea, parsed (and validated)
  *                              before it can save.
  *
- *  The four bespoke object editors (permissions / hooks / sandbox / statusLine)
- *  never reach here — their row keeps the inert "Edit…" button until Tasks 13-14.
- *  Working state is seeded once from `row.effective` (the modal is rendered
- *  `keyed`, so re-opening reseeds). On save the composed value routes back
- *  through the caller's user-scope `applySet`, which re-reads the catalog and
- *  shows the toast + Undo. Shares the global `.modal` shell (WKWebView's
- *  confirm()/prompt() are silent no-ops) with Esc-to-cancel, a focus trap, and
- *  focus restoration to the trigger. */
+ *  Only `hooks` never reaches here — its row keeps the inert "Edit…" button
+ *  until Task 14. The three bespoke editors compose their object by MERGING onto
+ *  a fresh clone of `row.effective`, so keys they don't manage
+ *  (disableBypassPermissionsMode, sandbox.enabled, statusLine.refreshInterval,
+ *  …) survive a save. Working state is seeded once from `row.effective` (the
+ *  modal is rendered `keyed`, so re-opening reseeds). On save the composed value
+ *  routes back through the caller's user-scope `applySet`, which re-reads the
+ *  catalog and shows the toast + Undo. Shares the global `.modal` shell
+ *  (WKWebView's confirm()/prompt() are silent no-ops) with Esc-to-cancel, a
+ *  focus trap, and focus restoration to the trigger. */
 function EditorModal(props: {
   row: SettingRow;
   busy: boolean;
@@ -552,8 +671,40 @@ function EditorModal(props: {
   onClose: () => void;
 }) {
   const def = () => props.row.def;
-  const mode: 'array' | 'env' | 'json' =
-    def().valueType === 'array' ? 'array' : def().editor === 'env' ? 'env' : 'json';
+  const d0 = def();
+  const mode: 'array' | 'env' | 'json' | 'permissions' | 'statusLine' | 'sandbox' =
+    d0.valueType === 'array'
+      ? 'array'
+      : d0.editor === 'permissions'
+        ? 'permissions'
+        : d0.editor === 'statusLine'
+          ? 'statusLine'
+          : d0.editor === 'sandbox'
+            ? 'sandbox'
+            : d0.editor === 'env'
+              ? 'env'
+              : 'json';
+
+  // A fresh shallow clone of the row's effective object (or {} when it isn't a
+  // plain object) — the merge base for the bespoke editors so unmanaged keys
+  // survive. Recomputed on demand; `row.effective` is stable while the keyed
+  // modal is open.
+  const objBase = (): Record<string, unknown> => {
+    const v = props.row.effective;
+    return v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {};
+  };
+  // A string[] read of one key of an object (skips non-arrays; stringifies
+  // non-string members defensively).
+  const pickArr = (o: Record<string, unknown> | undefined, k: string): string[] => {
+    const a = o?.[k];
+    return Array.isArray(a) ? a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))) : [];
+  };
+  // Set `o[k]` to a non-empty array, or delete the key entirely (never write an
+  // empty `[]` — that's the omit-empty rule the tests pin).
+  const setOrDeleteArr = (o: Record<string, unknown>, k: string, arr: string[]) => {
+    if (arr.length) o[k] = arr;
+    else delete o[k];
+  };
 
   // ── Working state, seeded once from the row's effective value ──
   const seedEntries = (): string[] => {
@@ -573,19 +724,89 @@ function EditorModal(props: {
   const seedJson = (): string => JSON.stringify(props.row.effective ?? {}, null, 2);
 
   const [entries, setEntries] = createSignal<string[]>(seedEntries());
-  const [draft, setDraft] = createSignal(''); // the array add-row input
   const [pairs, setPairs] = createSignal<{ name: string; value: string }[]>(seedPairs());
   const [text, setText] = createSignal(seedJson());
   const [jsonErr, setJsonErr] = createSignal<string | null>(null);
 
-  // ── Array ops ──
-  function addEntry() {
-    const val = draft().trim();
-    if (!val) return;
-    setEntries([...entries(), val]);
-    setDraft('');
+  // ── Permissions working state (seeded from the effective permissions object) ──
+  const permSeed = objBase();
+  const [permDefaultMode, setPermDefaultMode] = createSignal(
+    typeof permSeed.defaultMode === 'string' ? permSeed.defaultMode : '',
+  );
+  const [permAllow, setPermAllow] = createSignal(pickArr(permSeed, 'allow'));
+  const [permAsk, setPermAsk] = createSignal(pickArr(permSeed, 'ask'));
+  const [permDeny, setPermDeny] = createSignal(pickArr(permSeed, 'deny'));
+  const [permDirs, setPermDirs] = createSignal(pickArr(permSeed, 'additionalDirectories'));
+  function composePermissions(): Record<string, unknown> {
+    const out = objBase(); // preserves disableBypassPermissionsMode / skipDangerousModePermissionPrompt / …
+    setOrDeleteArr(out, 'allow', permAllow());
+    setOrDeleteArr(out, 'ask', permAsk());
+    setOrDeleteArr(out, 'deny', permDeny());
+    setOrDeleteArr(out, 'additionalDirectories', permDirs());
+    const dm = permDefaultMode().trim();
+    if (dm) out.defaultMode = dm;
+    else delete out.defaultMode;
+    return out;
   }
-  const removeEntry = (i: number) => setEntries(entries().filter((_, idx) => idx !== i));
+
+  // ── Status-line working state ──
+  const slSeed = objBase();
+  const [slType, setSlType] = createSignal(typeof slSeed.type === 'string' ? slSeed.type : 'command');
+  const [slCommand, setSlCommand] = createSignal(typeof slSeed.command === 'string' ? slSeed.command : '');
+  const [slPadding, setSlPadding] = createSignal(
+    slSeed.padding === undefined || slSeed.padding === null ? '' : String(slSeed.padding),
+  );
+  function composeStatusLine(): Record<string, unknown> {
+    const out = objBase(); // preserves refreshInterval / hideVimModeIndicator / …
+    const t = slType().trim();
+    if (t) out.type = t;
+    else delete out.type;
+    out.command = slCommand();
+    const p = slPadding().trim();
+    if (p === '') delete out.padding;
+    else {
+      const n = Number(p);
+      if (Number.isNaN(n)) delete out.padding;
+      else out.padding = n;
+    }
+    return out;
+  }
+
+  // ── Sandbox working state (one list per filesystem/network field, keyed by a
+  //     flat `section.key` path so a single signal drives the whole editor) ──
+  const seedSandbox = (): Record<string, string[]> => {
+    const base = objBase();
+    const sub = (k: string): Record<string, unknown> => {
+      const v = base[k];
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+    };
+    const fs = sub('filesystem');
+    const net = sub('network');
+    const out: Record<string, string[]> = {};
+    for (const f of SANDBOX_FS_FIELDS) out[`filesystem.${f.key}`] = pickArr(fs, f.key);
+    for (const f of SANDBOX_NET_FIELDS) out[`network.${f.key}`] = pickArr(net, f.key);
+    return out;
+  };
+  const [sandboxLists, setSandboxLists] = createSignal<Record<string, string[]>>(seedSandbox());
+  const updateSandbox = (path: string, next: string[]) =>
+    setSandboxLists({ ...sandboxLists(), [path]: next });
+  function composeSandbox(): Record<string, unknown> {
+    const out = objBase(); // preserves enabled / excludedCommands / autoAllowBashIfSandboxed / …
+    const cloneSub = (k: string): Record<string, unknown> => {
+      const v = out[k];
+      return v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {};
+    };
+    const fs = cloneSub('filesystem'); // preserves other filesystem sub-keys
+    const net = cloneSub('network'); // preserves allowUnixSockets / allowLocalBinding / …
+    const lists = sandboxLists();
+    for (const f of SANDBOX_FS_FIELDS) setOrDeleteArr(fs, f.key, lists[`filesystem.${f.key}`] ?? []);
+    for (const f of SANDBOX_NET_FIELDS) setOrDeleteArr(net, f.key, lists[`network.${f.key}`] ?? []);
+    if (Object.keys(fs).length) out.filesystem = fs;
+    else delete out.filesystem;
+    if (Object.keys(net).length) out.network = net;
+    else delete out.network;
+    return out;
+  }
 
   // ── Env ops (an <Index> keeps the inputs mounted so typing never loses focus) ──
   const addPair = () => setPairs([...pairs(), { name: '', value: '' }]);
@@ -611,6 +832,12 @@ function EditorModal(props: {
       void commit(entries());
     } else if (mode === 'env') {
       void commit(composeEnv());
+    } else if (mode === 'permissions') {
+      void commit(composePermissions());
+    } else if (mode === 'statusLine') {
+      void commit(composeStatusLine());
+    } else if (mode === 'sandbox') {
+      void commit(composeSandbox());
     } else {
       let parsed: unknown;
       try {
@@ -626,9 +853,29 @@ function EditorModal(props: {
   }
 
   const title = () =>
-    mode === 'array' ? 'Edit list' : mode === 'env' ? 'Edit environment variables' : 'Edit JSON';
+    mode === 'array'
+      ? 'Edit list'
+      : mode === 'env'
+        ? 'Edit environment variables'
+        : mode === 'permissions'
+          ? 'Edit permissions'
+          : mode === 'statusLine'
+            ? 'Edit status line'
+            : mode === 'sandbox'
+              ? 'Edit sandbox'
+              : 'Edit JSON';
   const testid = () =>
-    mode === 'array' ? 'setting-array-editor' : mode === 'env' ? 'setting-env-editor' : 'setting-json-editor';
+    mode === 'array'
+      ? 'setting-array-editor'
+      : mode === 'env'
+        ? 'setting-env-editor'
+        : mode === 'permissions'
+          ? 'setting-perms-editor'
+          : mode === 'statusLine'
+            ? 'setting-statusline-editor'
+            : mode === 'sandbox'
+              ? 'setting-sandbox-editor'
+              : 'setting-json-editor';
 
   // ── Modal a11y: Esc cancels, Tab is trapped, focus starts inside + restores ──
   let dialogRef: HTMLDivElement | undefined;
@@ -686,59 +933,140 @@ function EditorModal(props: {
         <code class="set-editor-key">{def().key}</code>
 
         <div class="modal-body set-editor-body">
-          {/* ── Array: add/remove string entries ── */}
+          {/* ── Array: add/remove string entries (shared list sub-UI) ── */}
           <Show when={mode === 'array'}>
-            <div class="set-arr" data-testid="setting-array">
-              <Show
-                when={entries().length > 0}
-                fallback={<p class="set-arr-empty">No entries yet. Add one below.</p>}
-              >
-                <ul class="set-arr-list">
-                  <For each={entries()}>
-                    {(entry, i) => (
-                      <li class="set-arr-item" data-testid="setting-array-item">
-                        <span class="set-arr-val">{entry}</span>
-                        <button
-                          type="button"
-                          class="set-arr-rm"
-                          data-testid="setting-array-remove"
-                          title="Remove entry"
-                          disabled={props.busy}
-                          onClick={() => removeEntry(i())}
-                        >
-                          ×
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-              <div class="set-arr-add">
-                <input
-                  ref={(el) => (firstFocus = el)}
-                  class="set-arr-input"
-                  data-testid="setting-array-input"
-                  type="text"
-                  placeholder="Add an entry…"
-                  value={draft()}
+            <ArrayListEditor
+              prefix="setting-array"
+              entries={entries()}
+              onChange={setEntries}
+              busy={props.busy}
+              inputRef={(el) => (firstFocus = el)}
+            />
+          </Show>
+
+          {/* ── Permissions: defaultMode + allow/ask/deny + additionalDirectories ── */}
+          <Show when={mode === 'permissions'}>
+            <div class="set-perms" data-testid="setting-perms">
+              <label class="set-field">
+                <span class="set-field-label">Default mode</span>
+                <select
+                  class="set-enum"
+                  data-testid="setting-perms-defaultmode"
                   disabled={props.busy}
-                  onInput={(e) => setDraft(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addEntry();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  class="btn set-arr-addbtn"
-                  data-testid="setting-array-add"
-                  disabled={props.busy || !draft().trim()}
-                  onClick={addEntry}
+                  value={permDefaultMode()}
+                  onChange={(e) => setPermDefaultMode(e.currentTarget.value)}
                 >
-                  Add
-                </button>
+                  <option value="">Unset (inherit)</option>
+                  <For each={PERM_MODES}>{(m) => <option value={m}>{m}</option>}</For>
+                </select>
+              </label>
+              <ArrayListEditor
+                prefix="setting-list-allow"
+                label="Allow rules"
+                entries={permAllow()}
+                onChange={setPermAllow}
+                busy={props.busy}
+                placeholder="e.g. Bash(git status)"
+              />
+              <ArrayListEditor
+                prefix="setting-list-ask"
+                label="Ask rules"
+                entries={permAsk()}
+                onChange={setPermAsk}
+                busy={props.busy}
+                placeholder="e.g. Bash(git push:*)"
+              />
+              <ArrayListEditor
+                prefix="setting-list-deny"
+                label="Deny rules"
+                entries={permDeny()}
+                onChange={setPermDeny}
+                busy={props.busy}
+                placeholder="e.g. Bash(rm *)"
+              />
+              <ArrayListEditor
+                prefix="setting-list-dirs"
+                label="Additional directories"
+                entries={permDirs()}
+                onChange={setPermDirs}
+                busy={props.busy}
+                placeholder="e.g. ~/shared-context"
+              />
+            </div>
+          </Show>
+
+          {/* ── Status line: type + command + optional padding ── */}
+          <Show when={mode === 'statusLine'}>
+            <div class="set-sl" data-testid="setting-sl">
+              <label class="set-field">
+                <span class="set-field-label">Type</span>
+                <input
+                  class="set-text"
+                  data-testid="setting-statusline-type"
+                  type="text"
+                  disabled={props.busy}
+                  value={slType()}
+                  onInput={(e) => setSlType(e.currentTarget.value)}
+                />
+              </label>
+              <label class="set-field">
+                <span class="set-field-label">Command</span>
+                <input
+                  class="set-text"
+                  data-testid="setting-statusline-command"
+                  type="text"
+                  placeholder="e.g. npx -y ccstatusline@latest"
+                  disabled={props.busy}
+                  value={slCommand()}
+                  onInput={(e) => setSlCommand(e.currentTarget.value)}
+                />
+              </label>
+              <label class="set-field">
+                <span class="set-field-label">Padding (optional)</span>
+                <input
+                  class="set-number"
+                  data-testid="setting-statusline-padding"
+                  type="number"
+                  disabled={props.busy}
+                  value={slPadding()}
+                  onInput={(e) => setSlPadding(e.currentTarget.value)}
+                />
+              </label>
+            </div>
+          </Show>
+
+          {/* ── Sandbox: filesystem + network path/domain lists (real CC schema) ── */}
+          <Show when={mode === 'sandbox'}>
+            <div class="set-sandbox" data-testid="setting-sandbox">
+              <div class="set-sandbox-group">
+                <div class="set-sandbox-group-title">Filesystem</div>
+                <For each={SANDBOX_FS_FIELDS}>
+                  {(f) => (
+                    <ArrayListEditor
+                      prefix={`setting-list-fs-${f.key}`}
+                      label={f.label}
+                      entries={sandboxLists()[`filesystem.${f.key}`] ?? []}
+                      onChange={(next) => updateSandbox(`filesystem.${f.key}`, next)}
+                      busy={props.busy}
+                      placeholder={f.placeholder}
+                    />
+                  )}
+                </For>
+              </div>
+              <div class="set-sandbox-group">
+                <div class="set-sandbox-group-title">Network</div>
+                <For each={SANDBOX_NET_FIELDS}>
+                  {(f) => (
+                    <ArrayListEditor
+                      prefix={`setting-list-net-${f.key}`}
+                      label={f.label}
+                      entries={sandboxLists()[`network.${f.key}`] ?? []}
+                      onChange={(next) => updateSandbox(`network.${f.key}`, next)}
+                      busy={props.busy}
+                      placeholder={f.placeholder}
+                    />
+                  )}
+                </For>
               </div>
             </div>
           </Show>
