@@ -164,6 +164,9 @@ export default function App() {
     unset: (scope: string, key: string, targetFile: string) =>
       api.settingsUnset(scope, key, targetFile),
     restore: (info: RestoreInfo) => api.restore('claude', info),
+    // Plan 29 / Task 15 — the schema-drift tripwire + curated env-var metadata.
+    schemaDiff: () => api.settingsSchemaDiff(),
+    envList: () => api.settingsEnvList(),
   };
 
   return (

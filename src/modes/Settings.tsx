@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show } from 'solid-js';
-import type { RestoreInfo, ScanResult, SettingRow } from '../api';
+import type { EnvVarDef, RestoreInfo, SchemaDiff, ScanResult, SettingRow } from '../api';
 import '../styles/settings.css';
 
 /** Plan 29 — Settings mode.
@@ -40,6 +40,15 @@ export interface SettingsApi {
   set: (scope: string, key: string, targetFile: string, value: unknown) => Promise<RestoreInfo>;
   unset: (scope: string, key: string, targetFile: string) => Promise<RestoreInfo>;
   restore: (info: RestoreInfo) => Promise<void>;
+  /** Task 15 — the schema-drift tripwire: keys the published JSON Schema lists
+   *  that Ward's catalog lacks (add these) + keys Ward curates that the schema
+   *  omits. A user-triggered network call, so it's fetched on demand, not on
+   *  mount. */
+  schemaDiff: () => Promise<SchemaDiff>;
+  /** Task 15 — curated env-var metadata (name/description/category) for the
+   *  discovery panel. Editing one writes into the `env` object of settings.json
+   *  via the existing env editor; the value itself is never collected here. */
+  envList: () => Promise<EnvVarDef[]>;
 }
 
 /** Plan 29 — every write is fixed to USER scope (see the module doc). The Rust
@@ -184,8 +193,32 @@ function SettingsBody(props: { api: SettingsApi }) {
   // modal, or null when none. Keyed rendering reseeds the editor's working state
   // each time it opens (see EditorModal).
   const [editorRow, setEditorRow] = createSignal<SettingRow | null>(null);
+  // Task 15 — when the env-var discovery panel's "Add to env" opens the shared
+  // `env` object editor, this carries the variable NAME to pre-seed as a new
+  // (blank-value) row. Null for a normal env edit. Cleared whenever the modal
+  // closes or any other row's editor opens, so a stale seed never leaks in.
+  const [envSeedName, setEnvSeedName] = createSignal<string | null>(null);
 
   const rows = () => catalog() ?? [];
+
+  // Open the shared `env` object editor pre-seeded with `name` (from the env-var
+  // discovery panel). Finds the catalog's env row (editor==='env'); no-op if the
+  // catalog somehow lacks one. Managed env rows can't be user-edited, so skip.
+  function openEnvWith(name: string) {
+    const envRow = rows().find((r) => r.def.editor === 'env');
+    if (!envRow || isManaged(envRow)) return;
+    setEnvSeedName(name);
+    setEditorRow(envRow);
+  }
+  // Open a row's editor via the normal "Edit…" path — always with a clean seed.
+  function openEditor(row: SettingRow) {
+    setEnvSeedName(null);
+    setEditorRow(row);
+  }
+  function closeEditor() {
+    setEditorRow(null);
+    setEnvSeedName(null);
+  }
 
   // Ordered, unique categories in first-seen order — the rail's contents.
   const categories = createMemo<string[]>(() => {
@@ -332,11 +365,20 @@ function SettingsBody(props: { api: SettingsApi }) {
                       busy={busy()}
                       onSet={applySet}
                       onReset={applyReset}
-                      onEdit={(r) => setEditorRow(r)}
+                      onEdit={openEditor}
                     />
                   )}
                 </For>
               </Show>
+
+              {/* Tools region — the schema-drift tripwire + the env-var
+                  discovery panel. Rendered below the filtered list but
+                  independent of the active category / search, so both stay
+                  reachable once the catalog has loaded. */}
+              <div class="set-tools" data-testid="settings-tools">
+                <SchemaDiffPanel api={props.api} />
+                <EnvVarPanel api={props.api} onAdd={openEnvWith} />
+              </div>
             </Show>
           </Show>
         </div>
@@ -380,8 +422,9 @@ function SettingsBody(props: { api: SettingsApi }) {
           <EditorModal
             row={row}
             busy={busy()}
+            seedEnvName={envSeedName()}
             onSave={(value) => applySet(row, value)}
-            onClose={() => setEditorRow(null)}
+            onClose={closeEditor}
           />
         )}
       </Show>
@@ -608,8 +651,14 @@ function ArrayListEditor(props: {
   label?: string;
   placeholder?: string;
   inputRef?: (el: HTMLInputElement) => void;
+  /** Task 15 — registers a getter for the add-row input's current text so the
+   *  parent's Save path can fold a half-typed (never-Added) draft into the array
+   *  instead of silently dropping it. Called once at setup with a stable getter. */
+  pendingDraftRef?: (getDraft: () => string) => void;
 }) {
   const [draft, setDraft] = createSignal('');
+  // Hand the parent a live getter for the pending add-row text (see Save path).
+  props.pendingDraftRef?.(() => draft());
   function add() {
     const val = draft().trim();
     if (!val) return;
@@ -704,6 +753,9 @@ function ArrayListEditor(props: {
 function EditorModal(props: {
   row: SettingRow;
   busy: boolean;
+  /** Task 15 — for the `env` editor only: a variable name to pre-seed as a new
+   *  blank-value row (sent by the env-var discovery panel's "Add to env"). */
+  seedEnvName?: string | null;
   onSave: (value: unknown) => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -752,13 +804,19 @@ function EditorModal(props: {
   };
   const seedPairs = (): { name: string; value: string }[] => {
     const v = props.row.effective;
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      return Object.entries(v as Record<string, unknown>).map(([name, val]) => ({
-        name,
-        value: typeof val === 'string' ? val : JSON.stringify(val),
-      }));
-    }
-    return [];
+    const out: { name: string; value: string }[] =
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.entries(v as Record<string, unknown>).map(([name, val]) => ({
+            name,
+            value: typeof val === 'string' ? val : JSON.stringify(val),
+          }))
+        : [];
+    // Task 15 — pre-seed a blank-value row for the env var the discovery panel
+    // asked to add (unless it's already present), so "Add to env" lands the user
+    // on a ready-to-fill row instead of an empty table.
+    const seed = props.seedEnvName?.trim();
+    if (seed && !out.some((p) => p.name === seed)) out.push({ name: seed, value: '' });
+    return out;
   };
   const seedJson = (): string => JSON.stringify(props.row.effective ?? {}, null, 2);
 
@@ -766,6 +824,10 @@ function EditorModal(props: {
   const [pairs, setPairs] = createSignal<{ name: string; value: string }[]>(seedPairs());
   const [text, setText] = createSignal(seedJson());
   const [jsonErr, setJsonErr] = createSignal<string | null>(null);
+  // Task 15 — a live getter for the generic array editor's pending add-row text.
+  // Registered by that ArrayListEditor; read in save() so a half-typed entry the
+  // user never clicked "Add" on is folded into the saved array, not dropped.
+  let arrayDraft: () => string = () => '';
 
   // ── Permissions working state (seeded from the effective permissions object) ──
   const permSeed = objBase();
@@ -1023,7 +1085,10 @@ function EditorModal(props: {
   }
   function save() {
     if (mode === 'array') {
-      void commit(entries());
+      // Fold a half-typed add-row draft (never clicked "Add") into the array so
+      // clicking Save straight after typing doesn't silently lose it.
+      const pending = arrayDraft().trim();
+      void commit(pending ? [...entries(), pending] : entries());
     } else if (mode === 'env') {
       void commit(composeEnv());
     } else if (mode === 'permissions') {
@@ -1119,7 +1184,11 @@ function EditorModal(props: {
   });
 
   return (
-    <div class="modal-overlay" data-testid="settings-modal-overlay" onClick={() => props.onClose()}>
+    // A data-entry modal: a backdrop click must NOT dismiss it (that would drop
+    // unsaved edits silently). Close is deliberate — Cancel or Esc only. (Boolean
+    // confirm dialogs elsewhere keep backdrop-dismiss; this restriction is
+    // scoped to the form editor.)
+    <div class="modal-overlay" data-testid="settings-modal-overlay">
       <div
         ref={dialogRef}
         class="modal set-editor-modal"
@@ -1127,7 +1196,6 @@ function EditorModal(props: {
         aria-modal="true"
         aria-labelledby="settings-editor-title"
         data-testid={testid()}
-        onClick={(e) => e.stopPropagation()}
       >
         <div class="modal-title is-info" id="settings-editor-title">{title()}</div>
         <code class="set-editor-key">{def().key}</code>
@@ -1141,6 +1209,7 @@ function EditorModal(props: {
               onChange={setEntries}
               busy={props.busy}
               inputRef={(el) => (firstFocus = el)}
+              pendingDraftRef={(g) => (arrayDraft = g)}
             />
           </Show>
 
@@ -1547,5 +1616,192 @@ function EditorModal(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Task 15 — the schema-drift tripwire. A user-triggered "Check for new
+ *  settings" button fetches `settings_schema_diff` and renders the two drift
+ *  lists: keys the published schema lists that Ward's curated catalog lacks
+ *  ("add these to the catalog") and keys Ward curates that the schema no longer
+ *  lists. An empty result is the all-clear. The call is on demand (it can hit
+ *  the network), never on mount, with explicit loading + error states. */
+function SchemaDiffPanel(props: { api: SettingsApi }) {
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const [result, setResult] = createSignal<SchemaDiff | null>(null);
+
+  async function check() {
+    setLoading(true);
+    setError(null);
+    try {
+      setResult(await props.api.schemaDiff());
+    } catch (e) {
+      setResult(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Both drift lists empty → the catalog matches the schema (the all-clear).
+  const upToDate = () => {
+    const r = result();
+    return !!r && r.inSchemaNotCatalog.length === 0 && r.inCatalogNotSchema.length === 0;
+  };
+
+  return (
+    <section class="set-tool-panel set-schema" data-testid="settings-schema-panel">
+      <div class="set-tool-head">
+        <div class="set-tool-titles">
+          <h3 class="set-tool-title">Check for new settings</h3>
+          <p class="set-tool-sub">
+            Compares Ward's curated catalog against Claude Code's published settings schema.
+            Keys the schema adds surface here so they can be added to the catalog.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="btn set-schema-btn"
+          data-testid="settings-schema-diff"
+          disabled={loading()}
+          onClick={check}
+        >
+          {loading() ? 'Checking…' : 'Check for new settings'}
+        </button>
+      </div>
+
+      <Show when={error()}>
+        <p class="set-tool-err" data-testid="schema-diff-error">Schema check failed: {error()}</p>
+      </Show>
+
+      <Show when={result()}>
+        <div class="set-schema-results" data-testid="schema-diff-results">
+          <Show
+            when={!upToDate()}
+            fallback={
+              <p class="set-schema-ok" data-testid="schema-diff-ok">
+                Catalog is up to date with the published schema.
+              </p>
+            }
+          >
+            <Show when={result()!.inSchemaNotCatalog.length > 0}>
+              <div class="set-schema-group">
+                <div class="set-schema-group-title set-schema-add">
+                  New in the schema — add to the catalog ({result()!.inSchemaNotCatalog.length})
+                </div>
+                <ul class="set-schema-list">
+                  <For each={result()!.inSchemaNotCatalog}>
+                    {(k) => (
+                      <li class="set-schema-item" data-testid="schema-diff-add">
+                        <code>{k}</code>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+            </Show>
+            <Show when={result()!.inCatalogNotSchema.length > 0}>
+              <div class="set-schema-group">
+                <div class="set-schema-group-title set-schema-drop">
+                  In Ward's catalog but not the schema ({result()!.inCatalogNotSchema.length})
+                </div>
+                <ul class="set-schema-list">
+                  <For each={result()!.inCatalogNotSchema}>
+                    {(k) => (
+                      <li class="set-schema-item" data-testid="schema-diff-extra">
+                        <code>{k}</code>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+            </Show>
+          </Show>
+        </div>
+      </Show>
+    </section>
+  );
+}
+
+/** Task 15 — the env-var discovery panel. A search-driven list of curated
+ *  environment variables (name + description + category) that map into the
+ *  `env` object of `settings.json`. Each row's "Add to env" calls `onAdd(name)`,
+ *  which opens the shared env editor pre-seeded with that name — the value is
+ *  entered and written through the normal env editor, never collected here.
+ *  Loaded once on mount; the list is bounded + scrollable (the real catalog runs
+ *  to dozens of vars) and narrows live as the search box is typed. */
+function EnvVarPanel(props: { api: SettingsApi; onAdd: (name: string) => void }) {
+  const [list] = createResource(() => props.api.envList());
+  const [q, setQ] = createSignal('');
+  const rows = () => list() ?? [];
+  const filtered = createMemo<EnvVarDef[]>(() => {
+    const needle = q().trim().toLowerCase();
+    if (!needle) return rows();
+    return rows().filter(
+      (e) => e.name.toLowerCase().includes(needle) || e.description.toLowerCase().includes(needle),
+    );
+  });
+
+  return (
+    <section class="set-tool-panel set-envpanel" data-testid="settings-env-list">
+      <div class="set-tool-head">
+        <div class="set-tool-titles">
+          <h3 class="set-tool-title">Environment variables</h3>
+          <p class="set-tool-sub">
+            Common Claude Code environment variables. <strong>Add to env</strong> opens the{' '}
+            <code>env</code> editor pre-filled with the name — enter the value there.
+          </p>
+        </div>
+      </div>
+
+      <input
+        class="set-search set-env-search"
+        data-testid="env-search"
+        type="search"
+        placeholder="Search environment variables by name or description…"
+        value={q()}
+        onInput={(e) => setQ(e.currentTarget.value)}
+      />
+
+      <Show
+        when={!list.loading}
+        fallback={<div class="set-status" data-testid="env-loading">Loading environment variables…</div>}
+      >
+        <Show
+          when={!list.error}
+          fallback={<div class="set-status err" data-testid="env-error">Failed to load env vars: {String(list.error)}</div>}
+        >
+          <Show
+            when={filtered().length > 0}
+            fallback={<p class="set-arr-empty" data-testid="env-empty">No environment variables match your search.</p>}
+          >
+            <ul class="set-env-vars">
+              <For each={filtered()}>
+                {(e) => (
+                  <li class="set-env-var" data-testid="env-var-row">
+                    <div class="set-env-var-main">
+                      <div class="set-env-var-top">
+                        <code class="set-env-var-name">{e.name}</code>
+                        <span class="set-env-var-cat">{e.category}</span>
+                      </div>
+                      <p class="set-env-var-desc">{e.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn set-env-var-add"
+                      data-testid="env-add"
+                      title={`Add ${e.name} to the env setting`}
+                      onClick={() => props.onAdd(e.name)}
+                    >
+                      Add to env
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </Show>
+      </Show>
+    </section>
   );
 }

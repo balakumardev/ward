@@ -2,7 +2,7 @@ import { test, expect, vi } from 'vitest';
 import { render, fireEvent, waitFor } from '@solidjs/testing-library';
 import { Settings } from './Settings';
 import type { SettingsApi } from './Settings';
-import type { RestoreInfo, ScanResult, SettingRow } from '../api';
+import type { EnvVarDef, RestoreInfo, SchemaDiff, ScanResult, SettingRow } from '../api';
 
 /** A representative catalog spanning every editor branch the core list handles:
  *  a bool (UNSET → falls through to its default), an enum (set/user), a number
@@ -151,6 +151,8 @@ function makeApi(over: Partial<SettingsApi> = {}, catalog = makeCatalog()): Sett
     set: vi.fn(async (): Promise<RestoreInfo> => ({ kind: 'setting-write', originalPath: '/Users/x/.claude/settings.json' })),
     unset: vi.fn(async (): Promise<RestoreInfo> => ({ kind: 'setting-write', originalPath: '/Users/x/.claude/settings.json' })),
     restore: vi.fn(async () => {}),
+    schemaDiff: vi.fn(async (): Promise<SchemaDiff> => ({ inSchemaNotCatalog: [], inCatalogNotSchema: [] })),
+    envList: vi.fn(async (): Promise<EnvVarDef[]> => []),
     ...over,
   };
 }
@@ -786,4 +788,122 @@ test('hooks editor preserves unknown extra fields on a command entry', async () 
     'user', 'hooks', 'settings.json',
     { Stop: [{ hooks: [{ type: 'command', command: 'echo y', timeout: 5, retries: 3 }] }] },
   ]);
+});
+
+// ── Task 15: schema-diff panel + env-var panel + polish ──────────────────────
+
+test('schema-diff button calls settingsSchemaDiff and renders the missing keys', async () => {
+  const schemaDiff = vi.fn(async (): Promise<SchemaDiff> => ({
+    inSchemaNotCatalog: ['someNewKey'],
+    inCatalogNotSchema: [],
+  }));
+  const api = makeApi({ schemaDiff });
+  const { findByTestId } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  // Before the click there is no result area — the diff is a user-triggered call.
+  const btn = (await findByTestId('settings-schema-diff')) as HTMLButtonElement;
+  fireEvent.click(btn);
+
+  await waitFor(() => expect(schemaDiff).toHaveBeenCalledTimes(1));
+  const results = await findByTestId('schema-diff-results');
+  // The schema key the catalog lacks is surfaced as an "add this" item.
+  expect(results.textContent).toContain('someNewKey');
+});
+
+test('schema-diff empty result shows an up-to-date message', async () => {
+  const schemaDiff = vi.fn(async (): Promise<SchemaDiff> => ({
+    inSchemaNotCatalog: [],
+    inCatalogNotSchema: [],
+  }));
+  const api = makeApi({ schemaDiff });
+  const { findByTestId } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  fireEvent.click((await findByTestId('settings-schema-diff')) as HTMLButtonElement);
+  const results = await findByTestId('schema-diff-results');
+  await waitFor(() => expect(results.textContent).toMatch(/up to date/i));
+});
+
+test('env panel lists env vars and search filters them', async () => {
+  const envList = vi.fn(async (): Promise<EnvVarDef[]> => [
+    { name: 'ANTHROPIC_API_KEY', description: 'API key sent as the X-Api-Key header.', category: 'Authentication & Provider' },
+    { name: 'HTTP_PROXY', description: 'Proxy server URL for outbound HTTP.', category: 'Config, Paths & Proxy' },
+  ]);
+  const api = makeApi({ envList });
+  const { findByTestId, getByTestId, getAllByTestId } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  await findByTestId('settings-env-list');
+  // Both curated vars are listed with name + description + category.
+  await waitFor(() => expect(getAllByTestId('env-var-row').length).toBe(2));
+  const apiKeyRow = getAllByTestId('env-var-row').find((r) => r.textContent?.includes('ANTHROPIC_API_KEY'))!;
+  expect(apiKeyRow.textContent).toContain('Authentication & Provider');
+
+  // A search narrows over name + description.
+  const search = getByTestId('env-search') as HTMLInputElement;
+  fireEvent.input(search, { target: { value: 'proxy' } });
+  await waitFor(() => {
+    const rows = getAllByTestId('env-var-row');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('HTTP_PROXY');
+  });
+});
+
+test('env panel "Add to env" opens the env editor seeded with the variable name', async () => {
+  const envList = vi.fn(async (): Promise<EnvVarDef[]> => [
+    { name: 'HTTP_PROXY', description: 'Proxy server URL for outbound HTTP.', category: 'Config, Paths & Proxy' },
+  ]);
+  const api = makeApi({ envList });
+  const { findByTestId, getAllByTestId } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+  await findByTestId('settings-env-list');
+
+  const addBtn = (await waitFor(() => getAllByTestId('env-add')))[0] as HTMLButtonElement;
+  fireEvent.click(addBtn);
+
+  // The existing env object editor opens, pre-seeded with a row whose NAME is the
+  // chosen variable (value blank, ready for the user to fill in).
+  const modal = await findByTestId('setting-env-editor');
+  const nameInput = modal.querySelector('[data-testid="setting-env-name"]') as HTMLInputElement;
+  expect(nameInput.value).toBe('HTTP_PROXY');
+});
+
+test('array editor Save folds a half-typed draft into the saved array', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const arrRow = await waitFor(() => rowByKey(container, 'enabledMcpjsonServers'));
+  fireEvent.click(arrRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+
+  const modal = await findByTestId('setting-array-editor');
+  // Type into the add-row input but DON'T click Add, then Save directly.
+  const input = modal.querySelector('[data-testid="setting-array-input"]') as HTMLInputElement;
+  fireEvent.input(input, { target: { value: 'draftval' } });
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // The unadded draft is folded into the composed array (seeded context7/postman + draftval).
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'enabledMcpjsonServers', 'settings.json', ['context7', 'postman', 'draftval'],
+  ]);
+});
+
+test('form editor modal does not close on backdrop click', async () => {
+  const api = makeApi();
+  const { findByTestId, container, queryByTestId } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const arrRow = await waitFor(() => rowByKey(container, 'enabledMcpjsonServers'));
+  fireEvent.click(arrRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+  await findByTestId('setting-array-editor');
+
+  // Clicking the dimmed backdrop must NOT dismiss a data-entry modal (unsaved
+  // edits would be lost silently) — only Cancel/Esc close it.
+  const overlay = await findByTestId('settings-modal-overlay');
+  fireEvent.click(overlay);
+
+  expect(queryByTestId('setting-array-editor')).toBeTruthy();
+  expect(api.set).not.toHaveBeenCalled();
 });

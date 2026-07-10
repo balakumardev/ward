@@ -774,3 +774,158 @@
   color: var(--danger);
   font-family: var(--font-mono);
 }
+
+/* ── Tools region (Task 15): schema-drift tripwire + env-var discovery ──
+   Sits below the setting rows inside the scroll area, separated by a rule, and
+   is independent of the active category / search above. */
+.set-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--border);
+}
+
+.set-tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 16px 18px;
+}
+.set-tool-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.set-tool-titles { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.set-tool-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+.set-tool-sub {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-width: 640px;
+}
+.set-tool-sub code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  padding: 0 4px;
+}
+.set-tool-sub strong { color: var(--text); font-weight: 700; }
+.set-tool-err {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+  font-family: var(--font-mono);
+}
+
+/* ── Schema-drift results ── */
+.set-schema-btn { flex: 0 0 auto; white-space: nowrap; }
+.set-schema-results {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.set-schema-ok {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ok);
+}
+.set-schema-group { display: flex; flex-direction: column; gap: 8px; }
+.set-schema-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.set-schema-group-title.set-schema-add { color: var(--accent); }
+.set-schema-group-title.set-schema-drop { color: var(--warn); }
+.set-schema-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.set-schema-item {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  padding: 3px 9px;
+}
+.set-schema-item code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* ── Env-var discovery panel ── */
+.set-env-search { flex: 1 1 auto; width: 100%; }
+.set-env-vars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.set-env-var {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.set-env-var:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.set-env-var-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.set-env-var-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.set-env-var-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.set-env-var-cat {
+  flex: 0 0 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-mute);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.set-env-var-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.set-env-var-add { flex: 0 0 auto; white-space: nowrap; }
