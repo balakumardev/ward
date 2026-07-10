@@ -288,15 +288,19 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
             }
             // Legacy/explicit ~/.claude/memory — walked RECURSIVELY so the
             // user's curated per-project note subfolders (memory/ward/,
-            // memory/factors/, …) all surface, each display name prefixed with
-            // its subfolder path relative to the memory root. Notes sitting
-            // directly in the root keep their bare name. The autoMemoryDirectory
-            // override dir is frequently a subdir of this root (e.g.
-            // memory/home); it is pruned here and surfaced by the separate
-            // override scan below, so its notes are never listed twice.
+            // memory/factors/, …) all surface. Each note whose TOP-LEVEL folder
+            // uniquely names a resolved project (basename match) is routed to
+            // that project's scope with the folder prefix stripped, so it
+            // co-locates with the project's native memory notes; every other
+            // note stays under Global, prefixed by its subfolder path relative
+            // to the memory root (root-level notes keep their bare name). The
+            // autoMemoryDirectory override dir is frequently a subdir of this
+            // root (e.g. memory/home); it is pruned here and surfaced by the
+            // separate override scan below, so its notes are never listed twice.
+            let folder_map = memory_project_folder_map(home, root);
             let mem_dir = root.join("memory");
             let prune: Vec<PathBuf> = override_dir.iter().cloned().collect();
-            scan_memory_tree(&mem_dir, scope, &mut items, &prune);
+            scan_memory_tree(&mem_dir, &scope.id, &folder_map, &mut items, &prune);
         }
         // A relocated auto-memory dir (autoMemoryDirectory) is global-ish — it
         // holds one shared MEMORY.md + topic files. Surface it under global so
@@ -907,8 +911,23 @@ fn scan_md_dir(
 /// other hidden directory (name starting with `.`) are always pruned. Recursion
 /// is gated on `entry.file_type()` (never `Path::is_dir`) so symlinked
 /// directories are NOT followed (cycle-safety) and symlinked files are skipped.
-fn scan_memory_tree(root: &Path, scope: &Scope, out: &mut Vec<HarnessItem>, prune: &[PathBuf]) {
-    scan_memory_tree_at(root, root, scope, out, prune);
+///
+/// Each note is routed per-note: when its TOP-LEVEL folder (the first path
+/// segment relative to `root`) uniquely matches a resolved project's directory
+/// basename in `folder_map`, the note is emitted under that project's scope id
+/// with the folder prefix stripped from its display name (`ward/overview.md` →
+/// name `overview` under the ward scope; `ward/sub/bar.md` → name `sub/bar`).
+/// Otherwise — no matching project, an ambiguous basename (absent from
+/// `folder_map`), or a note directly in `root` with no folder — it is emitted
+/// under `global_scope_id` with the full subfolder prefix kept (`ward/note`).
+fn scan_memory_tree(
+    root: &Path,
+    global_scope_id: &str,
+    folder_map: &std::collections::HashMap<String, String>,
+    out: &mut Vec<HarnessItem>,
+    prune: &[PathBuf],
+) {
+    scan_memory_tree_at(root, root, global_scope_id, folder_map, out, prune);
 }
 
 /// Recursion worker for [`scan_memory_tree`]. `root` stays fixed (it anchors
@@ -916,7 +935,8 @@ fn scan_memory_tree(root: &Path, scope: &Scope, out: &mut Vec<HarnessItem>, prun
 fn scan_memory_tree_at(
     root: &Path,
     dir: &Path,
-    scope: &Scope,
+    global_scope_id: &str,
+    folder_map: &std::collections::HashMap<String, String>,
     out: &mut Vec<HarnessItem>,
     prune: &[PathBuf],
 ) {
@@ -932,7 +952,7 @@ fn scan_memory_tree_at(
             // (the autoMemoryDirectory override, surfaced by a separate scan).
             if entry.file_name().to_string_lossy().starts_with('.') { continue; }
             if prune.iter().any(|d| d.as_path() == p.as_path()) { continue; }
-            scan_memory_tree_at(root, &p, scope, out, prune);
+            scan_memory_tree_at(root, &p, global_scope_id, folder_map, out, prune);
         } else if file_type.is_file() {
             if p.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
             let file_name = match p.file_name().and_then(|n| n.to_str()) {
@@ -949,13 +969,41 @@ fn scan_memory_tree_at(
                 fm.get("name").cloned()
                     .unwrap_or_else(|| file_name.trim_end_matches(".md").to_string())
             };
-            let display = match memory_subfolder_prefix(root, &p) {
-                Some(prefix) if !prefix.is_empty() => format!("{prefix}/{base}"),
-                _ => base,
+            // Full subfolder path relative to the memory root ("ward/sub",
+            // "ward", or "" for a root-level note).
+            let prefix = memory_subfolder_prefix(root, &p).unwrap_or_default();
+            // Route to the matching project scope when the top-level folder is a
+            // unique project basename; otherwise Global with the full prefix.
+            let (scope_id, display) = match memory_top_level_folder(root, &p)
+                .as_deref()
+                .and_then(|folder| folder_map.get(folder).map(|sid| (folder, sid)))
+            {
+                Some((folder, sid)) => {
+                    // Strip the matched top-level folder, keeping any deeper
+                    // subpath ("ward/sub" → "sub", "ward" → "").
+                    let inner = prefix
+                        .strip_prefix(folder)
+                        .map(|rest| rest.trim_start_matches('/'))
+                        .unwrap_or("");
+                    let name = if inner.is_empty() {
+                        base.clone()
+                    } else {
+                        format!("{inner}/{base}")
+                    };
+                    (sid.clone(), name)
+                }
+                None => {
+                    let name = if prefix.is_empty() {
+                        base.clone()
+                    } else {
+                        format!("{prefix}/{base}")
+                    };
+                    (global_scope_id.to_string(), name)
+                }
             };
             out.push(HarnessItem {
                 category: "memory".into(),
-                scope_id: scope.id.clone(),
+                scope_id,
                 name: display,
                 description: String::new(),
                 path: p.display().to_string(),
@@ -987,6 +1035,49 @@ fn memory_subfolder_prefix(root: &Path, file: &Path) -> Option<String> {
         })
         .collect();
     Some(parts.join("/"))
+}
+
+/// The TOP-LEVEL folder of `file` relative to the memory `root` — the FIRST
+/// `Component::Normal` segment of its subfolder path (`ward/sub/bar.md` →
+/// `ward`). Returns `None` for a note sitting directly in `root` (no folder).
+/// This is the key `folder_map` is keyed by when routing a note to a project.
+fn memory_top_level_folder(root: &Path, file: &Path) -> Option<String> {
+    let rel = file.strip_prefix(root).ok()?;
+    let parent = rel.parent()?;
+    parent.components().find_map(|c| match c {
+        std::path::Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+        _ => None,
+    })
+}
+
+/// Map each RESOLVED project's directory basename to its scope id, keeping only
+/// UNIQUE basenames. Two projects sharing a basename (`…/a/dup` and `…/b/dup`)
+/// leave that basename unclaimed (ambiguous → absent from the returned map).
+/// Unresolved project scopes (`kind == "project-unresolved"`, which have no
+/// real repo path) are skipped. Used by the Global memory walk to route each
+/// gardener folder (`memory/<project>/…`) to the matching project scope.
+fn memory_project_folder_map(
+    home: &Path,
+    claude_root: &Path,
+) -> std::collections::HashMap<String, String> {
+    let mut by_basename: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for scope in ClaudeAdapter::build_project_scopes(home, claude_root) {
+        if scope.kind != "project" {
+            continue;
+        }
+        if let Some(base) = Path::new(&scope.root).file_name().and_then(|n| n.to_str()) {
+            by_basename
+                .entry(base.to_string())
+                .or_default()
+                .push(scope.id);
+        }
+    }
+    by_basename
+        .into_iter()
+        .filter(|(_, ids)| ids.len() == 1)
+        .map(|(base, mut ids)| (base, ids.remove(0)))
+        .collect()
 }
 
 // ── Helpers to attach optional description to items ─────────────────────
@@ -1229,6 +1320,107 @@ mod tests {
         let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
         assert!(names.iter().any(|n| *n == "ward/w"),
             "sibling subfolder note must surface: {names:?}");
+    }
+
+    #[test]
+    fn memory_folder_maps_to_matching_project() {
+        // A gardener memory folder (memory/ward/) whose name UNIQUELY matches a
+        // resolved project's directory basename must surface under that
+        // project's scope, NOT Global — and drop the folder prefix from its
+        // display name so it co-locates with the project's native memory notes.
+        let dir = tempfile::tempdir().unwrap();
+        // A resolved project whose real repo path ends in `ward`.
+        let real_repo = dir.path().join("work").join("ward");
+        std::fs::create_dir_all(&real_repo).unwrap();
+        let encoded = "-work-ward";
+        make_project_dir(dir.path(), encoded, Some(&real_repo));
+        // A curated gardener note under memory/ward/.
+        let mem = dir.path().join(".claude/memory/ward");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(mem.join("overview.md"), "ward overview").unwrap();
+
+        // Full scan: BOTH the global scope (which owns memory/ward/) and the
+        // project scope must be walked for the reassignment to land in `items`.
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let result = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        let item = result
+            .items
+            .iter()
+            .find(|i| i.category == "memory" && i.path.ends_with("memory/ward/overview.md"))
+            .expect("ward gardener note must be scanned");
+        assert_eq!(
+            item.scope_id, encoded,
+            "gardener note must be routed to the matching ward project scope, not global"
+        );
+        assert_eq!(
+            item.name, "overview",
+            "the matched top-level folder prefix (`ward/`) must be stripped from the name"
+        );
+    }
+
+    #[test]
+    fn memory_folder_without_project_stays_global() {
+        // A gardener folder whose name matches NO project basename stays under
+        // Global, keeping its full subfolder prefix in the display name.
+        let dir = tempfile::tempdir().unwrap();
+        // A resolved project exists (so the folder map is non-empty) but its
+        // basename (`ward`) does not match the note's folder (`rand-topic`).
+        let real_repo = dir.path().join("work").join("ward");
+        std::fs::create_dir_all(&real_repo).unwrap();
+        make_project_dir(dir.path(), "-work-ward", Some(&real_repo));
+        let mem = dir.path().join(".claude/memory/rand-topic");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(mem.join("note.md"), "unmatched note").unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let result = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        let item = result
+            .items
+            .iter()
+            .find(|i| i.category == "memory" && i.path.ends_with("memory/rand-topic/note.md"))
+            .expect("unmatched gardener note must be scanned");
+        assert_eq!(
+            item.scope_id, "global",
+            "a note whose folder matches no project must stay under Global"
+        );
+        assert_eq!(
+            item.name, "rand-topic/note",
+            "an unmatched note keeps its full subfolder prefix"
+        );
+    }
+
+    #[test]
+    fn memory_folder_ambiguous_basename_stays_global() {
+        // Two resolved projects share the basename `dup` (…/a/dup and …/b/dup),
+        // so `dup` is ambiguous and claimed by NEITHER — the memory/dup/ note
+        // must stay under Global (with its prefix) and be emitted exactly once.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_a = dir.path().join("a").join("dup");
+        let repo_b = dir.path().join("b").join("dup");
+        std::fs::create_dir_all(&repo_a).unwrap();
+        std::fs::create_dir_all(&repo_b).unwrap();
+        make_project_dir(dir.path(), "-a-dup", Some(&repo_a));
+        make_project_dir(dir.path(), "-b-dup", Some(&repo_b));
+        let mem = dir.path().join(".claude/memory/dup");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(mem.join("x.md"), "ambiguous note").unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let result = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        let matches: Vec<&HarnessItem> = result
+            .items
+            .iter()
+            .filter(|i| i.category == "memory" && i.path.ends_with("memory/dup/x.md"))
+            .collect();
+        assert_eq!(matches.len(), 1, "ambiguous note must not be duplicated");
+        assert_eq!(
+            matches[0].scope_id, "global",
+            "an ambiguous basename must not be claimed by either project"
+        );
+        assert_eq!(
+            matches[0].name, "dup/x",
+            "an ambiguous note keeps its full subfolder prefix"
+        );
     }
 
     #[test]
