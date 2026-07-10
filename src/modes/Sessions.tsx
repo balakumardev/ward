@@ -172,6 +172,11 @@ export interface SessionsApi {
   restore: (info: RestoreInfo) => Promise<void>;
 }
 
+/** How many session rows to render per page. The user can have thousands of
+ *  sessions (~2,390 for this project alone), so the list is both filtered and
+ *  paginated — only the current page's rows are ever mounted in the DOM. */
+const PAGE_SIZE = 50;
+
 export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
   // Sessions are filtered to top-level JSONL files only. Bundle
   // children (backup/index artifacts from a prior Distill run) are
@@ -185,6 +190,33 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
       // Sessions without a known mtime sort last (fall back to 0).
       .sort((a, b) => (b.modifiedMs ?? 0) - (a.modifiedMs ?? 0))
   );
+
+  // ── Search + pagination ────────────────────────────────────────────────
+  // The (already newest-first sorted) list is filtered by a case-insensitive
+  // substring match on the display name, then sliced to the current page.
+  const [query, setQuery] = createSignal('');
+  const [page, setPage] = createSignal(0);
+
+  const filteredItems = createMemo<HarnessItem[]>(() => {
+    const q = query().toLowerCase();
+    if (!q) return sessionItems(); // empty query = all
+    return sessionItems().filter((i) => i.name.toLowerCase().includes(q));
+  });
+  const pageCount = createMemo(() => Math.max(1, Math.ceil(filteredItems().length / PAGE_SIZE)));
+  // Clamp defensively so the page can never point past the (possibly shrunk)
+  // result set — keeps the slice and the "Page X / Y" indicator consistent.
+  const effectivePage = createMemo(() => Math.min(page(), pageCount() - 1));
+  const pageItems = createMemo<HarnessItem[]>(() => {
+    const start = effectivePage() * PAGE_SIZE;
+    return filteredItems().slice(start, start + PAGE_SIZE);
+  });
+
+  function onSearchInput(value: string) {
+    setQuery(value);
+    setPage(0); // any query change returns to the first page of results
+  }
+  const prevPage = () => setPage(Math.max(0, effectivePage() - 1));
+  const nextPage = () => setPage(Math.min(pageCount() - 1, effectivePage() + 1));
 
   const [selectedPath, setSelectedPath] = createSignal<string>(sessionItems()[0]?.path ?? '');
   const [conversation, setConversation] = createSignal<Conversation | null>(null);
@@ -277,31 +309,73 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
     <div data-testid="sessions-mode" class="sx-sessions">
       {/* LEFT — session list */}
       <aside data-testid="sessions-list" class="sx-list">
-        <div class="sx-list-head">
-          Sessions ({sessionItems().length})
+        <div class="sx-list-head" data-testid="sessions-count">
+          Sessions ({filteredItems().length})
         </div>
         <Show when={sessionItems().length > 0} fallback={
           <div data-testid="sessions-empty" class="sx-empty">
             No session files found under <code>~/.claude/projects/</code>.
           </div>
         }>
-          <For each={sessionItems()}>
-            {(item) => (
-              <div
-                data-testid="sessions-row"
-                data-path={item.path}
-                onClick={() => openSelected(item.path)}
-                classList={{ 'sx-row': true, 'is-selected': selectedPath() === item.path }}
-              >
-                <div class="sx-row-name">
-                  {item.name}
-                </div>
-                <div class="sx-row-sub">
-                  {item.description || item.path.split('/').slice(-2).join('/')}
-                </div>
+          <input
+            data-testid="sessions-search"
+            class="sx-search"
+            type="text"
+            placeholder="Filter by title…"
+            aria-label="Filter sessions by title"
+            value={query()}
+            onInput={(e) => onSearchInput(e.currentTarget.value)}
+          />
+          <Show when={filteredItems().length > 0} fallback={
+            <div data-testid="sessions-no-match" class="sx-empty sx-no-match">
+              No sessions match <span class="sx-no-match-q">{query()}</span>.
+            </div>
+          }>
+            <div class="sx-rows">
+              <For each={pageItems()}>
+                {(item) => (
+                  <div
+                    data-testid="sessions-row"
+                    data-path={item.path}
+                    onClick={() => openSelected(item.path)}
+                    classList={{ 'sx-row': true, 'is-selected': selectedPath() === item.path }}
+                  >
+                    <div class="sx-row-name">
+                      {item.name}
+                    </div>
+                    <div class="sx-row-sub">
+                      {item.description || item.path.split('/').slice(-2).join('/')}
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+            <Show when={pageCount() > 1}>
+              <div class="sx-pager">
+                <button
+                  type="button"
+                  data-testid="sessions-prev"
+                  class="sx-page-btn"
+                  disabled={effectivePage() === 0}
+                  onClick={prevPage}
+                >
+                  ‹ Prev
+                </button>
+                <span data-testid="sessions-page-info" class="sx-page-info">
+                  Page {effectivePage() + 1} / {pageCount()}
+                </span>
+                <button
+                  type="button"
+                  data-testid="sessions-next"
+                  class="sx-page-btn"
+                  disabled={effectivePage() >= pageCount() - 1}
+                  onClick={nextPage}
+                >
+                  Next ›
+                </button>
               </div>
-            )}
-          </For>
+            </Show>
+          </Show>
         </Show>
       </aside>
 

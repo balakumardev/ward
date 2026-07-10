@@ -276,3 +276,149 @@ test('a long tool result is collapsed in a <details>', async () => {
   await findByTestId('sessions-block-toolresult');
   expect(container.querySelector('[data-testid="sessions-block-toolresult"] details')).toBeTruthy();
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Search + pagination. The list can hold ~2,390 sessions, so the left pane
+// gets a case-insensitive title filter and 50-per-page pagination on top of
+// the (unchanged) newest-first ordering.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Build a scan with `count` sessions named s000, s001, … Higher-numbered
+ *  names carry a lower `modifiedMs`, so s000 is the newest and the list sorts
+ *  s000, s001, … s{count-1}. */
+function manySessionsScan(count: number): ScanResult {
+  const items = [];
+  for (let i = 0; i < count; i++) {
+    const n = String(i).padStart(3, '0');
+    items.push({
+      category: 'session',
+      scopeId: 'p',
+      name: `s${n}`,
+      path: `/x/s${n}.jsonl`,
+      movable: false,
+      deletable: false,
+      locked: true,
+      modifiedMs: 1_000_000 - i,
+    });
+  }
+  return { harness: 'claude', items } as unknown as ScanResult;
+}
+
+test('the search box filters rows by name (case-insensitive) and updates the header count', () => {
+  const scan = {
+    harness: 'claude',
+    items: [
+      { category: 'session', scopeId: 'p', name: 'Refactor auth flow', path: '/x/a.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 300 },
+      { category: 'session', scopeId: 'p', name: 'Fix scan pipeline', path: '/x/b.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 200 },
+      { category: 'session', scopeId: 'p', name: 'Auth token refresh', path: '/x/c.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 100 },
+    ],
+  } as unknown as ScanResult;
+  const { getByTestId, getAllByTestId } = render(() => <Sessions scan={scan} api={makeApi()} />);
+
+  // All three rows visible; header shows the full count.
+  expect(getAllByTestId('sessions-row').length).toBe(3);
+  expect(getByTestId('sessions-count').textContent).toContain('Sessions (3)');
+
+  // Lower-case query "auth" matches "Refactor auth flow" and "Auth token
+  // refresh" (case-insensitive) but not "Fix scan pipeline". Newest-first
+  // order is preserved among the matches (a=300 sorts before c=100).
+  fireEvent.input(getByTestId('sessions-search'), { target: { value: 'auth' } });
+
+  const paths = getAllByTestId('sessions-row').map((r) => r.getAttribute('data-path'));
+  expect(paths).toEqual(['/x/a.jsonl', '/x/c.jsonl']);
+  expect(getByTestId('sessions-count').textContent).toContain('Sessions (2)');
+});
+
+test('paginates at 50 rows per page; Next/Prev move between pages', () => {
+  const { getByTestId, getAllByTestId } = render(() => (
+    <Sessions scan={manySessionsScan(55)} api={makeApi()} />
+  ));
+
+  // Page 1 — exactly 50 rows, newest-first (s000 … s049).
+  let paths = getAllByTestId('sessions-row').map((r) => r.getAttribute('data-path'));
+  expect(paths.length).toBe(50);
+  expect(paths[0]).toBe('/x/s000.jsonl');
+  expect(paths).toContain('/x/s049.jsonl');
+  expect(paths).not.toContain('/x/s050.jsonl');
+  expect(getByTestId('sessions-page-info').textContent).toContain('Page 1 / 2');
+
+  // Next → page 2 — the remaining 5 rows (s050 … s054).
+  fireEvent.click(getByTestId('sessions-next'));
+  paths = getAllByTestId('sessions-row').map((r) => r.getAttribute('data-path'));
+  expect(paths.length).toBe(5);
+  expect(paths).toContain('/x/s050.jsonl');     // the 51st session now shows
+  expect(paths).not.toContain('/x/s000.jsonl'); // the 1st session is gone
+  expect(getByTestId('sessions-page-info').textContent).toContain('Page 2 / 2');
+
+  // Prev → back to page 1.
+  fireEvent.click(getByTestId('sessions-prev'));
+  paths = getAllByTestId('sessions-row').map((r) => r.getAttribute('data-path'));
+  expect(paths.length).toBe(50);
+  expect(paths[0]).toBe('/x/s000.jsonl');
+  expect(getByTestId('sessions-page-info').textContent).toContain('Page 1 / 2');
+});
+
+test('changing the query resets pagination to the first page', () => {
+  const { getByTestId } = render(() => (
+    <Sessions scan={manySessionsScan(120)} api={makeApi()} />
+  ));
+
+  // 120 sessions → 3 pages. Walk out to the last page.
+  fireEvent.click(getByTestId('sessions-next'));
+  fireEvent.click(getByTestId('sessions-next'));
+  expect(getByTestId('sessions-page-info').textContent).toContain('Page 3 / 3');
+
+  // Typing a query resets to page 1. "s" matches every session (all named
+  // s000…s119), so there are still 3 pages — proving the reset, not a shrink.
+  fireEvent.input(getByTestId('sessions-search'), { target: { value: 's' } });
+  expect(getByTestId('sessions-page-info').textContent).toContain('Page 1 / 3');
+});
+
+test('a query with no matches shows sessions-no-match and no rows', () => {
+  const scan = {
+    harness: 'claude',
+    items: [
+      { category: 'session', scopeId: 'p', name: 'alpha', path: '/x/a.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 200 },
+      { category: 'session', scopeId: 'p', name: 'beta', path: '/x/b.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 100 },
+    ],
+  } as unknown as ScanResult;
+  const { getByTestId, queryByTestId, queryAllByTestId } = render(() => (
+    <Sessions scan={scan} api={makeApi()} />
+  ));
+
+  fireEvent.input(getByTestId('sessions-search'), { target: { value: 'no-such-session' } });
+
+  expect(queryByTestId('sessions-no-match')).toBeTruthy();
+  expect(queryAllByTestId('sessions-row').length).toBe(0);
+  // The truly-empty state must NOT appear — there ARE sessions, just no match.
+  expect(queryByTestId('sessions-empty')).toBeNull();
+  expect(getByTestId('sessions-count').textContent).toContain('Sessions (0)');
+});
+
+test('the pager is hidden when there is only a single page of results', () => {
+  // 3 sessions ≤ PAGE_SIZE → one page → no pager controls.
+  const { queryByTestId, getAllByTestId } = render(() => (
+    <Sessions scan={manySessionsScan(3)} api={makeApi()} />
+  ));
+  expect(getAllByTestId('sessions-row').length).toBe(3);
+  expect(queryByTestId('sessions-prev')).toBeNull();
+  expect(queryByTestId('sessions-next')).toBeNull();
+  expect(queryByTestId('sessions-page-info')).toBeNull();
+});
+
+test('the truly-empty scan shows sessions-empty (not no-match) and no search box', () => {
+  const scan = { harness: 'claude', items: [] } as unknown as ScanResult;
+  const { getByTestId, queryByTestId, queryAllByTestId } = render(() => (
+    <Sessions scan={scan} api={makeApi()} />
+  ));
+  expect(getByTestId('sessions-empty')).toBeTruthy();
+  expect(queryByTestId('sessions-no-match')).toBeNull();
+  expect(queryByTestId('sessions-search')).toBeNull();
+  expect(queryAllByTestId('sessions-row').length).toBe(0);
+  expect(getByTestId('sessions-count').textContent).toContain('Sessions (0)');
+});
