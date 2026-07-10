@@ -286,9 +286,17 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
             modified_ms: None,
                 });
             }
-            // Legacy/explicit ~/.claude/memory (only when it actually exists).
+            // Legacy/explicit ~/.claude/memory — walked RECURSIVELY so the
+            // user's curated per-project note subfolders (memory/ward/,
+            // memory/factors/, …) all surface, each display name prefixed with
+            // its subfolder path relative to the memory root. Notes sitting
+            // directly in the root keep their bare name. The autoMemoryDirectory
+            // override dir is frequently a subdir of this root (e.g.
+            // memory/home); it is pruned here and surfaced by the separate
+            // override scan below, so its notes are never listed twice.
             let mem_dir = root.join("memory");
-            scan_md_dir(&mem_dir, scope, "memory", &mut items, false, false, true);
+            let prune: Vec<PathBuf> = override_dir.iter().cloned().collect();
+            scan_memory_tree(&mem_dir, scope, &mut items, &prune);
         }
         // A relocated auto-memory dir (autoMemoryDirectory) is global-ish — it
         // holds one shared MEMORY.md + topic files. Surface it under global so
@@ -880,6 +888,107 @@ fn scan_md_dir(
     }
 }
 
+// ── Recursive memory-tree walker (global scope) ─────────────────────────
+
+/// Recursively surface every `.md` note anywhere under the top-level memory
+/// root (`~/.claude/memory`), for the Global scope. Each note's display name is
+/// prefixed with its subfolder path relative to `root` (`ward/overview`,
+/// `ward/sub/bar`); notes sitting directly in `root` keep their bare name
+/// (`top`). Display naming otherwise matches [`scan_md_dir`]: `MEMORY.md` keeps
+/// its full filename (it is an index), every other note uses its frontmatter
+/// `name` or the filename stem, and the frontmatter `description` is attached.
+/// Surfaced items are non-movable, non-deletable, and unlocked — matching the
+/// flat top-level memory scan this replaces.
+///
+/// `prune` lists directories NOT to descend into, compared by path equality —
+/// used to skip the `autoMemoryDirectory` override dir (frequently a subdir of
+/// this root, e.g. `memory/home`), which a separate scan surfaces, so its notes
+/// are not double-listed. An empty `prune` prunes nothing. `.git` and every
+/// other hidden directory (name starting with `.`) are always pruned. Recursion
+/// is gated on `entry.file_type()` (never `Path::is_dir`) so symlinked
+/// directories are NOT followed (cycle-safety) and symlinked files are skipped.
+fn scan_memory_tree(root: &Path, scope: &Scope, out: &mut Vec<HarnessItem>, prune: &[PathBuf]) {
+    scan_memory_tree_at(root, root, scope, out, prune);
+}
+
+/// Recursion worker for [`scan_memory_tree`]. `root` stays fixed (it anchors
+/// each note's subfolder prefix); `dir` is the directory currently being read.
+fn scan_memory_tree_at(
+    root: &Path,
+    dir: &Path,
+    scope: &Scope,
+    out: &mut Vec<HarnessItem>,
+    prune: &[PathBuf],
+) {
+    let entries = match std::fs::read_dir(dir) { Ok(e) => e, Err(_) => return };
+    for entry in entries.flatten() {
+        // Decide via the DirEntry's own file type (an lstat-equivalent that does
+        // NOT resolve symlinks): symlinked dirs must not be followed (cycle
+        // safety) and symlinked files are ignored.
+        let file_type = match entry.file_type() { Ok(t) => t, Err(_) => continue };
+        let p = entry.path();
+        if file_type.is_dir() {
+            // Prune hidden dirs (covers `.git`) and any explicitly-pruned dir
+            // (the autoMemoryDirectory override, surfaced by a separate scan).
+            if entry.file_name().to_string_lossy().starts_with('.') { continue; }
+            if prune.iter().any(|d| d.as_path() == p.as_path()) { continue; }
+            scan_memory_tree_at(root, &p, scope, out, prune);
+        } else if file_type.is_file() {
+            if p.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+            let file_name = match p.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let content = std::fs::read_to_string(&p).unwrap_or_default();
+            let fm = parse_frontmatter(&content);
+            // MEMORY.md is the auto-memory index — keep its full filename; every
+            // other note falls back to its frontmatter `name` then filename stem.
+            let base = if file_name == "MEMORY.md" {
+                file_name.clone()
+            } else {
+                fm.get("name").cloned()
+                    .unwrap_or_else(|| file_name.trim_end_matches(".md").to_string())
+            };
+            let display = match memory_subfolder_prefix(root, &p) {
+                Some(prefix) if !prefix.is_empty() => format!("{prefix}/{base}"),
+                _ => base,
+            };
+            out.push(HarnessItem {
+                category: "memory".into(),
+                scope_id: scope.id.clone(),
+                name: display,
+                description: String::new(),
+                path: p.display().to_string(),
+                movable: false,
+                deletable: false,
+                locked: false,
+                effective: None,
+                mcp_config: None,
+                modified_ms: None,
+            }.with_description(fm.get("description").cloned().unwrap_or_default()));
+        }
+        // Anything else (symlinks, sockets, …) is skipped.
+    }
+}
+
+/// The subfolder path of `file` relative to the memory `root`, joined with `/`
+/// (forward slash, regardless of platform separator). Returns an empty string
+/// when `file` sits directly in `root`, and `None` only if `file` is not under
+/// `root` — which never happens for the paths this module builds, since every
+/// walked path descends from `root`.
+fn memory_subfolder_prefix(root: &Path, file: &Path) -> Option<String> {
+    let rel = file.strip_prefix(root).ok()?;
+    let parent = rel.parent()?;
+    let parts: Vec<String> = parent
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    Some(parts.join("/"))
+}
+
 // ── Helpers to attach optional description to items ─────────────────────
 
 trait WithDescription {
@@ -1056,6 +1165,70 @@ mod tests {
         let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
         assert!(names.contains(&"proj-note"),
             "per-project memory note must be scanned even with autoMemoryDirectory set: {names:?}");
+    }
+
+    #[test]
+    fn memory_recurses_into_project_subfolders() {
+        // The top-level ~/.claude/memory tree is organised into per-project
+        // subfolders (memory/ward/, memory/factors/, …). Every note must
+        // surface under the Global scope, with the subfolder ones prefixed by
+        // their path relative to the memory root and root-level notes bare.
+        let dir = tempfile::tempdir().unwrap();
+        let mem = dir.path().join(".claude/memory");
+        fs::create_dir_all(mem.join("ward")).unwrap();
+        fs::create_dir_all(mem.join("factors")).unwrap();
+        fs::write(mem.join("ward/note.md"), "ward note").unwrap();
+        fs::write(mem.join("factors/other.md"), "factors note").unwrap();
+        fs::write(mem.join("top.md"), "root-level note").unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let scope = ClaudeAdapter.discover_scopes(&ctx).unwrap().remove(0);
+        assert_eq!(scope.id, "global");
+        let items = ClaudeAdapter.scan_category(&ctx, "memory", &scope).unwrap();
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.iter().any(|n| *n == "ward/note"),
+            "ward/ subfolder note must be prefixed: {names:?}");
+        assert!(names.iter().any(|n| *n == "factors/other"),
+            "factors/ subfolder note must be prefixed: {names:?}");
+        assert!(names.contains(&"top"),
+            "root-level note must be unprefixed: {names:?}");
+    }
+
+    #[test]
+    fn memory_recursion_skips_override_dir() {
+        // The autoMemoryDirectory override commonly points at a SUBDIR of the
+        // memory root (here ~/.claude/memory/home). That dir is surfaced by the
+        // dedicated override scan, so the recursive memory walk must prune it —
+        // otherwise every override note is listed twice.
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join(".claude");
+        let mem = claude.join("memory");
+        let override_path = mem.join("home");
+        fs::create_dir_all(&override_path).unwrap();
+        fs::create_dir_all(mem.join("ward")).unwrap();
+        fs::write(override_path.join("shared.md"), "shared note").unwrap();
+        fs::write(mem.join("ward/w.md"), "ward note").unwrap();
+        // Override set to the absolute subdir path, mirroring how
+        // memory_honors_auto_memory_directory_override expands it.
+        fs::write(
+            claude.join("settings.json"),
+            format!(r#"{{"autoMemoryDirectory":"{}"}}"#, override_path.display()),
+        ).unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let scope = ClaudeAdapter.discover_scopes(&ctx).unwrap().remove(0);
+        let items = ClaudeAdapter.scan_category(&ctx, "memory", &scope).unwrap();
+
+        // shared.md must appear EXACTLY once (via the override scan, not also
+        // via the recursion descending into the pruned override dir).
+        let shared_count = items.iter().filter(|i| i.path.ends_with("shared.md")).count();
+        assert_eq!(shared_count, 1,
+            "override note must not be double-listed: {:?}",
+            items.iter().map(|i| i.path.as_str()).collect::<Vec<_>>());
+        // The sibling ward/ note is still surfaced by the recursion.
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.iter().any(|n| *n == "ward/w"),
+            "sibling subfolder note must surface: {names:?}");
     }
 
     #[test]
