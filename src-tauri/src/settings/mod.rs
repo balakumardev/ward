@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod env;
 pub mod read;
 pub mod schema;
 pub mod write;
