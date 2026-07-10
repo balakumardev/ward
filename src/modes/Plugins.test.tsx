@@ -173,6 +173,61 @@ test('installed tab toggles enable calls pluginsSetEnabled', async () => {
   await findByTestId('plugin-undo');
 });
 
+test('enable toggle reflects the flipped state after the re-scan', async () => {
+  // Stateful scan mock: setEnabled flips the flag, and the subsequent re-scan
+  // must re-render the row with the new aria-checked (the post-flip transition).
+  let enabled = true;
+  const stateful = (): PluginScan =>
+    makeScan({
+      plugins: [
+        {
+          kind: 'plugin', name: 'code-formatter', marketplace: 'claude-plugins-official',
+          displayName: 'Code Formatter', description: 'Opinionated multi-language formatter.',
+          version: '2.1.0', source: { source: 'github', repo: 'anthropics/x' }, tags: [],
+          installed: true, enabled, scope: 'user',
+        },
+      ],
+    });
+  const api = makeApi({
+    scan: vi.fn(async () => stateful()),
+    setEnabled: vi.fn(async (_key: string, next: boolean): Promise<RestoreInfo> => {
+      enabled = next;
+      return { kind: 'plugin-enable', originalPath: '~/.claude/settings.json' };
+    }),
+  });
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  expect((await findByTestId('plugin-enable-toggle')).getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(getByTestId('plugin-enable-toggle'));
+
+  // The row now reflects the flipped, re-scanned state — off.
+  await waitFor(() =>
+    expect(getByTestId('plugin-enable-toggle').getAttribute('aria-checked')).toBe('false'),
+  );
+});
+
+test('Tab-to-Cancel then Enter cancels the confirm instead of confirming', async () => {
+  // Focus-aware Enter: the modal keydown handler must NOT confirm when Cancel
+  // holds focus — Tab-to-Cancel + Enter can't silently install.
+  const api = makeApi();
+  const { findByTestId, getByTestId, queryByTestId } = render(() => (
+    <Plugins scan={makeHostScan(true)} api={api} />
+  ));
+  await findByTestId('plugins-discover');
+
+  fireEvent.click(await findByTestId('plugin-install'));
+  await findByTestId('plugin-install-confirm');
+
+  const cancel = getByTestId('plugin-confirm-cancel') as HTMLButtonElement;
+  cancel.focus();
+  // Enter while Cancel is focused → the dialog closes as a cancel, no install.
+  fireEvent.keyDown(cancel, { key: 'Enter' });
+
+  await waitFor(() => expect(queryByTestId('plugin-install-confirm')).toBeNull());
+  expect(api.install).not.toHaveBeenCalled();
+});
+
 test('uninstall opens confirm modal then calls pluginsUninstall', async () => {
   const api = makeApi();
   const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);

@@ -89,6 +89,10 @@ interface DialogState {
   title: string;
   message: string;
   confirmLabel: string;
+  /** Title tone: 'info' for benign confirms (install / add marketplace),
+   *  'danger' for destructive ones (uninstall). Omitted → the shared
+   *  `.modal-title` default (warning-orange), so other modals don't regress. */
+  tone?: 'info' | 'danger';
   resolve: (ok: boolean) => void;
 }
 
@@ -162,6 +166,7 @@ function PluginsBody(props: { api: PluginsApi }) {
   // ── In-app confirm modal (WKWebView's confirm() silently returns false) ──
   let dialogRef: HTMLDivElement | undefined;
   let okBtnRef: HTMLButtonElement | undefined;
+  let cancelBtnRef: HTMLButtonElement | undefined;
 
   function askConfirm(opts: Omit<DialogState, 'resolve'>): Promise<boolean> {
     return new Promise((resolve) => setDialog({ ...opts, resolve }));
@@ -174,10 +179,14 @@ function PluginsBody(props: { api: PluginsApi }) {
     }
   }
 
-  // While the modal is open: Escape cancels, Enter confirms, Tab is trapped
-  // inside the dialog. Focus starts on the confirm button.
+  // While the modal is open: Escape cancels, Enter confirms (unless Cancel holds
+  // focus — then Enter cancels, so Tab-to-Cancel + Enter can't silently confirm),
+  // Tab is trapped inside the dialog. Focus starts on the confirm button and is
+  // restored to whatever triggered the modal once it closes.
   createEffect(() => {
     if (!dialog()) return;
+    // Remember the trigger (e.g. the Install/Uninstall button) to restore later.
+    const prevFocused = document.activeElement as HTMLElement | null;
     queueMicrotask(() => okBtnRef?.focus());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -185,7 +194,9 @@ function PluginsBody(props: { api: PluginsApi }) {
         resolveDialog(false);
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        resolveDialog(true);
+        // Focus-aware: when Cancel is the active control, Enter must cancel — not
+        // confirm — so a Tab-to-Cancel then Enter never installs/uninstalls.
+        resolveDialog(document.activeElement !== cancelBtnRef);
       } else if (e.key === 'Tab') {
         const nodes = dialogRef?.querySelectorAll<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
@@ -204,7 +215,14 @@ function PluginsBody(props: { api: PluginsApi }) {
       }
     };
     window.addEventListener('keydown', onKey);
-    onCleanup(() => window.removeEventListener('keydown', onKey));
+    onCleanup(() => {
+      window.removeEventListener('keydown', onKey);
+      // Restore focus to the trigger after close. Guard: a re-render may have
+      // removed it from the DOM — never throw on a stale node.
+      if (prevFocused && document.contains(prevFocused) && typeof prevFocused.focus === 'function') {
+        prevFocused.focus();
+      }
+    });
   });
 
   // ── Mutations ──
@@ -214,6 +232,7 @@ function PluginsBody(props: { api: PluginsApi }) {
       title: 'Install plugin',
       message: `Install ${p.displayName} (${p.name}@${p.marketplace}) into ${scopeLabel(scope())}?`,
       confirmLabel: 'Install',
+      tone: 'info',
     });
     if (!ok) return;
     setBusy(true);
@@ -237,6 +256,7 @@ function PluginsBody(props: { api: PluginsApi }) {
       title: 'Add marketplace',
       message: `Add marketplace source "${src}" (${scopeLabel(scope())})? Ward will run \`claude plugin marketplace add\`.`,
       confirmLabel: 'Add',
+      tone: 'info',
     });
     if (!ok) return;
     setBusy(true);
@@ -306,6 +326,7 @@ function PluginsBody(props: { api: PluginsApi }) {
       title: 'Uninstall plugin',
       message: `Uninstall ${p.displayName} (${p.name}@${p.marketplace}) from ${scopeLabel(sc)}? Ward will run \`claude plugin uninstall\`.`,
       confirmLabel: 'Uninstall',
+      tone: 'danger',
     });
     if (!ok) return;
     setBusy(true);
@@ -341,6 +362,8 @@ function PluginsBody(props: { api: PluginsApi }) {
         <button
           type="button"
           role="tab"
+          id="plg-tab-discover"
+          aria-controls="plg-panel-discover"
           class="plg-tab"
           classList={{ active: tab() === 'discover' }}
           data-testid="plugins-tab-discover"
@@ -352,6 +375,8 @@ function PluginsBody(props: { api: PluginsApi }) {
         <button
           type="button"
           role="tab"
+          id="plg-tab-installed"
+          aria-controls="plg-panel-installed"
           class="plg-tab"
           classList={{ active: tab() === 'installed' }}
           data-testid="plugins-tab-installed"
@@ -375,7 +400,13 @@ function PluginsBody(props: { api: PluginsApi }) {
       </Show>
 
       <Show when={tab() === 'discover'}>
-      <div class="plugins-discover" data-testid="plugins-discover">
+      <div
+        class="plugins-discover"
+        data-testid="plugins-discover"
+        role="tabpanel"
+        id="plg-panel-discover"
+        aria-labelledby="plg-tab-discover"
+      >
         <header class="plg-toolbar">
           <div class="plg-toolbar-row">
             <label class="plg-field">
@@ -531,7 +562,13 @@ function PluginsBody(props: { api: PluginsApi }) {
       </Show>
 
       <Show when={tab() === 'installed'}>
-        <div class="plg-installed-view" data-testid="plugins-installed">
+        <div
+          class="plg-installed-view"
+          data-testid="plugins-installed"
+          role="tabpanel"
+          id="plg-panel-installed"
+          aria-labelledby="plg-tab-installed"
+        >
           <Show
             when={!scanRes.error}
             fallback={<div class="plg-status err" data-testid="plugins-installed-error">Failed to read plugins: {String(scanRes.error)}</div>}
@@ -665,10 +702,14 @@ function PluginsBody(props: { api: PluginsApi }) {
               data-testid={d.testid}
               onClick={(e) => e.stopPropagation()}
             >
-              <div class="modal-title" id="plugins-modal-title">{d.title}</div>
+              <div
+                class="modal-title"
+                classList={{ 'is-info': d.tone === 'info', 'is-danger': d.tone === 'danger' }}
+                id="plugins-modal-title"
+              >{d.title}</div>
               <div class="modal-body">{d.message}</div>
               <div class="modal-actions">
-                <button class="btn btn-ghost" data-testid="plugin-confirm-cancel" onClick={() => resolveDialog(false)}>Cancel</button>
+                <button ref={cancelBtnRef} class="btn btn-ghost" data-testid="plugin-confirm-cancel" onClick={() => resolveDialog(false)}>Cancel</button>
                 <button ref={okBtnRef} class="btn btn-primary" data-testid="plugin-confirm-ok" onClick={() => resolveDialog(true)}>{d.confirmLabel}</button>
               </div>
             </div>

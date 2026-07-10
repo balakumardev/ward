@@ -297,6 +297,12 @@
   padding: 18px 18px 14px; animation: modalIn .14s ease both;
 }
 .modal-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--warn); }
+/* Scoped tone modifiers (Plan 28) — the base title stays warning-orange so the
+   delete/bulk-delete confirms elsewhere don't regress. `is-info` recolours the
+   benign install / add-marketplace confirms; `is-danger` marks the destructive
+   uninstall confirm. */
+.modal-title.is-info { color: var(--info); }
+.modal-title.is-danger { color: var(--crit); }
 .modal-body { margin: 10px 0 16px; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
