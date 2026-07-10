@@ -972,15 +972,22 @@ fn scan_memory_tree_at(
             // Full subfolder path relative to the memory root ("ward/sub",
             // "ward", or "" for a root-level note).
             let prefix = memory_subfolder_prefix(root, &p).unwrap_or_default();
-            // Route to the matching project scope when the top-level folder is a
-            // unique project basename; otherwise Global with the full prefix.
+            // Route to the matching project scope when the top-level folder's
+            // NORMALIZED form uniquely matches a project basename; otherwise
+            // Global with the full prefix. The lookup key is normalized
+            // (case/punctuation-insensitive) but the ORIGINAL on-disk folder is
+            // carried forward so prefix-stripping stays byte-accurate.
             let (scope_id, display) = match memory_top_level_folder(root, &p)
                 .as_deref()
-                .and_then(|folder| folder_map.get(folder).map(|sid| (folder, sid)))
+                .and_then(|folder| {
+                    folder_map
+                        .get(&normalize_basename(folder))
+                        .map(|sid| (folder, sid))
+                })
             {
                 Some((folder, sid)) => {
-                    // Strip the matched top-level folder, keeping any deeper
-                    // subpath ("ward/sub" → "sub", "ward" → "").
+                    // Strip the matched top-level folder (its real on-disk name),
+                    // keeping any deeper subpath ("ward/sub" → "sub", "ward" → "").
                     let inner = prefix
                         .strip_prefix(folder)
                         .map(|rest| rest.trim_start_matches('/'))
@@ -1050,12 +1057,27 @@ fn memory_top_level_folder(root: &Path, file: &Path) -> Option<String> {
     })
 }
 
-/// Map each RESOLVED project's directory basename to its scope id, keeping only
-/// UNIQUE basenames. Two projects sharing a basename (`…/a/dup` and `…/b/dup`)
-/// leave that basename unclaimed (ambiguous → absent from the returned map).
-/// Unresolved project scopes (`kind == "project-unresolved"`, which have no
-/// real repo path) are skipped. Used by the Global memory walk to route each
-/// gardener folder (`memory/<project>/…`) to the matching project scope.
+/// Normalize a directory basename for cross-side memory↔project matching. The
+/// user's curated memory folders are lowercase-kebab (`balawarp`,
+/// `gtmship-outreach`, `balakumar-dev`) while the real repo dirs are cased and
+/// punctuated (`BalaWarp`, `GTMShip-outreach`, `balakumar.dev`). This mirrors
+/// [`ClaudeAdapter::encode_project_name`] (every non-`[A-Za-z0-9-]` char → `-`)
+/// PLUS lowercasing: a 1:1 char map — each ASCII-alphanumeric is lowercased,
+/// every other char (incl. `.`, `_`, space, and an existing `-`) becomes `-`.
+/// Consecutive dashes are NOT collapsed (kept 1:1 so both sides map identically).
+fn normalize_basename(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect()
+}
+
+/// Map each RESOLVED project's NORMALIZED directory basename to its scope id,
+/// keeping only UNIQUE normalized basenames. Two projects that normalize to the
+/// same basename (`…/a/Dup` and `…/b/dup`) leave it unclaimed (ambiguous →
+/// absent from the returned map). Unresolved project scopes (`kind ==
+/// "project-unresolved"`, which have no real repo path) are skipped. Used by the
+/// Global memory walk to route each gardener folder (`memory/<project>/…`) to
+/// the matching project scope, tolerant of case/punctuation differences.
 fn memory_project_folder_map(
     home: &Path,
     claude_root: &Path,
@@ -1068,7 +1090,7 @@ fn memory_project_folder_map(
         }
         if let Some(base) = Path::new(&scope.root).file_name().and_then(|n| n.to_str()) {
             by_basename
-                .entry(base.to_string())
+                .entry(normalize_basename(base))
                 .or_default()
                 .push(scope.id);
         }
@@ -1391,15 +1413,17 @@ mod tests {
 
     #[test]
     fn memory_folder_ambiguous_basename_stays_global() {
-        // Two resolved projects share the basename `dup` (…/a/dup and …/b/dup),
-        // so `dup` is ambiguous and claimed by NEITHER — the memory/dup/ note
-        // must stay under Global (with its prefix) and be emitted exactly once.
+        // Two resolved projects normalize to the SAME basename `dup` — one dir is
+        // `…/a/Dup` (capital), the other `…/b/dup` — so `dup` is ambiguous AFTER
+        // normalization and claimed by NEITHER. This proves normalized-ambiguity
+        // (not just exact-string ambiguity) is caught: the memory/dup/ note must
+        // stay under Global (with its prefix) and be emitted exactly once.
         let dir = tempfile::tempdir().unwrap();
-        let repo_a = dir.path().join("a").join("dup");
+        let repo_a = dir.path().join("a").join("Dup");
         let repo_b = dir.path().join("b").join("dup");
         std::fs::create_dir_all(&repo_a).unwrap();
         std::fs::create_dir_all(&repo_b).unwrap();
-        make_project_dir(dir.path(), "-a-dup", Some(&repo_a));
+        make_project_dir(dir.path(), "-a-Dup", Some(&repo_a));
         make_project_dir(dir.path(), "-b-dup", Some(&repo_b));
         let mem = dir.path().join(".claude/memory/dup");
         std::fs::create_dir_all(&mem).unwrap();
@@ -1421,6 +1445,80 @@ mod tests {
             matches[0].name, "dup/x",
             "an ambiguous note keeps its full subfolder prefix"
         );
+    }
+
+    #[test]
+    fn memory_folder_maps_case_insensitively() {
+        // The curated memory folder is lowercase-kebab (`balawarp`) while the
+        // real repo dir is cased (`BalaWarp`). Normalized matching must still
+        // route the note to the project scope, and the ON-DISK folder prefix
+        // (`balawarp/`, the memory folder's real name) must be stripped.
+        let dir = tempfile::tempdir().unwrap();
+        let real_repo = dir.path().join("code").join("BalaWarp");
+        std::fs::create_dir_all(&real_repo).unwrap();
+        let encoded = "-code-BalaWarp";
+        make_project_dir(dir.path(), encoded, Some(&real_repo));
+        let mem = dir.path().join(".claude/memory/balawarp");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(mem.join("note.md"), "balawarp note").unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let result = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        let item = result
+            .items
+            .iter()
+            .find(|i| i.category == "memory" && i.path.ends_with("memory/balawarp/note.md"))
+            .expect("balawarp gardener note must be scanned");
+        assert_eq!(
+            item.scope_id, encoded,
+            "a case-differing folder must still map to the BalaWarp project scope"
+        );
+        assert_eq!(
+            item.name, "note",
+            "the on-disk folder prefix (`balawarp/`) must be stripped"
+        );
+    }
+
+    #[test]
+    fn memory_folder_maps_across_dot_dash() {
+        // The repo dir has a dot (`balakumar.dev`); the memory folder uses a dash
+        // (`balakumar-dev`). Normalization maps `.`→`-` on the project side so the
+        // two align and the note routes to the project scope.
+        let dir = tempfile::tempdir().unwrap();
+        let real_repo = dir.path().join("code").join("balakumar.dev");
+        std::fs::create_dir_all(&real_repo).unwrap();
+        let encoded = "-code-balakumar-dev";
+        make_project_dir(dir.path(), encoded, Some(&real_repo));
+        let mem = dir.path().join(".claude/memory/balakumar-dev");
+        std::fs::create_dir_all(&mem).unwrap();
+        std::fs::write(mem.join("x.md"), "site note").unwrap();
+
+        let ctx = Ctx { home: dir.path(), cwd: None };
+        let result = framework::run_scan(&ClaudeAdapter, &ctx).unwrap();
+        let item = result
+            .items
+            .iter()
+            .find(|i| i.category == "memory" && i.path.ends_with("memory/balakumar-dev/x.md"))
+            .expect("balakumar-dev gardener note must be scanned");
+        assert_eq!(
+            item.scope_id, encoded,
+            "a dot/dash-differing folder must map to the balakumar.dev project scope"
+        );
+        assert_eq!(item.name, "x", "the on-disk folder prefix must be stripped");
+    }
+
+    #[test]
+    fn normalize_basename_lowercases_and_maps_punctuation() {
+        // Unit-level guard for the matching key: lowercase + every non-alnum → '-',
+        // 1:1 (no dash collapsing), so both sides of a memory↔project match align.
+        assert_eq!(normalize_basename("BalaWarp"), "balawarp");
+        assert_eq!(normalize_basename("GTMShip-outreach"), "gtmship-outreach");
+        assert_eq!(normalize_basename("NotiPilot"), "notipilot");
+        assert_eq!(normalize_basename("balakumar.dev"), "balakumar-dev");
+        // Existing dashes, dots, underscores, and spaces all normalize alike; no
+        // collapsing of consecutive separators.
+        assert_eq!(normalize_basename("a.b_c d"), "a-b-c-d");
+        assert_eq!(normalize_basename("a--b"), "a--b");
     }
 
     #[test]
