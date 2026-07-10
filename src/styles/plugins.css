@@ -24,9 +24,50 @@
 .plugins-discover {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
 }
+
+/* ── Tab bar (Discover ⇄ Installed) ── */
+.plg-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.plg-tab {
+  appearance: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 13px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.plg-tab:hover { color: var(--text); background: transparent; border-color: transparent; }
+.plg-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.plg-tab.active:hover { border-color: var(--accent); }
+.plg-tab-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-mute);
+  background: var(--surface-3);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  min-width: 18px;
+  text-align: center;
+}
+.plg-tab.active .plg-tab-count { color: var(--accent); background: var(--accent-bg); }
 
 /* ── Toolbar ── */
 .plg-toolbar {
@@ -336,3 +377,160 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
+
+/* Undo (only present after an enable/disable flip). */
+.plg-toast-undo {
+  appearance: none;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+.plg-toast-undo:hover:not(:disabled) { background: var(--accent-bg-2); }
+.plg-toast-undo:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Installed view ── */
+.plg-installed-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 26px;
+}
+
+.plg-inst-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plg-inst-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 13px 16px;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+.plg-inst-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+  box-shadow: var(--sh-1);
+}
+
+.plg-inst-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.plg-inst-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.plg-inst-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+.plg-inst-state {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+}
+.plg-inst-state.off { color: var(--text-mute); background: var(--surface-4); }
+
+.plg-inst-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.plg-inst-sub code { font-family: var(--font-mono); color: var(--text-mute); }
+.plg-inst-dot { color: var(--text-mute); }
+.plg-inst-tok { color: var(--accent); font-family: var(--font-mono); font-weight: 650; }
+
+.plg-inst-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* Toggle switch (role=switch button). Never gated on the CLI — enable/disable
+   is a pure settings.json flip that works offline of the `claude` binary. */
+.plg-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.plg-toggle:hover:not(:disabled) { background: transparent; }
+.plg-toggle:disabled { opacity: 0.45; cursor: not-allowed; }
+.plg-toggle-track {
+  width: 40px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--surface-4);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.plg-toggle-knob {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  transition: transform 140ms ease, background 140ms ease;
+}
+.plg-toggle[aria-checked="true"] .plg-toggle-track {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+.plg-toggle[aria-checked="true"] .plg-toggle-knob {
+  transform: translateX(18px);
+  background: var(--ok);
+}
+.plg-toggle:focus-visible { outline: none; }
+.plg-toggle:focus-visible .plg-toggle-track {
+  border-color: var(--border-accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+/* Update / Uninstall — CLI-backed, so both disable when `claude` is absent. */
+.plg-inst-btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 60ms ease;
+}
+.plg-inst-btn:hover:not(:disabled) { border-color: var(--border-accent); background: var(--surface-3); }
+.plg-inst-btn:active:not(:disabled) { transform: translateY(1px); }
+.plg-inst-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.plg-inst-btn-danger { color: var(--crit); border-color: var(--crit-bg); }
+.plg-inst-btn-danger:hover:not(:disabled) { border-color: var(--crit); background: var(--crit-bg); color: var(--crit); }

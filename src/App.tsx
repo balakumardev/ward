@@ -135,10 +135,18 @@ export default function App() {
   // directly (no organizer re-scan — plugins are their own subsystem). The
   // mode is capability-gated inside Plugins.tsx (Codex has no plugin system),
   // mirroring App's unconditional Marketplace render.
+  // enable/disable is a surgical settings flip (returns a `plugin-enable`
+  // RestoreInfo for Undo); uninstall/marketplaceUpdate are CLI-backed and
+  // return a fresh scan. Restore reverses an enable/disable flip through the
+  // shared engine — plugins are Claude-only, so the harness is always 'claude'.
   const pluginsApi = {
     scan: () => api.pluginsScan(),
     install: (plugin: string, marketplace: string, scope: string) => api.pluginsInstall(plugin, marketplace, scope),
     marketplaceAdd: (src: string, scope: string) => api.pluginsMarketplaceAdd(src, scope),
+    setEnabled: (pluginKey: string, enabled: boolean) => api.pluginsSetEnabled(pluginKey, enabled),
+    uninstall: (plugin: string, scope: string) => api.pluginsUninstall(plugin, scope),
+    marketplaceUpdate: (name?: string) => api.pluginsMarketplaceUpdate(name),
+    restore: (info: RestoreInfo) => api.restore('claude', info),
     cliAvailable: () => api.pluginsCliAvailable(),
   };
 

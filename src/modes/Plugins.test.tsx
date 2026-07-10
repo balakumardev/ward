@@ -2,7 +2,7 @@ import { test, expect, vi } from 'vitest';
 import { render, fireEvent, waitFor } from '@solidjs/testing-library';
 import { Plugins } from './Plugins';
 import type { PluginsApi } from './Plugins';
-import type { PluginScan, ScanResult } from '../api';
+import type { PluginScan, RestoreInfo, ScanResult } from '../api';
 
 /** A PluginScan with a deliberate mix of states — one installed+enabled
  *  (fully catalogued) and one not-installed (discoverable) — plus two
@@ -37,13 +37,21 @@ function makeScan(over: Partial<PluginScan> = {}): PluginScan {
 }
 
 /** The api surface Plugins needs. `scan` re-reads the on-disk state; install /
- *  marketplaceAdd return a fresh PluginScan (the CLI-backed commands re-scan). */
+ *  marketplaceAdd / uninstall / marketplaceUpdate return a fresh PluginScan (the
+ *  CLI-backed commands re-scan); setEnabled is a surgical settings flip that
+ *  returns a `plugin-enable` RestoreInfo for Undo. */
 function makeApi(over: Partial<PluginsApi> = {}, scan = makeScan()): PluginsApi {
   return {
     scan: vi.fn(async () => scan),
     install: vi.fn(async () => makeScan()),
     marketplaceAdd: vi.fn(async () => makeScan()),
     cliAvailable: vi.fn(async () => scan.cliAvailable),
+    setEnabled: vi.fn(
+      async (): Promise<RestoreInfo> => ({ kind: 'plugin-enable', originalPath: '~/.claude/settings.json' }),
+    ),
+    uninstall: vi.fn(async () => makeScan()),
+    marketplaceUpdate: vi.fn(async () => makeScan()),
+    restore: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -132,4 +140,107 @@ test('cli-absent banner shows when cliAvailable is false and disables Install', 
   // Install needs the CLI, so its button is disabled while the CLI is absent.
   const installBtn = (await findByTestId('plugin-install')) as HTMLButtonElement;
   expect(installBtn.disabled).toBe(true);
+});
+
+// ── Task 11: Installed tab (enable/disable · uninstall · update) ──────────────
+
+/** Switch to the Installed tab and wait for its panel to mount. */
+async function openInstalled(byId: (id: string) => Promise<HTMLElement>, getId: (id: string) => HTMLElement) {
+  await byId('plugins-discover');
+  fireEvent.click(getId('plugins-tab-installed'));
+  await byId('plugins-installed');
+}
+
+test('installed tab toggles enable calls pluginsSetEnabled', async () => {
+  const api = makeApi();
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  // Only installed plugins list here — the fixture's code-formatter (enabled).
+  const toggle = await findByTestId('plugin-enable-toggle');
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(toggle);
+
+  await waitFor(() => expect(api.setEnabled).toHaveBeenCalledTimes(1));
+  // plugin_key is `${name}@${marketplace}`; toggling an enabled plugin sends false.
+  expect((api.setEnabled as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'code-formatter@claude-plugins-official', false,
+  ]);
+
+  // A reload toast surfaces (Ward can't reload Claude Code itself) with an Undo.
+  const toast = await findByTestId('plugin-reload-toast');
+  expect(toast.textContent).toMatch(/Disabled|reload-plugins|restart Claude Code/i);
+  await findByTestId('plugin-undo');
+});
+
+test('uninstall opens confirm modal then calls pluginsUninstall', async () => {
+  const api = makeApi();
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  const uninstallBtn = await findByTestId('plugin-uninstall');
+  fireEvent.click(uninstallBtn);
+
+  // Real in-app modal (WKWebView confirm() is a no-op) — role=dialog, aria-modal.
+  const dialog = await findByTestId('plugin-uninstall-confirm');
+  expect(dialog.getAttribute('role')).toBe('dialog');
+  expect(dialog.getAttribute('aria-modal')).toBe('true');
+  // Not called until the user confirms.
+  expect(api.uninstall).not.toHaveBeenCalled();
+
+  fireEvent.click(getByTestId('plugin-confirm-ok'));
+  await waitFor(() => expect(api.uninstall).toHaveBeenCalledTimes(1));
+  // Uninstall targets the plugin's own on-disk scope (fixture: 'user').
+  expect((api.uninstall as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['code-formatter', 'user']);
+});
+
+test('disabled plugin renders as disabled', async () => {
+  const scan = makeScan({
+    plugins: [
+      {
+        kind: 'plugin', name: 'code-formatter', marketplace: 'claude-plugins-official',
+        displayName: 'Code Formatter', description: 'Opinionated multi-language formatter.',
+        version: '2.1.0', source: { source: 'github', repo: 'anthropics/x' }, tags: [],
+        installed: true, enabled: false, scope: 'user',
+      },
+    ],
+  });
+  const api = makeApi({}, scan);
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  const toggle = await findByTestId('plugin-enable-toggle');
+  expect(toggle.getAttribute('aria-checked')).toBe('false');
+  // A textual "Disabled" state is shown alongside the off toggle.
+  expect(getByTestId('plugins-installed').textContent).toMatch(/Disabled/i);
+});
+
+test('enable toggle is NOT disabled when cliAvailable is false, but uninstall/update are', async () => {
+  const api = makeApi({}, makeScan({ cliAvailable: false }));
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  // Enable/disable is a pure settings flip — it must work without the CLI.
+  const toggle = (await findByTestId('plugin-enable-toggle')) as HTMLButtonElement;
+  expect(toggle.disabled).toBe(false);
+  // Uninstall + Update shell out to `claude`, so they're gated on the CLI.
+  expect((getByTestId('plugin-uninstall') as HTMLButtonElement).disabled).toBe(true);
+  expect((getByTestId('plugin-update') as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('installed empty-state shows when no plugins are installed', async () => {
+  const scan = makeScan({
+    plugins: [
+      {
+        kind: 'plugin', name: 'security-scanner', marketplace: 'claude-plugins-official',
+        displayName: 'Security Scanner', description: 'Scan configs.', version: '3.0.1',
+        source: { source: 'github', repo: 'anthropics/x' }, tags: [], installed: false, enabled: false,
+      },
+    ],
+  });
+  const api = makeApi({}, scan);
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+  await findByTestId('plugins-installed-empty');
+  expect(getByTestId('plugins-installed-empty').textContent).toMatch(/no plugins installed/i);
 });

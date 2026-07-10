@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
-import type { ComponentCounts, PluginEntry, PluginScan, ScanResult } from '../api';
+import type { ComponentCounts, PluginEntry, PluginScan, RestoreInfo, ScanResult } from '../api';
 import '../styles/plugins.css';
 
 /** Plan 28 — Plugins mode.
@@ -29,6 +29,19 @@ export interface PluginsApi {
   scan: () => Promise<PluginScan>;
   install: (plugin: string, marketplace: string, scope: string) => Promise<PluginScan>;
   marketplaceAdd: (src: string, scope: string) => Promise<PluginScan>;
+  /** Enable/disable an installed plugin (`plugin_key` = `name@marketplace`).
+   *  A surgical single-key flip in settings.json — works even without the CLI —
+   *  that returns a `plugin-enable` RestoreInfo so the toast can offer Undo. */
+  setEnabled: (pluginKey: string, enabled: boolean) => Promise<RestoreInfo>;
+  /** Uninstall an installed plugin from its scope (shells out to `claude`).
+   *  Returns a fresh PluginScan reflecting the removal. */
+  uninstall: (plugin: string, scope: string) => Promise<PluginScan>;
+  /** Update one marketplace (`name`) or every marketplace (`undefined`) from its
+   *  source (shells out to `claude`). Returns a fresh PluginScan. */
+  marketplaceUpdate: (name?: string) => Promise<PluginScan>;
+  /** Reverse a `plugin-enable` flip via the shared restore engine (App injects
+   *  the harness). Backs the toast's Undo affordance. */
+  restore: (info: RestoreInfo) => Promise<void>;
   /** Present for parity with the backend command; the authoritative flag is
    *  `PluginScan.cliAvailable`, which the mode reads from the scan directly. */
   cliAvailable?: () => Promise<boolean>;
@@ -92,21 +105,29 @@ export function Plugins(props: { scan: ScanResult; api: PluginsApi }) {
         </div>
       }
     >
-      <PluginsDiscover api={props.api} />
+      <PluginsBody api={props.api} />
     </Show>
   );
 }
 
-/** The Discover tab. (A tabbed shell with an Installed tab is added by a later
- *  task — for now Discover is the whole mode body.) */
-function PluginsDiscover(props: { api: PluginsApi }) {
-  const [scanRes, { mutate }] = createResource(() => props.api.scan());
+type Tab = 'discover' | 'installed';
 
+/** The tabbed mode body: a Discover ↔ Installed tab bar over a shared scan
+ *  resource. Discover browses/installs from marketplaces; Installed manages the
+ *  plugins already on disk (enable/disable · uninstall · update). Both share the
+ *  scope picker, CLI-absent banner, toast, and in-app confirm modal. */
+function PluginsBody(props: { api: PluginsApi }) {
+  const [scanRes, { mutate, refetch }] = createResource(() => props.api.scan());
+
+  const [tab, setTab] = createSignal<Tab>('discover');
   const [search, setSearch] = createSignal('');
   const [mpFilter, setMpFilter] = createSignal('all');
   const [scope, setScope] = createSignal<string>('user');
   const [addSrc, setAddSrc] = createSignal('');
   const [toast, setToast] = createSignal<string | null>(null);
+  // Set alongside the toast only after an enable/disable flip; drives the
+  // toast's Undo button. Cleared for every other (non-undoable) action.
+  const [undoInfo, setUndoInfo] = createSignal<RestoreInfo | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [dialog, setDialog] = createSignal<DialogState | null>(null);
 
@@ -131,6 +152,12 @@ function PluginsDiscover(props: { api: PluginsApi }) {
       );
     });
   });
+
+  // The Installed tab lists on-disk plugins only (independent of the Discover
+  // search/marketplace filters), newest catalog order preserved.
+  const installedPlugins = createMemo<PluginEntry[]>(() =>
+    (scanRes()?.plugins ?? []).filter((p) => p.installed),
+  );
 
   // ── In-app confirm modal (WKWebView's confirm() silently returns false) ──
   let dialogRef: HTMLDivElement | undefined;
@@ -193,9 +220,9 @@ function PluginsDiscover(props: { api: PluginsApi }) {
     try {
       const fresh = await props.api.install(p.name, p.marketplace, scope());
       mutate(fresh);
-      setToast('Installed — restart Claude Code or run /reload-plugins to apply.');
+      notify('Installed — restart Claude Code or run /reload-plugins to apply.');
     } catch (e) {
-      setToast(`Install failed: ${e instanceof Error ? e.message : String(e)}`);
+      notify(`Install failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -217,9 +244,92 @@ function PluginsDiscover(props: { api: PluginsApi }) {
       const fresh = await props.api.marketplaceAdd(src, scope());
       mutate(fresh);
       setAddSrc('');
-      setToast(`Added marketplace source "${src}".`);
+      notify(`Added marketplace source "${src}".`);
     } catch (e2) {
-      setToast(`Add failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
+      notify(`Add failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Show a toast, optionally with an Undo bound to a `plugin-enable` RestoreInfo.
+  // Every non-enable action passes no `undo`, which clears any stale Undo button.
+  function notify(msg: string, undo: RestoreInfo | null = null) {
+    setUndoInfo(undo);
+    setToast(msg);
+  }
+
+  // ── Installed-tab mutations ──
+  // Enable/disable is a pure settings.json flip — it works with or WITHOUT the
+  // CLI, so its control is never gated on `cliAvailable`. We re-scan afterward
+  // so the row reflects the new on-disk flag, and keep the RestoreInfo for Undo.
+  async function toggleEnabled(p: PluginEntry) {
+    const next = !p.enabled;
+    const key = `${p.name}@${p.marketplace}`;
+    setBusy(true);
+    try {
+      const info = await props.api.setEnabled(key, next);
+      await refetch();
+      notify(
+        `${next ? 'Enabled' : 'Disabled'} ${p.displayName} — restart Claude Code or run /reload-plugins to apply.`,
+        info,
+      );
+    } catch (e) {
+      notify(`${next ? 'Enable' : 'Disable'} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doUndo() {
+    const info = undoInfo();
+    if (!info) return;
+    setBusy(true);
+    try {
+      await props.api.restore(info);
+      await refetch();
+      notify('Reverted the enable/disable change.');
+    } catch (e) {
+      notify(`Undo failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Uninstall shells out to `claude`, so it's CLI-gated and confirmed in-app
+  // (WKWebView's confirm() is a no-op). It targets the plugin's own on-disk
+  // scope, falling back to the toolbar scope for any entry missing one.
+  async function requestUninstall(p: PluginEntry) {
+    const sc = p.scope ?? scope();
+    const ok = await askConfirm({
+      testid: 'plugin-uninstall-confirm',
+      title: 'Uninstall plugin',
+      message: `Uninstall ${p.displayName} (${p.name}@${p.marketplace}) from ${scopeLabel(sc)}? Ward will run \`claude plugin uninstall\`.`,
+      confirmLabel: 'Uninstall',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const fresh = await props.api.uninstall(p.name, sc);
+      mutate(fresh);
+      notify(`Uninstalled ${p.displayName} — restart Claude Code or run /reload-plugins to apply.`);
+    } catch (e) {
+      notify(`Uninstall failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Update refreshes the plugin's marketplace from source (CLI-backed). Not
+  // destructive, so no confirm modal — just the CLI gate.
+  async function requestUpdate(p: PluginEntry) {
+    setBusy(true);
+    try {
+      const fresh = await props.api.marketplaceUpdate(p.marketplace);
+      mutate(fresh);
+      notify(`Updated ${p.marketplace} — restart Claude Code or run /reload-plugins to apply.`);
+    } catch (e) {
+      notify(`Update failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -227,6 +337,44 @@ function PluginsDiscover(props: { api: PluginsApi }) {
 
   return (
     <div class="plugins-mode" data-testid="plugins-mode">
+      <div class="plg-tabs" data-testid="plugins-tabs" role="tablist" aria-label="Plugins views">
+        <button
+          type="button"
+          role="tab"
+          class="plg-tab"
+          classList={{ active: tab() === 'discover' }}
+          data-testid="plugins-tab-discover"
+          aria-selected={tab() === 'discover' ? 'true' : 'false'}
+          onClick={() => setTab('discover')}
+        >
+          Discover
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="plg-tab"
+          classList={{ active: tab() === 'installed' }}
+          data-testid="plugins-tab-installed"
+          aria-selected={tab() === 'installed' ? 'true' : 'false'}
+          onClick={() => setTab('installed')}
+        >
+          <span>Installed</span>
+          <span class="plg-tab-count" data-testid="plugins-installed-count">{installedPlugins().length}</span>
+        </button>
+      </div>
+
+      {/* Install/uninstall/update shell out to `claude`; enable/disable don't.
+          Shown on both tabs since either can attempt a CLI-backed action. */}
+      <Show when={scanRes() && !cliAvailable()}>
+        <div class="plg-cli-banner" data-testid="plugin-cli-banner">
+          <span class="plg-cli-icon" aria-hidden="true">⚠</span>
+          <span>
+            Install/uninstall/update need the Claude Code CLI on PATH; enable/disable still work.
+          </span>
+        </div>
+      </Show>
+
+      <Show when={tab() === 'discover'}>
       <div class="plugins-discover" data-testid="plugins-discover">
         <header class="plg-toolbar">
           <div class="plg-toolbar-row">
@@ -284,15 +432,6 @@ function PluginsDiscover(props: { api: PluginsApi }) {
             </button>
           </form>
         </header>
-
-        <Show when={scanRes() && !cliAvailable()}>
-          <div class="plg-cli-banner" data-testid="plugin-cli-banner">
-            <span class="plg-cli-icon" aria-hidden="true">⚠</span>
-            <span>
-              Install/uninstall need the Claude Code CLI on PATH; enable/disable still work.
-            </span>
-          </div>
-        </Show>
 
         <div class="plg-body">
           <Show
@@ -389,19 +528,131 @@ function PluginsDiscover(props: { api: PluginsApi }) {
           </Show>
         </div>
       </div>
+      </Show>
+
+      <Show when={tab() === 'installed'}>
+        <div class="plg-installed-view" data-testid="plugins-installed">
+          <Show
+            when={!scanRes.error}
+            fallback={<div class="plg-status err" data-testid="plugins-installed-error">Failed to read plugins: {String(scanRes.error)}</div>}
+          >
+            <Show
+              when={scanRes()}
+              fallback={<div class="plg-status" data-testid="plugins-installed-loading">Reading plugins…</div>}
+            >
+              <Show
+                when={installedPlugins().length > 0}
+                fallback={
+                  <div class="plg-status" data-testid="plugins-installed-empty">
+                    No plugins installed. Switch to Discover to browse and install from a marketplace.
+                  </div>
+                }
+              >
+                <div class="plg-inst-list">
+                  <For each={installedPlugins()}>
+                    {(p) => (
+                      <article class="plg-inst-row" data-testid="plugin-installed-row">
+                        <div class="plg-inst-main">
+                          <div class="plg-inst-head">
+                            <span class="plg-inst-name">{p.displayName}</span>
+                            <span class="plg-source" data-testid="plugin-source" title="Marketplace">{p.marketplace}</span>
+                            <Show when={p.version}><span class="plg-ver">v{p.version}</span></Show>
+                            <span
+                              class="plg-inst-state"
+                              classList={{ off: !p.enabled }}
+                              data-testid="plugin-installed-state"
+                            >
+                              {p.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </div>
+                          <div class="plg-inst-sub">
+                            <code>{p.name}</code>
+                            <Show when={p.componentCounts && componentSummary(p.componentCounts)}>
+                              <span class="plg-inst-dot" aria-hidden="true">·</span>
+                              <span>{componentSummary(p.componentCounts!)}</span>
+                            </Show>
+                            <Show when={p.alwaysOnTokens !== undefined}>
+                              <span class="plg-inst-dot" aria-hidden="true">·</span>
+                              <span><span class="plg-inst-tok">{fmt(p.alwaysOnTokens!)}</span> always-on tokens</span>
+                            </Show>
+                          </div>
+                        </div>
+                        <div class="plg-inst-actions">
+                          <button
+                            type="button"
+                            class="plg-toggle"
+                            role="switch"
+                            aria-checked={p.enabled ? 'true' : 'false'}
+                            aria-label={`${p.enabled ? 'Disable' : 'Enable'} ${p.displayName}`}
+                            data-testid="plugin-enable-toggle"
+                            disabled={busy()}
+                            title={p.enabled ? 'Disable plugin' : 'Enable plugin'}
+                            onClick={() => toggleEnabled(p)}
+                          >
+                            <span class="plg-toggle-track"><span class="plg-toggle-knob" /></span>
+                          </button>
+                          <button
+                            type="button"
+                            class="plg-inst-btn"
+                            data-testid="plugin-update"
+                            disabled={!cliAvailable() || busy()}
+                            title={cliAvailable() ? 'Update this marketplace from source' : 'Requires the Claude Code CLI on PATH'}
+                            onClick={() => requestUpdate(p)}
+                          >
+                            Update
+                          </button>
+                          <button
+                            type="button"
+                            class="plg-inst-btn plg-inst-btn-danger"
+                            data-testid="plugin-uninstall"
+                            disabled={!cliAvailable() || busy()}
+                            title={cliAvailable() ? 'Uninstall this plugin' : 'Requires the Claude Code CLI on PATH'}
+                            onClick={() => requestUninstall(p)}
+                          >
+                            Uninstall
+                          </button>
+                        </div>
+                      </article>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+          </Show>
+        </div>
+      </Show>
 
       {/* Transient notification. Ward can't reload Claude Code itself, so a
-          successful install ends here pointing at /reload-plugins. */}
+          successful install ends here pointing at /reload-plugins. Enable/disable
+          also surfaces an Undo bound to the returned RestoreInfo. */}
       <Show when={toast()} keyed>
         {(t) => (
           <div class="plg-toast" data-testid="plugin-reload-toast" role="status">
             <span class="plg-toast-msg">{t}</span>
-            <button class="plg-toast-x" data-testid="plugin-toast-dismiss" title="Dismiss" onClick={() => setToast(null)}>×</button>
+            <Show when={undoInfo()}>
+              <button
+                class="plg-toast-undo"
+                data-testid="plugin-undo"
+                disabled={busy()}
+                onClick={doUndo}
+              >
+                Undo
+              </button>
+            </Show>
+            <button
+              class="plg-toast-x"
+              data-testid="plugin-toast-dismiss"
+              title="Dismiss"
+              onClick={() => { setToast(null); setUndoInfo(null); }}
+            >
+              ×
+            </button>
           </div>
         )}
       </Show>
 
-      {/* In-app confirm modal — install & add both route through this. */}
+      {/* In-app confirm modal — install, add-marketplace & uninstall all route
+          through this (WKWebView's confirm() is a silent no-op). */}
       <Show when={dialog()} keyed>
         {(d) => (
           <div class="modal-overlay" data-testid="plugins-modal-overlay" onClick={() => resolveDialog(false)}>
