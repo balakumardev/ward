@@ -10,6 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod read;
+
 /// One curated setting definition — the metadata Ward shows for a single
 /// Claude Code `settings.json` (or `~/.claude.json`) key. Sourced from the
 /// bundled `settings-catalog.json`, never introspected from the harness.
