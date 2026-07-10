@@ -224,3 +224,60 @@ describe('MockStore plugins', () => {
     expect(after.marketplaces.length).toBe(before.marketplaces.length);
   });
 });
+
+describe('MockStore settings', () => {
+  it('catalog spans every editor branch + a managed and a claudeJson row', () => {
+    const s = new MockStore();
+    const rows = s.settingsCatalog();
+    const types = new Set(rows.map((r) => r.def.valueType));
+    // The four simple types + array + object are all present.
+    for (const t of ['bool', 'enum', 'number', 'string', 'array', 'object']) {
+      expect(types.has(t)).toBe(true);
+    }
+    // All five bespoke object editors are represented.
+    const editors = new Set(rows.filter((r) => r.def.valueType === 'object').map((r) => r.def.editor));
+    for (const e of ['permissions', 'hooks', 'env', 'sandbox', 'statusLine']) {
+      expect(editors.has(e)).toBe(true);
+    }
+    // A read-only managed row and a ~/.claude.json-routed row.
+    expect(rows.some((r) => r.def.managedOnly && r.sourceScope === 'managed')).toBe(true);
+    expect(rows.some((r) => r.def.targetFile === 'claudeJson')).toBe(true);
+    // A mix of set/unset.
+    expect(rows.some((r) => r.isSet)).toBe(true);
+    expect(rows.some((r) => !r.isSet)).toBe(true);
+  });
+
+  it('settingsSet marks the row set at user scope; undo restores it', () => {
+    const s = new MockStore();
+    const r = s.settingsSet('user', 'verbose', 'settings.json', true);
+    expect(r.kind).toBe('setting-write');
+    expect(r.originalPath).toBe('~/.claude/settings.json');
+    const set = s.settingsCatalog().find((x) => x.def.key === 'verbose')!;
+    expect(set.isSet).toBe(true);
+    expect(set.effective).toBe(true);
+    expect(set.sourceScope).toBe('user');
+    s.restore({ ...r });
+    expect(s.settingsCatalog().find((x) => x.def.key === 'verbose')!.isSet).toBe(false);
+  });
+
+  it('settingsUnset resets to default and routes claudeJson keys; undo restores', () => {
+    const s = new MockStore();
+    const r = s.settingsUnset('user', 'autoConnectIde', 'claudeJson');
+    expect(r.kind).toBe('setting-write');
+    expect(r.originalPath).toBe('~/.claude.json'); // target-file routing
+    const row = s.settingsCatalog().find((x) => x.def.key === 'autoConnectIde')!;
+    expect(row.isSet).toBe(false);
+    expect(row.sourceScope).toBe('default');
+    expect(row.effective).toBe(row.def.default); // false
+    s.restore({ ...r });
+    expect(s.settingsCatalog().find((x) => x.def.key === 'autoConnectIde')!.isSet).toBe(true);
+  });
+
+  it('schemaDiff + envList return the seeded samples', () => {
+    const s = new MockStore();
+    expect(s.settingsSchemaDiff().inSchemaNotCatalog).toContain('someNewKey');
+    const env = s.settingsEnvList();
+    expect(env.length).toBeGreaterThan(0);
+    expect(env.every((e) => e.name && e.description && e.category)).toBe(true);
+  });
+});

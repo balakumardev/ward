@@ -73,7 +73,7 @@ export interface ScanResult {
 }
 export interface Destination { scopeId: string; label: string; kind: string; }
 export interface RestoreInfo {
-  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert' | 'skill-create' | 'plugin-enable';
+  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert' | 'skill-create' | 'plugin-enable' | 'setting-write';
   originalPath: string;
   currentPath?: string | null;
   backupBytes?: number[] | null;
@@ -513,6 +513,60 @@ export interface PluginScan {
   cliAvailable: boolean;
 }
 
+// ── Plan 29 — Settings mode ─────────────────────────────────────────────
+
+/** One curated catalog record for a Claude Code `settings.json` key (mirrors
+ *  the Rust `SettingDef`). It carries the human explanation + render hints the
+ *  published JSON Schema lacks: `valueType` (`bool|enum|number|string|array|
+ *  object`) picks the inline editor; `enumValues` populates the dropdown for
+ *  enums; `editor` (`permissions|hooks|env|sandbox|statusLine|json`) names the
+ *  bespoke object editor; `targetFile` (`settings.json` | `claudeJson`) routes
+ *  the write to the correct file; `managedOnly` marks keys only valid in
+ *  managed-settings. `default` is the documented default (absent when none). */
+export interface SettingDef {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+  valueType: string;
+  default?: unknown;
+  enumValues: string[];
+  targetFile: string;
+  scopes: string[];
+  managedOnly: boolean;
+  minVersion?: string;
+  docsUrl?: string;
+  editor?: string;
+}
+
+/** A catalog def joined with its live state (mirrors the Rust `SettingRow`):
+ *  the effective value resolved across the scope chain (managed > local >
+ *  project > user), which `sourceScope` set it (`default` when unset), and
+ *  whether it is set anywhere. */
+export interface SettingRow {
+  def: SettingDef;
+  effective?: unknown;
+  sourceScope?: string;
+  isSet: boolean;
+}
+
+/** Result of `settings_schema_diff` (mirrors the Rust `SchemaDiff`) — the
+ *  schema-drift tripwire: keys the published schema lists that the catalog
+ *  lacks (add these), and keys the catalog curates that the schema omits. */
+export interface SchemaDiff {
+  inSchemaNotCatalog: string[];
+  inCatalogNotSchema: string[];
+}
+
+/** One curated environment-variable entry (mirrors the Rust `EnvVarDef`) —
+ *  descriptive metadata for the Settings env-var panel. The value itself is
+ *  written via the `env` object of `settings.json`, never collected here. */
+export interface EnvVarDef {
+  name: string;
+  description: string;
+  category: string;
+}
+
 export const api = {
   scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
@@ -631,4 +685,19 @@ export const api = {
     invokeOrThrow<PluginScan>('plugins_marketplace_add', { src, scope }),
   pluginsMarketplaceUpdate: (name?: string) =>
     invokeOrThrow<PluginScan>('plugins_marketplace_update', { name }),
+
+  // Plan 29 — Settings mode. `settingsCatalog` loads the curated catalog and
+  // resolves each key's effective value across the scope chain (no network);
+  // `settingsSet`/`settingsUnset` are surgical single-key writes to the routed
+  // file (`settings.json` | `claudeJson`) returning a `setting-write`
+  // RestoreInfo for byte-exact undo (unset = remove the key, never null/[]).
+  // `settingsSchemaDiff` is the user-triggered schema-drift tripwire (network);
+  // `settingsEnvList` is the curated env-var metadata table.
+  settingsCatalog: () => invokeOrThrow<SettingRow[]>('settings_catalog'),
+  settingsSet: (scope: string, key: string, targetFile: string, value: unknown) =>
+    invokeOrThrow<RestoreInfo>('settings_set', { scope, key, targetFile, value }),
+  settingsUnset: (scope: string, key: string, targetFile: string) =>
+    invokeOrThrow<RestoreInfo>('settings_unset', { scope, key, targetFile }),
+  settingsSchemaDiff: () => invokeOrThrow<SchemaDiff>('settings_schema_diff'),
+  settingsEnvList: () => invokeOrThrow<EnvVarDef[]>('settings_env_list'),
 };

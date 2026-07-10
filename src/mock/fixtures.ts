@@ -12,7 +12,7 @@
 import type {
   ScanResult, ScanResultSec, Finding, ServerSummary, DupFinding, BaselineDiff,
   BudgetBreakdown, Conversation, CostBreakdown, DistillResult, BackupStatus,
-  UsageSnapshot, MarketEntry, PluginScan,
+  UsageSnapshot, MarketEntry, PluginScan, SettingRow, SchemaDiff, EnvVarDef,
 } from '../api';
 
 // ── Codex harness scan ────────────────────────────────────────────────────
@@ -525,3 +525,178 @@ export const PLUGIN_SCAN: PluginScan = {
   ],
   cliAvailable: true,
 };
+
+// ── Settings mode (Plan 29) ───────────────────────────────────────────────
+// A representative catalog backing the dev:mock Settings UI. It intentionally
+// spans every editor branch so all of Settings.tsx is exercisable in a plain
+// browser: the four simple `valueType`s (bool / enum / number / string), an
+// array, and all five bespoke object editors (permissions / hooks / env /
+// sandbox / statusLine). State is a deliberate mix of set/unset across scopes,
+// plus a `managedOnly` read-only row (source `managed`) and a `claudeJson`-
+// routed row — so the source chip, the read-only managed path, and the
+// target-file routing are all visible. Values mirror the Rust `SettingRow`
+// wire shape (`{def, effective?, sourceScope?, isSet}`). The catalog is cloned
+// per read in the store so `set`/`unset` mutate real in-memory state.
+const DOCS = 'https://code.claude.com/docs/en/settings';
+const COMMON_SCOPES = ['user', 'project', 'local'];
+
+export const SETTINGS_CATALOG: SettingRow[] = [
+  // bool — UNSET, falls through to its default (source `default`).
+  {
+    def: {
+      key: 'verbose', label: 'Verbose output',
+      description: 'Show full command output and tool detail instead of the condensed default view.',
+      category: 'Output', valueType: 'bool', default: false,
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    isSet: false,
+  },
+  // enum — SET at user scope.
+  {
+    def: {
+      key: 'theme', label: 'Color theme',
+      description: 'The color theme for Claude Code’s terminal UI.',
+      category: 'Appearance', valueType: 'enum', default: 'dark',
+      enumValues: ['dark', 'light', 'dark-daltonized', 'light-daltonized', 'dark-ansi', 'light-ansi'],
+      targetFile: 'settings.json', scopes: COMMON_SCOPES, managedOnly: false, docsUrl: DOCS,
+    },
+    effective: 'dark', sourceScope: 'user', isSet: true,
+  },
+  // number — SET at project scope (differs from the documented default of 30).
+  {
+    def: {
+      key: 'cleanupPeriodDays', label: 'Chat retention (days)',
+      description: 'How many days to retain chat transcripts locally before cleanup.',
+      category: 'Privacy', valueType: 'number', default: 30,
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: 45, sourceScope: 'project', isSet: true,
+  },
+  // string — SET at user scope (no documented default → `default` omitted).
+  {
+    def: {
+      key: 'model', label: 'Default model',
+      description: 'The model alias or full ID Claude Code uses for the main loop.',
+      category: 'Model', valueType: 'string',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: 'claude-opus-4-8', sourceScope: 'user', isSet: true,
+  },
+  // array — SET at project scope.
+  {
+    def: {
+      key: 'enabledMcpjsonServers', label: 'Enabled .mcp.json servers',
+      description: 'Names of servers from project `.mcp.json` files that are approved to run.',
+      category: 'MCP', valueType: 'array', default: [],
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: ['context7', 'postman'], sourceScope: 'project', isSet: true,
+  },
+  // object (editor: permissions) — SET at user scope.
+  {
+    def: {
+      key: 'permissions', label: 'Permissions',
+      description: 'Tool permission rules (allow / ask / deny), the default mode, and extra readable directories.',
+      category: 'Permissions', valueType: 'object', editor: 'permissions',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: 'https://code.claude.com/docs/en/permissions',
+    },
+    effective: {
+      defaultMode: 'acceptEdits',
+      allow: ['Bash(git status)', 'Read(~/personal/**)'],
+      ask: [],
+      deny: ['Read(~/.ssh/**)'],
+      additionalDirectories: [],
+    },
+    sourceScope: 'user', isSet: true,
+  },
+  // object (editor: hooks) — UNSET (Edit… scaffolds from empty).
+  {
+    def: {
+      key: 'hooks', label: 'Hooks',
+      description: 'Shell commands the harness runs on lifecycle events (PreToolUse, PostToolUse, Stop, …).',
+      category: 'Hooks', valueType: 'object', editor: 'hooks',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: 'https://code.claude.com/docs/en/hooks',
+    },
+    isSet: false,
+  },
+  // object (editor: env) — SET at user scope.
+  {
+    def: {
+      key: 'env', label: 'Environment variables',
+      description: 'Environment variables applied to every Claude Code session and the shells it spawns.',
+      category: 'Environment', valueType: 'object', editor: 'env',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: { DISABLE_TELEMETRY: '1', BASH_DEFAULT_TIMEOUT_MS: '120000' },
+    sourceScope: 'user', isSet: true,
+  },
+  // object (editor: sandbox) — UNSET.
+  {
+    def: {
+      key: 'sandbox', label: 'Sandbox',
+      description: 'Filesystem and network allow / deny rules for the OS-level command sandbox.',
+      category: 'Sandbox', valueType: 'object', editor: 'sandbox',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    isSet: false,
+  },
+  // object (editor: statusLine) — SET at user scope.
+  {
+    def: {
+      key: 'statusLine', label: 'Status line',
+      description: 'A custom command whose output replaces the default status line at the bottom of the UI.',
+      category: 'Appearance', valueType: 'object', editor: 'statusLine',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: { type: 'command', command: '~/bin/ward-statusline.sh', padding: 0 },
+    sourceScope: 'user', isSet: true,
+  },
+  // managedOnly — SET in managed settings (renders read-only, source `managed`).
+  {
+    def: {
+      key: 'forceLoginMethod', label: 'Force login method',
+      description: 'Restrict sign-in to a single method for every user on this machine (enterprise-managed only).',
+      category: 'Enterprise', valueType: 'enum', enumValues: ['claudeai', 'console'],
+      targetFile: 'settings.json', scopes: ['managed'], managedOnly: true, docsUrl: DOCS,
+    },
+    effective: 'claudeai', sourceScope: 'managed', isSet: true,
+  },
+  // targetFile: claudeJson — a ~/.claude.json global-config-class key, SET at user scope.
+  {
+    def: {
+      key: 'autoConnectIde', label: 'Auto-connect IDE',
+      description: 'Automatically connect to a running IDE extension on startup without prompting.',
+      category: 'IDE', valueType: 'bool', default: false,
+      enumValues: [], targetFile: 'claudeJson', scopes: ['user'],
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: true, sourceScope: 'user', isSet: true,
+  },
+];
+
+// Sample schema-drift result for `settings_schema_diff` — one newly-published
+// key the catalog has no def for yet (the maintainer "add this" signal).
+export const SETTINGS_SCHEMA_DIFF: SchemaDiff = {
+  inSchemaNotCatalog: ['someNewKey'],
+  inCatalogNotSchema: [],
+};
+
+// A few curated env-var entries backing the Settings env-var panel, spanning
+// the real catalog's category labels (see src-tauri/src/settings/env.rs).
+export const SETTINGS_ENV_LIST: EnvVarDef[] = [
+  { name: 'ANTHROPIC_API_KEY', category: 'Authentication & Provider', description: 'API key sent as the X-Api-Key header; used instead of your Claude subscription login when set.' },
+  { name: 'ANTHROPIC_BASE_URL', category: 'Authentication & Provider', description: 'Override the API endpoint to route requests through a proxy or gateway.' },
+  { name: 'DISABLE_TELEMETRY', category: 'Telemetry & OpenTelemetry', description: 'Set to 1 to opt out of Statsig telemetry (does not affect OpenTelemetry export).' },
+  { name: 'BASH_DEFAULT_TIMEOUT_MS', category: 'Behavior & Limits', description: 'Default timeout, in milliseconds, applied to long-running Bash commands.' },
+  { name: 'CLAUDE_CODE_USE_BEDROCK', category: 'Feature Toggles', description: 'Set to 1 to route model calls through Amazon Bedrock instead of the Anthropic API.' },
+  { name: 'HTTP_PROXY', category: 'Config, Paths & Proxy', description: 'Route all outbound HTTP/HTTPS traffic through the given proxy server.' },
+];

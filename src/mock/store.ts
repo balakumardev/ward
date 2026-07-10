@@ -15,6 +15,7 @@ import type {
   DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult, GitLogEntry,
   McpConfig, EnvVar, MarketEntry, MarketPage, BuiltConfig, InstallResult, InstallTarget,
   SkillPreview, PluginScan, PluginEntry, MarketplaceRef,
+  SettingRow, SchemaDiff, EnvVarDef,
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
@@ -24,6 +25,9 @@ import {
   MARKET_SKILLS,
   MARKET_SKILL_BODIES,
   PLUGIN_SCAN,
+  SETTINGS_CATALOG,
+  SETTINGS_SCHEMA_DIFF,
+  SETTINGS_ENV_LIST,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -137,6 +141,9 @@ export class MockStore {
   // and marketplace-add mutate real in-memory state (the next scan reflects it).
   private pluginMarketplaces: MarketplaceRef[];
   private pluginEntries: PluginEntry[];
+  // Plan 29 — Settings mode. Cloned from the fixture so set/unset mutate real
+  // in-memory rows (the next catalog read reflects the change; undo reverts it).
+  private settings: SettingRow[];
 
   constructor() {
     this.claude = JSON.parse(scanClaudeRaw) as ScanResult;
@@ -144,6 +151,7 @@ export class MockStore {
     this.backup = initialBackupStatus();
     this.pluginMarketplaces = clone(PLUGIN_SCAN.marketplaces);
     this.pluginEntries = clone(PLUGIN_SCAN.plugins);
+    this.settings = clone(SETTINGS_CATALOG);
   }
 
   private scanFor(harness: string): ScanResult {
@@ -587,5 +595,60 @@ export class MockStore {
    *  in the mock — just returns a fresh scan. */
   marketplaceUpdatePlugins(_name?: string): PluginScan {
     return this.pluginScan();
+  }
+
+  // ── Settings (Plan 29) ──
+  /** The curated catalog joined with live effective values. Cloned per read so
+   *  Solid's createResource sees fresh identity after every set/unset. */
+  settingsCatalog(): SettingRow[] {
+    return this.settings.map(clone);
+  }
+
+  private locateSetting(key: string): number {
+    return this.settings.findIndex((r) => r.def.key === key);
+  }
+
+  private settingsPath(targetFile: string): string {
+    return targetFile === 'claudeJson' ? '~/.claude.json' : '~/.claude/settings.json';
+  }
+
+  /** Surgical single-key write (mirrors the real `set_setting`): mark the row
+   *  set with its new effective value and source `user`. Undo restores the row
+   *  verbatim. `_scope` is accepted for parity with the real command; the mock
+   *  always reflects the write as the winning `user`-scope value. */
+  settingsSet(_scope: string, key: string, targetFile: string, value: unknown): MockRestore {
+    const path = this.settingsPath(targetFile);
+    const idx = this.locateSetting(key);
+    if (idx < 0) return { kind: 'setting-write', originalPath: path, __undoId: '' };
+    const prev = clone(this.settings[idx]);
+    this.settings[idx] = { ...this.settings[idx], effective: value, sourceScope: 'user', isSet: true };
+    const undoId = this.newUndo(() => { this.settings[idx] = prev; });
+    return { kind: 'setting-write', originalPath: path, __undoId: undoId };
+  }
+
+  /** Reset a key to its default (mirrors the real `unset_setting` — remove the
+   *  key, never write null/[]): effective falls back to `def.default`, source
+   *  becomes `default`, `isSet` false. Undo restores the prior row verbatim. */
+  settingsUnset(_scope: string, key: string, targetFile: string): MockRestore {
+    const path = this.settingsPath(targetFile);
+    const idx = this.locateSetting(key);
+    if (idx < 0) return { kind: 'setting-write', originalPath: path, __undoId: '' };
+    const prev = clone(this.settings[idx]);
+    this.settings[idx] = {
+      ...this.settings[idx],
+      effective: this.settings[idx].def.default,
+      sourceScope: 'default',
+      isSet: false,
+    };
+    const undoId = this.newUndo(() => { this.settings[idx] = prev; });
+    return { kind: 'setting-write', originalPath: path, __undoId: undoId };
+  }
+
+  settingsSchemaDiff(): SchemaDiff {
+    return clone(SETTINGS_SCHEMA_DIFF);
+  }
+
+  settingsEnvList(): EnvVarDef[] {
+    return clone(SETTINGS_ENV_LIST);
   }
 }

@@ -91,6 +91,13 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'plugins_marketplace_add': await delay(180); return store.marketplaceAddPlugin(args.src, args.scope ?? 'user');
     case 'plugins_marketplace_update': await delay(180); return store.marketplaceUpdatePlugins(args.name);
 
+    // ── Settings (Plan 29) ──
+    case 'settings_catalog': await delay(120); return store.settingsCatalog();
+    case 'settings_set': await delay(40); return store.settingsSet(args.scope, args.key, args.targetFile, args.value);
+    case 'settings_unset': await delay(40); return store.settingsUnset(args.scope, args.key, args.targetFile);
+    case 'settings_schema_diff': await delay(220); return store.settingsSchemaDiff();
+    case 'settings_env_list': await delay(60); return store.settingsEnvList();
+
     default:
       throw new Error(`[ward-mock] unhandled command: ${cmd}`);
   }
