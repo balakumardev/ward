@@ -10,6 +10,7 @@ use crate::harness::adapters::codex::CodexAdapter;
 use crate::harness::adapters::codex_ops::CodexOps;
 use crate::harness::{framework, Ctx, HarnessOps, Registry};
 use crate::model::{Destination, HarnessItem, McpPolicy, PolicyVerdict, RestoreInfo, ScanResult, Scope};
+use crate::plugins::{catalog, cli, enable, PluginScan};
 use crate::sessions::{cost as session_cost, distill as session_distill, parse as session_parse, trim as session_trim};
 
 pub fn build_registry() -> Registry {
@@ -483,6 +484,125 @@ pub async fn marketplace_install(
     })
     .await
     .map_err(|e| WardError::Registry(format!("marketplace install task failed: {e}")))?
+}
+
+// ── Plugins mode (Plan 28) ─────────────────────────────────────────────
+
+/// Scan the on-disk `~/.claude/plugins/**` state into a [`PluginScan`]. This is
+/// the seam where the `cli_available` flag is injected: Task 3's
+/// [`catalog::scan_plugins`] takes it as a parameter (a deliberate forward-dep),
+/// and the command layer resolves it here via [`cli::claude_available`].
+///
+/// The four-file read + JSON parse is blocking I/O, so it runs on a worker
+/// thread via `spawn_blocking` to keep the event loop responsive (see the
+/// async-command gotcha in CLAUDE.md).
+#[tauri::command]
+pub async fn plugins_scan() -> Result<PluginScan, WardError> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<PluginScan, WardError> {
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        Ok(catalog::scan_plugins(&home, cli::claude_available()))
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins scan task failed: {e}")))?
+}
+
+/// Is a runnable `claude` binary present? Gates the Plugins mode's
+/// install/uninstall/marketplace actions in the frontend. Cheap (a cached
+/// `OnceLock` probe), but the first call resolves the binary off `PATH`, so it
+/// runs on a worker thread rather than the UI thread.
+#[tauri::command]
+pub async fn plugins_cli_available() -> Result<bool, WardError> {
+    tauri::async_runtime::spawn_blocking(|| -> Result<bool, WardError> { Ok(cli::claude_available()) })
+        .await
+        .map_err(|e| WardError::Plugin(format!("plugins cli-available task failed: {e}")))?
+}
+
+/// Enable/disable an installed plugin — a surgical single-key flip of
+/// `~/.claude/settings.json → enabledPlugins["<name>@<marketplace>"]` that
+/// preserves every other key. Returns a `plugin-enable` [`RestoreInfo`] for
+/// byte-verbatim Undo. From JS the args arrive as `{pluginKey, enabled}`
+/// (Tauri camelCase→snake_case).
+#[tauri::command]
+pub async fn plugins_set_enabled(
+    plugin_key: String,
+    enabled: bool,
+) -> Result<RestoreInfo, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<RestoreInfo, WardError> {
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        enable::set_plugin_enabled(&home, &plugin_key, enabled)
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins set-enabled task failed: {e}")))?
+}
+
+/// Install `<plugin>@<marketplace>` at `scope` via the `claude` CLI, then
+/// return a fresh [`PluginScan`] so the UI reflects the new state in one
+/// round-trip. `claude` is definitionally available after a successful install,
+/// so the re-scan passes `cli_available = true`.
+#[tauri::command]
+pub async fn plugins_install(
+    plugin: String,
+    marketplace: String,
+    scope: String,
+) -> Result<PluginScan, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<PluginScan, WardError> {
+        cli::install(&plugin, &marketplace, &scope)?;
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        Ok(catalog::scan_plugins(&home, true))
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins install task failed: {e}")))?
+}
+
+/// Uninstall `<plugin>` at `scope` via the `claude` CLI (non-interactive), then
+/// return a fresh [`PluginScan`].
+#[tauri::command]
+pub async fn plugins_uninstall(
+    plugin: String,
+    scope: String,
+) -> Result<PluginScan, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<PluginScan, WardError> {
+        cli::uninstall(&plugin, &scope)?;
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        Ok(catalog::scan_plugins(&home, true))
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins uninstall task failed: {e}")))?
+}
+
+/// Add a marketplace source (`owner/repo`, a URL, or a local path) at `scope`
+/// via the CLI, then return a fresh [`PluginScan`]. Rejects a blank `src` up
+/// front so the CLI never sees an empty argument.
+#[tauri::command]
+pub async fn plugins_marketplace_add(
+    src: String,
+    scope: String,
+) -> Result<PluginScan, WardError> {
+    if src.trim().is_empty() {
+        return Err(WardError::InvalidInput("marketplace source must not be empty".into()));
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<PluginScan, WardError> {
+        cli::marketplace_add(&src, &scope)?;
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        Ok(catalog::scan_plugins(&home, true))
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins marketplace-add task failed: {e}")))?
+}
+
+/// Update one marketplace (`Some(name)`) or every known marketplace (`None`)
+/// via the CLI, then return a fresh [`PluginScan`].
+#[tauri::command]
+pub async fn plugins_marketplace_update(
+    name: Option<String>,
+) -> Result<PluginScan, WardError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<PluginScan, WardError> {
+        cli::marketplace_update(name.as_deref())?;
+        let home = dirs::home_dir().ok_or_else(|| WardError::NotFound("home directory".into()))?;
+        Ok(catalog::scan_plugins(&home, true))
+    })
+    .await
+    .map_err(|e| WardError::Plugin(format!("plugins marketplace-update task failed: {e}")))?
 }
 
 // ── Security Scanner (Plan 05) ─────────────────────────────────────────
@@ -1372,5 +1492,23 @@ mod tests {
     fn parse_mcp_import_empty_errors() {
         assert!(matches!(parse_mcp_import("{}", None).unwrap_err(), WardError::InvalidInput(_)));
         assert!(matches!(parse_mcp_import(r#"{"mcpServers":{}}"#, None).unwrap_err(), WardError::InvalidInput(_)));
+    }
+
+    /// Task 7 wiring: the seven `plugins_*` commands are thin wrappers that
+    /// resolve `home` internally and delegate to the (already-tested) Task 3/5/6
+    /// `catalog`/`cli`/`enable` functions, so `cargo check` guards that they
+    /// compile + register. The ONE piece of new command-layer logic is the
+    /// empty-`src` guard in `plugins_marketplace_add`: it must reject a blank
+    /// source BEFORE spawning the `claude` CLI. The guard returns early (before
+    /// `spawn_blocking`), so this drives the future to completion with
+    /// `block_on` without ever shelling out.
+    #[test]
+    fn plugins_marketplace_add_rejects_empty_src() {
+        let err = tauri::async_runtime::block_on(plugins_marketplace_add(
+            "   ".to_string(),
+            "user".to_string(),
+        ))
+        .unwrap_err();
+        assert!(matches!(err, WardError::InvalidInput(_)));
     }
 }
