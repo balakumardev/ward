@@ -11,9 +11,9 @@ import '../styles/settings.css';
  * (which scope actually set it), and an inline editor picked by the setting's
  * `valueType`. Simple scalars (bool / enum / number / string) edit in place;
  * complex `array` / `object` settings open a modal editor — the generic array /
- * env / json editors plus the bespoke permissions / statusLine / sandbox
- * editors. Only the `hooks` object editor is still inert (a disabled "Edit…"
- * button that never opens), landing in a later task so its row never crashes.
+ * env / json editors plus the bespoke permissions / statusLine / sandbox /
+ * hooks editors. Every array/object row is now editable; only managed rows stay
+ * read-only.
  *
  * Ward writes the **user** scope only (`~/.claude/settings.json`, or
  * `~/.claude.json` for the handful of global-config keys — routed by the def's
@@ -47,9 +47,9 @@ export interface SettingsApi {
  *  project/local lands later without churn. */
 const SETTINGS_SCOPE = 'user';
 
-/** Object `editor` kinds that have a working modal editor. `hooks` is
- *  deliberately absent — it stays inert until Task 14. */
-const EDITABLE_OBJECT_EDITORS = ['env', 'json', 'permissions', 'statusLine', 'sandbox'];
+/** Object `editor` kinds that have a working modal editor. All object editors
+ *  are wired now — Task 14 added `hooks`, the last and most nested one. */
+const EDITABLE_OBJECT_EDITORS = ['env', 'json', 'permissions', 'statusLine', 'sandbox', 'hooks'];
 
 /** `permissions.defaultMode` options (Claude Code's permission modes). The empty
  *  choice leaves the key unset so it inherits from a broader scope. */
@@ -72,6 +72,43 @@ const SANDBOX_NET_FIELDS: { key: string; label: string; placeholder: string }[] 
   { key: 'allowedDomains', label: 'Allowed domains', placeholder: 'e.g. github.com, *.npmjs.org' },
   { key: 'deniedDomains', label: 'Denied domains', placeholder: 'e.g. uploads.github.com' },
 ];
+
+/** Claude Code's documented hook events — offered in the hooks editor's
+ *  "Add event" picker, in the order Claude Code lists them. A free-text field
+ *  alongside accepts any other event name, so a newly-added CC event (or a
+ *  custom one) works before Ward's list catches up. */
+const KNOWN_HOOK_EVENTS = [
+  'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Notification',
+  'Stop', 'SubagentStop', 'PreCompact', 'SessionStart', 'SessionEnd',
+];
+
+/** Editable working shape for the hooks editor: an ordered list of events, each
+ *  an ordered list of matcher-groups, each an ordered list of command entries.
+ *  `timeout` is held as the raw input string and only parsed to a number (or
+ *  omitted) at compose time — mirroring the number-input handling elsewhere.
+ *
+ *  Preserve-everything: Ward reads more than `type:"command"` hooks (its own
+ *  `scan_hooks` models `type:"http"` + `url`), so entries this editor can't edit
+ *  are carried opaquely and re-emitted verbatim — opening + saving must never
+ *  destroy them. `passthrough` holds a non-command entry as-is (the row renders
+ *  read-only). `orig` holds a command entry's source object so unknown extra
+ *  fields survive the round-trip (the composed `{type,command,timeout}` is merged
+ *  onto it). An entry has at most one of these set. */
+interface HookCmdDraft { command: string; timeout: string; passthrough?: unknown; orig?: Record<string, unknown> }
+interface HookGroupDraft { matcher: string; commands: HookCmdDraft[] }
+interface HookEventDraft { event: string; groups: HookGroupDraft[] }
+
+/** A compact read-only label for a preserved non-command hook entry (e.g.
+ *  `http → https://…`), shown so the user knows it exists and is kept as-is. */
+function passthroughLabel(v: unknown): string {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    const type = typeof o.type === 'string' ? o.type : 'hook';
+    const target = typeof o.url === 'string' ? o.url : typeof o.command === 'string' ? o.command : '';
+    return target ? `${type} → ${target}` : type;
+  }
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
 
 /** Human label for a target file — routes the "where does this write" caption. */
 function targetFileLabel(targetFile: string): string {
@@ -453,10 +490,10 @@ function SettingEditor(props: {
   const disabled = () => props.busy || managed();
   const eff = () => effectiveOf(props.row);
 
-  // Which complex-value rows have a working modal editor today: every `array`
-  // plus the object editors `env` (key/value), generic `json`, and the three
-  // bespoke editors `permissions` / `statusLine` / `sandbox`. Only `hooks`
-  // remains inert (Task 14); managed rows are never user-editable.
+  // Which complex-value rows have a working modal editor: every `array` plus the
+  // object editors `env` (key/value), generic `json`, and the bespoke editors
+  // `permissions` / `statusLine` / `sandbox` / `hooks`. Every array/object row
+  // is editable now; only managed rows are never user-editable.
   const canEditComplex = () =>
     !managed() &&
     (def().valueType === 'array' ||
@@ -468,9 +505,9 @@ function SettingEditor(props: {
         <Show when={def().valueType === 'number'} fallback={
           <Show when={def().valueType === 'string'} fallback={
             // array / object — an "Edit…" affordance that opens a modal editor
-            // for array / env / json / permissions / statusLine / sandbox rows;
-            // only the `hooks` editor and managed rows stay inert (a disabled
-            // button that never opens anything).
+            // for array / env / json / permissions / statusLine / sandbox / hooks
+            // rows; only managed rows stay inert (a disabled button that never
+            // opens anything).
             <Show
               when={canEditComplex()}
               fallback={
@@ -672,7 +709,7 @@ function EditorModal(props: {
 }) {
   const def = () => props.row.def;
   const d0 = def();
-  const mode: 'array' | 'env' | 'json' | 'permissions' | 'statusLine' | 'sandbox' =
+  const mode: 'array' | 'env' | 'json' | 'permissions' | 'statusLine' | 'sandbox' | 'hooks' =
     d0.valueType === 'array'
       ? 'array'
       : d0.editor === 'permissions'
@@ -681,9 +718,11 @@ function EditorModal(props: {
           ? 'statusLine'
           : d0.editor === 'sandbox'
             ? 'sandbox'
-            : d0.editor === 'env'
-              ? 'env'
-              : 'json';
+            : d0.editor === 'hooks'
+              ? 'hooks'
+              : d0.editor === 'env'
+                ? 'env'
+                : 'json';
 
   // A fresh shallow clone of the row's effective object (or {} when it isn't a
   // plain object) — the merge base for the bespoke editors so unmanaged keys
@@ -808,6 +847,161 @@ function EditorModal(props: {
     return out;
   }
 
+  // ── Hooks working state (event → matcher-group → command list) ──
+  // Seed every parseable event present in `row.effective` into an editable
+  // draft tree (so unknown-named events render as sections too). Non-array /
+  // malformed event values are skipped here and survive via the objBase() clone
+  // in composeHooks — nothing is ever dropped silently.
+  const seedHooks = (): HookEventDraft[] => {
+    const v = props.row.effective;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return [];
+    const out: HookEventDraft[] = [];
+    for (const [event, groupsVal] of Object.entries(v as Record<string, unknown>)) {
+      if (!Array.isArray(groupsVal)) continue;
+      const groups: HookGroupDraft[] = [];
+      for (const g of groupsVal) {
+        if (!g || typeof g !== 'object' || Array.isArray(g)) continue;
+        const go = g as Record<string, unknown>;
+        const matcher = typeof go.matcher === 'string' ? go.matcher : '';
+        const cmdsVal = Array.isArray(go.hooks) ? go.hooks : [];
+        const commands: HookCmdDraft[] = [];
+        for (const c of cmdsVal) {
+          if (!c || typeof c !== 'object' || Array.isArray(c)) continue;
+          const co = c as Record<string, unknown>;
+          // Editable only when it's a command hook with a string command; every
+          // other shape (http/url, or an unknown/malformed entry) is preserved
+          // verbatim as passthrough so a round-trip never drops it.
+          const isCommand = (co.type === undefined || co.type === 'command') && typeof co.command === 'string';
+          if (isCommand) {
+            const timeout = co.timeout === undefined || co.timeout === null ? '' : String(co.timeout);
+            commands.push({ command: co.command as string, timeout, orig: { ...co } });
+          } else {
+            commands.push({ command: '', timeout: '', passthrough: c });
+          }
+        }
+        groups.push({ matcher, commands });
+      }
+      out.push({ event, groups });
+    }
+    return out;
+  };
+  const [hookEvents, setHookEvents] = createSignal<HookEventDraft[]>(seedHooks());
+  // The "Add event" controls: a picker over the not-yet-present known events and
+  // a free-text field for any other event name (the field wins when non-empty).
+  const [hookPick, setHookPick] = createSignal('');
+  const [hookCustom, setHookCustom] = createSignal('');
+  const hookEventNames = () => hookEvents().map((e) => e.event);
+  const availableHookEvents = () => KNOWN_HOOK_EVENTS.filter((e) => !hookEventNames().includes(e));
+  // The select's live value: the user's pick when still available, else the first
+  // available known event (keeps the control coherent as events are added).
+  const effectiveHookPick = () => {
+    const avail = availableHookEvents();
+    const p = hookPick();
+    return p && avail.includes(p) ? p : (avail[0] ?? '');
+  };
+
+  // ── Immutable, position-indexed hook mutators (paired with <Index> rendering
+  //    so text inputs stay mounted and never lose focus mid-edit) ──
+  const updateHookEvent = (ei: number, fn: (e: HookEventDraft) => HookEventDraft) =>
+    setHookEvents(hookEvents().map((e, i) => (i === ei ? fn(e) : e)));
+  const removeHookEvent = (ei: number) => setHookEvents(hookEvents().filter((_, i) => i !== ei));
+  function addHookEvent() {
+    const custom = hookCustom().trim();
+    const name = custom || effectiveHookPick();
+    if (!name) return;
+    setHookCustom('');
+    setHookPick('');
+    if (hookEventNames().includes(name)) return; // never a duplicate section
+    // Seed a fresh event with one group + one empty command so the matcher and
+    // command inputs are immediately present (the common add-then-type flow).
+    setHookEvents([
+      ...hookEvents(),
+      { event: name, groups: [{ matcher: '', commands: [{ command: '', timeout: '' }] }] },
+    ]);
+  }
+  const addHookGroup = (ei: number) =>
+    updateHookEvent(ei, (e) => ({
+      ...e,
+      groups: [...e.groups, { matcher: '', commands: [{ command: '', timeout: '' }] }],
+    }));
+  const removeHookGroup = (ei: number, gi: number) =>
+    updateHookEvent(ei, (e) => ({ ...e, groups: e.groups.filter((_, i) => i !== gi) }));
+  const setHookMatcher = (ei: number, gi: number, matcher: string) =>
+    updateHookEvent(ei, (e) => ({
+      ...e,
+      groups: e.groups.map((g, i) => (i === gi ? { ...g, matcher } : g)),
+    }));
+  const addHookCommand = (ei: number, gi: number) =>
+    updateHookEvent(ei, (e) => ({
+      ...e,
+      groups: e.groups.map((g, i) =>
+        i === gi ? { ...g, commands: [...g.commands, { command: '', timeout: '' }] } : g,
+      ),
+    }));
+  const removeHookCommand = (ei: number, gi: number, ci: number) =>
+    updateHookEvent(ei, (e) => ({
+      ...e,
+      groups: e.groups.map((g, i) =>
+        i === gi ? { ...g, commands: g.commands.filter((_, k) => k !== ci) } : g,
+      ),
+    }));
+  const setHookCommandField = (ei: number, gi: number, ci: number, field: 'command' | 'timeout', val: string) =>
+    updateHookEvent(ei, (e) => ({
+      ...e,
+      groups: e.groups.map((g, i) =>
+        i === gi
+          ? { ...g, commands: g.commands.map((c, k) => (k === ci ? { ...c, [field]: val } : c)) }
+          : g,
+      ),
+    }));
+
+  // Compose the exact CC hooks shape. Start from a clone of the effective object
+  // so any unmanaged/malformed top-level key survives, then overwrite (or delete)
+  // each event we manage. Emptied structures cascade-omit: an empty command entry
+  // → dropped; a group with no (command or passthrough) entries → dropped; an
+  // event with no groups → deleted. An empty matcher is written as key-absence
+  // (CC accepts an absent matcher); a blank/NaN timeout is omitted; a present
+  // timeout is a number. Passthrough (non-command) entries are re-emitted
+  // verbatim in their original position, so a group/event that holds ONLY
+  // passthrough entries still survives; unknown fields on a command entry are
+  // preserved by merging the composed fields onto its original object.
+  function composeHooks(): Record<string, unknown> {
+    const out = objBase();
+    for (const ev of hookEvents()) {
+      const name = ev.event.trim();
+      if (!name) continue; // an object can't be keyed on an empty string
+      const groups: unknown[] = [];
+      for (const g of ev.groups) {
+        const cmds: unknown[] = [];
+        for (const c of g.commands) {
+          if (c.passthrough !== undefined) {
+            cmds.push(c.passthrough); // preserved verbatim (e.g. an http hook)
+            continue;
+          }
+          const command = c.command.trim();
+          if (!command) continue;
+          const entry: Record<string, unknown> = c.orig ? { ...c.orig } : {};
+          entry.type = 'command';
+          entry.command = command;
+          const t = c.timeout.trim();
+          const n = t === '' ? NaN : Number(t);
+          if (Number.isNaN(n)) delete entry.timeout;
+          else entry.timeout = n;
+          cmds.push(entry);
+        }
+        if (!cmds.length) continue;
+        const group: Record<string, unknown> = {};
+        const matcher = g.matcher.trim();
+        if (matcher) group.matcher = matcher;
+        group.hooks = cmds;
+        groups.push(group);
+      }
+      if (groups.length) out[name] = groups;
+      else delete out[name];
+    }
+    return out;
+  }
+
   // ── Env ops (an <Index> keeps the inputs mounted so typing never loses focus) ──
   const addPair = () => setPairs([...pairs(), { name: '', value: '' }]);
   const updatePair = (i: number, field: 'name' | 'value', v: string) =>
@@ -838,6 +1032,8 @@ function EditorModal(props: {
       void commit(composeStatusLine());
     } else if (mode === 'sandbox') {
       void commit(composeSandbox());
+    } else if (mode === 'hooks') {
+      void commit(composeHooks());
     } else {
       let parsed: unknown;
       try {
@@ -863,7 +1059,9 @@ function EditorModal(props: {
             ? 'Edit status line'
             : mode === 'sandbox'
               ? 'Edit sandbox'
-              : 'Edit JSON';
+              : mode === 'hooks'
+                ? 'Edit hooks'
+                : 'Edit JSON';
   const testid = () =>
     mode === 'array'
       ? 'setting-array-editor'
@@ -875,7 +1073,9 @@ function EditorModal(props: {
             ? 'setting-statusline-editor'
             : mode === 'sandbox'
               ? 'setting-sandbox-editor'
-              : 'setting-json-editor';
+              : mode === 'hooks'
+                ? 'setting-hooks-editor'
+                : 'setting-json-editor';
 
   // ── Modal a11y: Esc cancels, Tab is trapped, focus starts inside + restores ──
   let dialogRef: HTMLDivElement | undefined;
@@ -1067,6 +1267,179 @@ function EditorModal(props: {
                     />
                   )}
                 </For>
+              </div>
+            </div>
+          </Show>
+
+          {/* ── Hooks: event → matcher-group → command list (nested CC shape) ── */}
+          <Show when={mode === 'hooks'}>
+            <div class="set-hooks" data-testid="setting-hooks">
+              <Show
+                when={hookEvents().length > 0}
+                fallback={<p class="set-arr-empty">No hooks yet. Add an event below to attach a command.</p>}
+              >
+                <Index each={hookEvents()}>
+                  {(ev, ei) => (
+                    <section class="set-hooks-event" data-testid="hooks-event">
+                      <div class="set-hooks-event-head">
+                        <span class="set-hooks-event-name">{ev().event}</span>
+                        <button
+                          type="button"
+                          class="set-arr-rm"
+                          data-testid="hooks-remove-event"
+                          title="Remove this event and all its hooks"
+                          disabled={props.busy}
+                          onClick={() => removeHookEvent(ei)}
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <div class="set-hooks-groups">
+                        <Index each={ev().groups}>
+                          {(g, gi) => (
+                            <div class="set-hooks-group" data-testid="hooks-group">
+                              <div class="set-hooks-group-head">
+                                <label class="set-field set-hooks-matcher-field">
+                                  <span class="set-field-label">Matcher (optional)</span>
+                                  <input
+                                    class="set-text"
+                                    data-testid="hooks-matcher"
+                                    type="text"
+                                    placeholder="e.g. Bash or Edit|Write (blank = all)"
+                                    disabled={props.busy}
+                                    value={g().matcher}
+                                    onInput={(e) => setHookMatcher(ei, gi, e.currentTarget.value)}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  class="set-arr-rm set-hooks-group-rm"
+                                  data-testid="hooks-remove-group"
+                                  title="Remove this matcher group"
+                                  disabled={props.busy}
+                                  onClick={() => removeHookGroup(ei, gi)}
+                                >
+                                  ×
+                                </button>
+                              </div>
+
+                              <div class="set-hooks-cmds">
+                                <Index each={g().commands}>
+                                  {(c, ci) => (
+                                    <Show
+                                      when={c().passthrough === undefined}
+                                      fallback={
+                                        <div
+                                          class="set-hooks-passthrough"
+                                          data-testid="hooks-passthrough"
+                                          title="Ward's editor only edits command hooks — this entry is preserved exactly as-is."
+                                        >
+                                          <span class="set-hooks-passthrough-tag">preserved</span>
+                                          <span class="set-hooks-passthrough-label">{passthroughLabel(c().passthrough)}</span>
+                                        </div>
+                                      }
+                                    >
+                                      <div class="set-hooks-cmd" data-testid="hooks-command">
+                                        <input
+                                          class="set-text set-hooks-cmd-input"
+                                          data-testid="hooks-command-input"
+                                          type="text"
+                                          placeholder="Shell command, e.g. echo hi"
+                                          disabled={props.busy}
+                                          value={c().command}
+                                          onInput={(e) => setHookCommandField(ei, gi, ci, 'command', e.currentTarget.value)}
+                                        />
+                                        <input
+                                          class="set-number set-hooks-cmd-timeout"
+                                          data-testid="hooks-timeout"
+                                          type="number"
+                                          placeholder="timeout (s)"
+                                          title="Timeout in seconds (optional)"
+                                          disabled={props.busy}
+                                          value={c().timeout}
+                                          onInput={(e) => setHookCommandField(ei, gi, ci, 'timeout', e.currentTarget.value)}
+                                        />
+                                        <button
+                                          type="button"
+                                          class="set-arr-rm"
+                                          data-testid="hooks-command-remove"
+                                          title="Remove this command"
+                                          disabled={props.busy}
+                                          onClick={() => removeHookCommand(ei, gi, ci)}
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    </Show>
+                                  )}
+                                </Index>
+                                <button
+                                  type="button"
+                                  class="btn set-hooks-addcmd"
+                                  data-testid="hooks-add-command"
+                                  disabled={props.busy}
+                                  onClick={() => addHookCommand(ei, gi)}
+                                >
+                                  + Add command
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </Index>
+                        <button
+                          type="button"
+                          class="btn set-hooks-addgroup"
+                          data-testid="hooks-add-group"
+                          disabled={props.busy}
+                          onClick={() => addHookGroup(ei)}
+                        >
+                          + Add matcher group
+                        </button>
+                      </div>
+                    </section>
+                  )}
+                </Index>
+              </Show>
+
+              {/* Add an event: pick a known one or type any custom name. */}
+              <div class="set-hooks-addevent" data-testid="hooks-addevent">
+                <select
+                  class="set-enum"
+                  data-testid="hooks-add-event-select"
+                  disabled={props.busy || availableHookEvents().length === 0}
+                  value={effectiveHookPick()}
+                  onChange={(e) => setHookPick(e.currentTarget.value)}
+                >
+                  <For each={availableHookEvents()}>{(e) => <option value={e}>{e}</option>}</For>
+                  <Show when={availableHookEvents().length === 0}>
+                    <option value="" disabled>All known events added</option>
+                  </Show>
+                </select>
+                <input
+                  class="set-text set-hooks-custom"
+                  data-testid="hooks-add-event-custom"
+                  type="text"
+                  placeholder="or a custom event name"
+                  disabled={props.busy}
+                  value={hookCustom()}
+                  onInput={(e) => setHookCustom(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addHookEvent();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  class="btn set-hooks-addevent-btn"
+                  data-testid="hooks-add-event"
+                  disabled={props.busy || (!hookCustom().trim() && !effectiveHookPick())}
+                  onClick={addHookEvent}
+                >
+                  Add event
+                </button>
               </div>
             </div>
           </Show>

@@ -283,7 +283,7 @@ test('managed row editor is read-only with an indicator and no reset', async () 
   expect(row.querySelector('[data-testid="setting-reset"]')).toBeNull();
 });
 
-test('array/env/json + bespoke permissions/statusLine/sandbox rows are editable; hooks stays inert', async () => {
+test('array/env/json + bespoke permissions/statusLine/sandbox/hooks rows are all editable', async () => {
   const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={makeApi()} />);
   await findByTestId('settings-mode');
 
@@ -299,18 +299,13 @@ test('array/env/json + bespoke permissions/statusLine/sandbox rows are editable;
   const jsonEdit = rowByKey(container, 'worktree').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
   expect(jsonEdit.disabled).toBe(false);
 
-  // The bespoke permissions/statusLine/sandbox editors ship in Task 13 → enabled.
-  for (const key of ['permissions', 'statusLine', 'sandbox']) {
+  // The bespoke permissions/statusLine/sandbox editors ship in Task 13, and the
+  // hooks editor ships in Task 14 → all enabled now (no inert object rows remain).
+  for (const key of ['permissions', 'statusLine', 'sandbox', 'hooks']) {
     const edit = rowByKey(container, key).querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
     expect(edit, `${key} Edit… should exist`).toBeTruthy();
     expect(edit.disabled, `${key} Edit… should be enabled`).toBe(false);
   }
-
-  // hooks is the last bespoke editor → still inert (a disabled Edit… button)
-  // until Task 14 (no crash, no editor).
-  const hooksEdit = rowByKey(container, 'hooks').querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
-  expect(hooksEdit).toBeTruthy();
-  expect(hooksEdit.disabled).toBe(true);
 });
 
 // ── Task 12: array + env + JSON object editors ───────────────────────────────
@@ -510,12 +505,285 @@ test('sandbox editor composes the nested filesystem/network object (omits empty 
   ]);
 });
 
-test('hooks editor stays inert (its Edit… button is still disabled)', async () => {
-  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={makeApi()} />);
+// ── Task 14: bespoke hooks editor (event → matcher-group → command list) ─────
+
+/** Open the hooks editor modal for the `hooks` row and return it. */
+async function openHooksEditor(
+  container: HTMLElement,
+  findByTestId: (id: string) => Promise<HTMLElement>,
+): Promise<HTMLElement> {
+  const row = await waitFor(() => rowByKey(container, 'hooks'));
+  fireEvent.click(row.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+  return findByTestId('setting-hooks-editor');
+}
+
+/** Add a known event via the picker (select + Add event button). */
+function addHookEvent(modal: HTMLElement, event: string) {
+  const select = modal.querySelector('[data-testid="hooks-add-event-select"]') as HTMLSelectElement;
+  fireEvent.change(select, { target: { value: event } });
+  fireEvent.click(modal.querySelector('[data-testid="hooks-add-event"]') as HTMLButtonElement);
+}
+
+/** The event `<section>` whose heading names `event`. */
+function hookEventSection(modal: HTMLElement, event: string): HTMLElement {
+  const sections = Array.from(modal.querySelectorAll('[data-testid="hooks-event"]'));
+  const found = sections.find((s) => s.textContent?.includes(event));
+  if (!found) throw new Error(`no hooks-event section for "${event}"`);
+  return found as HTMLElement;
+}
+
+const setCalls = (api: SettingsApi) => (api.set as ReturnType<typeof vi.fn>).mock.calls;
+
+test('hooks editor adds an event+matcher+command and saves the correct nested object', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
   await findByTestId('settings-mode');
 
-  const hooksEdit = (await waitFor(() => rowByKey(container, 'hooks')))
-    .querySelector('[data-testid="setting-edit"]') as HTMLButtonElement;
-  expect(hooksEdit).toBeTruthy();
-  expect(hooksEdit.disabled).toBe(true);
+  const modal = await openHooksEditor(container, findByTestId);
+  // Empty hooks row → no event sections yet.
+  expect(modal.querySelectorAll('[data-testid="hooks-event"]').length).toBe(0);
+
+  // Add PreToolUse; its seeded group exposes a matcher + one command input.
+  addHookEvent(modal, 'PreToolUse');
+  const section = await waitFor(() => hookEventSection(modal, 'PreToolUse'));
+  fireEvent.input(section.querySelector('[data-testid="hooks-matcher"]') as HTMLInputElement, {
+    target: { value: 'Bash' },
+  });
+  fireEvent.input(section.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'echo hi' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // Exact documented shape; no timeout key (it was left blank).
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo hi' }] }] },
+  ]);
+});
+
+test('hooks editor with a timeout includes it as a number', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  addHookEvent(modal, 'PostToolUse');
+  const section = await waitFor(() => hookEventSection(modal, 'PostToolUse'));
+  fireEvent.input(section.querySelector('[data-testid="hooks-matcher"]') as HTMLInputElement, {
+    target: { value: 'Write' },
+  });
+  fireEvent.input(section.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'prettier --write $CLAUDE_FILE' },
+  });
+  fireEvent.input(section.querySelector('[data-testid="hooks-timeout"]') as HTMLInputElement, {
+    target: { value: '30' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // timeout is written as a number, not the raw input string.
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    { PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'prettier --write $CLAUDE_FILE', timeout: 30 }] }] },
+  ]);
+});
+
+test('hooks editor preserves an unmanaged/pre-existing event when editing another', async () => {
+  const catalog = makeCatalog();
+  // Seed a pre-existing SessionStart hook (matcher absent, as CC allows).
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  hooks.effective = { SessionStart: [{ hooks: [{ type: 'command', command: 'echo start' }] }] };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  // The seeded SessionStart event renders as a section.
+  expect(modal.querySelectorAll('[data-testid="hooks-event"]').length).toBe(1);
+
+  // Add and fill a new PreToolUse event, leaving SessionStart untouched.
+  addHookEvent(modal, 'PreToolUse');
+  const section = await waitFor(() => hookEventSection(modal, 'PreToolUse'));
+  fireEvent.input(section.querySelector('[data-testid="hooks-matcher"]') as HTMLInputElement, {
+    target: { value: 'Edit' },
+  });
+  fireEvent.input(section.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'echo edited' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // SessionStart survives the round-trip; PreToolUse is added alongside it.
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    {
+      SessionStart: [{ hooks: [{ type: 'command', command: 'echo start' }] }],
+      PreToolUse: [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'echo edited' }] }],
+    },
+  ]);
+});
+
+test('hooks editor removing a command omits the emptied group and event', async () => {
+  const catalog = makeCatalog();
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  hooks.effective = { Stop: [{ hooks: [{ type: 'command', command: 'echo bye' }] }] };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  const section = hookEventSection(modal, 'Stop');
+  // Remove the only command → its group has nothing, so the event drops entirely.
+  fireEvent.click(section.querySelector('[data-testid="hooks-command-remove"]') as HTMLButtonElement);
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // Emptied structures cascade-omit: no commands → no group → no event → {}.
+  expect(setCalls(api)[0]).toEqual(['user', 'hooks', 'settings.json', {}]);
+});
+
+test('hooks editor removing one matcher group keeps the other', async () => {
+  const catalog = makeCatalog();
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  hooks.effective = {
+    PreToolUse: [
+      { matcher: 'X', hooks: [{ type: 'command', command: 'a' }] },
+      { matcher: 'Y', hooks: [{ type: 'command', command: 'b' }] },
+    ],
+  };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  const section = hookEventSection(modal, 'PreToolUse');
+  expect(section.querySelectorAll('[data-testid="hooks-group"]').length).toBe(2);
+  // Remove the first group (matcher X).
+  fireEvent.click(section.querySelector('[data-testid="hooks-remove-group"]') as HTMLButtonElement);
+  await waitFor(() => expect(section.querySelectorAll('[data-testid="hooks-group"]').length).toBe(1));
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    { PreToolUse: [{ matcher: 'Y', hooks: [{ type: 'command', command: 'b' }] }] },
+  ]);
+});
+
+test('hooks editor preserves an http (non-command) hook untouched while editing a command event', async () => {
+  const catalog = makeCatalog();
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  // An http-only event Ward reads (scan_hooks models type:http+url) plus a normal
+  // command event. Opening + saving must NOT destroy the http hook.
+  hooks.effective = {
+    PostToolUse: [{ hooks: [{ type: 'http', url: 'https://x/y' }] }],
+    PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo hi' }] }],
+  };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  // The http-only event renders read-only (a "preserved" chip; no command input).
+  const httpSection = hookEventSection(modal, 'PostToolUse');
+  expect(httpSection.querySelector('[data-testid="hooks-passthrough"]')).toBeTruthy();
+  expect(httpSection.querySelector('[data-testid="hooks-command-input"]')).toBeNull();
+
+  // Edit only the command event.
+  const cmdSection = hookEventSection(modal, 'PreToolUse');
+  fireEvent.input(cmdSection.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'echo hi2' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // The http hook survives verbatim; the command edit lands.
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    {
+      PostToolUse: [{ hooks: [{ type: 'http', url: 'https://x/y' }] }],
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo hi2' }] }],
+    },
+  ]);
+});
+
+test('hooks editor preserves an http hook interleaved with a command in one matcher-group', async () => {
+  const catalog = makeCatalog();
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  hooks.effective = {
+    PreToolUse: [{
+      matcher: 'Bash',
+      hooks: [
+        { type: 'command', command: 'echo a' },
+        { type: 'http', url: 'https://hook/z' },
+      ],
+    }],
+  };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  const section = hookEventSection(modal, 'PreToolUse');
+  // One editable command + one preserved (http) chip in the same group.
+  expect(section.querySelectorAll('[data-testid="hooks-command-input"]').length).toBe(1);
+  expect(section.querySelectorAll('[data-testid="hooks-passthrough"]').length).toBe(1);
+
+  fireEvent.input(section.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'echo a2' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  // Both entries survive, in their original order (command edited, http verbatim).
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    {
+      PreToolUse: [{
+        matcher: 'Bash',
+        hooks: [
+          { type: 'command', command: 'echo a2' },
+          { type: 'http', url: 'https://hook/z' },
+        ],
+      }],
+    },
+  ]);
+});
+
+test('hooks editor preserves unknown extra fields on a command entry', async () => {
+  const catalog = makeCatalog();
+  const hooks = catalog.find((r) => r.def.key === 'hooks')!;
+  hooks.effective = {
+    Stop: [{ hooks: [{ type: 'command', command: 'echo x', timeout: 5, retries: 3 }] }],
+  };
+  hooks.isSet = true;
+  hooks.sourceScope = 'user';
+  const api = makeApi({}, catalog);
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const modal = await openHooksEditor(container, findByTestId);
+  const section = hookEventSection(modal, 'Stop');
+  // Edit only the command text; timeout + the unknown `retries` field must survive.
+  fireEvent.input(section.querySelector('[data-testid="hooks-command-input"]') as HTMLInputElement, {
+    target: { value: 'echo y' },
+  });
+
+  fireEvent.click(modal.querySelector('[data-testid="settings-editor-save"]') as HTMLButtonElement);
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect(setCalls(api)[0]).toEqual([
+    'user', 'hooks', 'settings.json',
+    { Stop: [{ hooks: [{ type: 'command', command: 'echo y', timeout: 5, retries: 3 }] }] },
+  ]);
 });
