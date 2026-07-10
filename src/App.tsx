@@ -8,6 +8,7 @@ import { BudgetWithPicker } from './modes/Budget';
 import { Sessions } from './modes/Sessions';
 import { Backups } from './modes/Backups';
 import { Marketplace } from './modes/Marketplace';
+import { Plugins } from './modes/Plugins';
 import { api, isTauri, TauriUnavailableError } from './api';
 import type { HarnessItem, InstallTarget, MarketEntry, McpConfig, McpPolicy as McpPolicyType, RestoreInfo } from './api';
 
@@ -128,6 +129,19 @@ export default function App() {
     previewSkill: (entry: MarketEntry) => api.marketplacePreviewSkill(entry),
   };
 
+  // Plan 28 — Plugins bridge. A thin pass-through: `scan` reads the three
+  // on-disk Claude Code plugin files; install / marketplaceAdd shell out to the
+  // `claude` CLI and return a FRESH PluginScan, which the Plugins mode applies
+  // directly (no organizer re-scan — plugins are their own subsystem). The
+  // mode is capability-gated inside Plugins.tsx (Codex has no plugin system),
+  // mirroring App's unconditional Marketplace render.
+  const pluginsApi = {
+    scan: () => api.pluginsScan(),
+    install: (plugin: string, marketplace: string, scope: string) => api.pluginsInstall(plugin, marketplace, scope),
+    marketplaceAdd: (src: string, scope: string) => api.pluginsMarketplaceAdd(src, scope),
+    cliAvailable: () => api.pluginsCliAvailable(),
+  };
+
   return (
     <Shell
       active={mode()}
@@ -178,7 +192,11 @@ export default function App() {
                 <Show when={mode() === 'sessions'} fallback={
                   <Show when={mode() === 'backups'} fallback={
                     <Show when={mode() === 'marketplace'} fallback={
-                      <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                      <Show when={mode() === 'plugins'} fallback={
+                        <div style={{ padding: '16px', color: 'var(--text-dim)' }}>Coming in a later plan.</div>
+                      }>
+                        <Plugins scan={result()} api={pluginsApi} />
+                      </Show>
                     }>
                       <Marketplace scan={result()} api={marketApi} />
                     </Show>
