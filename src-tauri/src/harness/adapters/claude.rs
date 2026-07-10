@@ -254,6 +254,7 @@ fn scan_skills(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                     movable: true, deletable: true, locked: false,
                     effective: None,
             mcp_config: None,
+            modified_ms: None,
                 });
             }
         }
@@ -282,6 +283,7 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
                     movable: false, deletable: false, locked: true,
                     effective: None,
             mcp_config: None,
+            modified_ms: None,
                 });
             }
             // Legacy/explicit ~/.claude/memory (only when it actually exists).
@@ -308,6 +310,7 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
                         movable: false, deletable: false, locked: true,
                         effective: None,
             mcp_config: None,
+            modified_ms: None,
                     });
                 }
             }
@@ -321,6 +324,7 @@ fn scan_memories(scope: &Scope, home: &Path, paths: &ScopePaths) -> Vec<HarnessI
                         movable: false, deletable: false, locked: true,
                         effective: None,
             mcp_config: None,
+            modified_ms: None,
                     });
                 }
             }
@@ -456,6 +460,7 @@ fn mcp_item(name: &str, source: &Path, scope: &Scope, server_config: &serde_json
         movable: true, deletable: true, locked: false,
         effective: None,
         mcp_config: Some(server_config.clone()),
+        modified_ms: None,
     }.with_description(desc)
 }
 
@@ -547,6 +552,7 @@ fn scan_configs(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             movable: false, deletable: false, locked: true,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -623,6 +629,7 @@ fn scan_hooks(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                         movable: false, deletable: false, locked: true,
                         effective: None,
                         mcp_config: Some(detail),
+                        modified_ms: None,
                     });
                 }
             }
@@ -698,6 +705,7 @@ fn scan_settings(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
                         "value": value,
                         "source": source,
                     })),
+                    modified_ms: None,
                 });
             }
         }
@@ -753,6 +761,7 @@ fn scan_plugins(home: &Path) -> Vec<HarnessItem> {
             movable: false, deletable: false, locked: true,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         });
     }
     // Stable order: enabled first, then alphabetical, so the list doesn't
@@ -796,6 +805,15 @@ fn scan_sessions(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             crate::sessions::parse::SESSION_HEAD_CAP,
         )
         .unwrap_or_else(|| stem.clone());
+        // File mtime ≈ last-activity time — a session .jsonl is appended to on
+        // every turn. Carried on the item so the Sessions list can sort
+        // newest-first across all project scopes.
+        let modified_ms = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64);
         items.push(HarnessItem {
             category: "session".into(),
             scope_id: scope.id.clone(),
@@ -805,8 +823,12 @@ fn scan_sessions(scope: &Scope, paths: &ScopePaths) -> Vec<HarnessItem> {
             movable: false, deletable: false, locked: true,
             effective: None,
             mcp_config: None,
+            modified_ms,
         });
     }
+    // Newest-first within the scope; the frontend does the final global sort
+    // once every scope's sessions are concatenated.
+    items.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
     items
 }
 
@@ -853,6 +875,7 @@ fn scan_md_dir(
             locked: false,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         }.with_description(fm.get("description").cloned().unwrap_or_default()));
     }
 }
@@ -1372,6 +1395,38 @@ mod tests {
         names.sort();
         assert_eq!(names, vec!["alpha", "beta"]);
         assert!(items.iter().all(|i| i.locked));
+    }
+
+    #[test]
+    fn scan_sessions_sorts_latest_first() {
+        // The list must come back newest-first (by file mtime), regardless of
+        // the order read_dir yields entries in.
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let encoded = "-mtime-project";
+        make_project_dir(dir.path(), encoded, None);
+        let pdir = dir.path().join(".claude").join("projects").join(encoded);
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        // Write three sessions and stamp deliberately out-of-order mtimes.
+        for (file, offset) in [("old.jsonl", 0u64), ("new.jsonl", 200), ("mid.jsonl", 100)] {
+            let p = pdir.join(file);
+            fs::write(&p, "{}\n").unwrap();
+            std::fs::File::options().write(true).open(&p).unwrap()
+                .set_modified(base + Duration::from_secs(offset)).unwrap();
+        }
+        let scope = Scope {
+            id: encoded.into(),
+            kind: "project".into(),
+            label: "mtime".into(),
+            root: pdir.display().to_string(),
+        };
+        let paths = ScopePaths::for_scope(dir.path(), &scope);
+        let items = scan_sessions(&scope, &paths);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["new", "mid", "old"], "sessions must be newest-first");
+        // modified_ms is populated and strictly descending.
+        assert!(items[0].modified_ms.unwrap() > items[1].modified_ms.unwrap());
+        assert!(items[1].modified_ms.unwrap() > items[2].modified_ms.unwrap());
     }
 
     #[test]

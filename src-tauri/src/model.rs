@@ -61,6 +61,12 @@ pub struct HarnessItem {
     /// frontend to call `mcp_check_policy`. `None` for non-MCP items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<serde_json::Value>,
+    /// Last-modified time of the underlying file, in milliseconds since the
+    /// UNIX epoch, when known. Populated for `session` items so the Sessions
+    /// list can sort newest-first; other categories leave it `None`.
+    /// Serializes as `modifiedMs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,6 +195,7 @@ mod tests {
             locked: false,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         };
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("\"scopeId\":\"global\""));

@@ -1133,6 +1133,7 @@ mod tests {
             path: p1.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
             mcp_config: None,
+            modified_ms: None,
         };
         let item2 = HarnessItem {
             category: "memory".into(), scope_id: "global".into(),
@@ -1140,6 +1141,7 @@ mod tests {
             path: p2.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
             mcp_config: None,
+            modified_ms: None,
         };
         let info1 = ops.delete_item(&ctx, &item1, &[]).unwrap();
         let info2 = ops.delete_item(&ctx, &item2, &[]).unwrap();
@@ -1175,6 +1177,7 @@ mod tests {
             path: p1.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
             mcp_config: None,
+            modified_ms: None,
         };
         let item2 = HarnessItem {
             category: "memory".into(), scope_id: "global".into(),
@@ -1182,6 +1185,7 @@ mod tests {
             path: p2.display().to_string(),
             movable: true, deletable: true, locked: false, effective: None,
             mcp_config: None,
+            modified_ms: None,
         };
         // Direct invocation of the impls (commands::bulk/bulk_restore
         // are pub functions, but they require `dirs::home_dir()` — for
@@ -1241,6 +1245,7 @@ mod tests {
                 movable: false, deletable: false, locked: false,
                 effective: None,
                 mcp_config: Some(serde_json::json!({"command":"gh"})),
+                modified_ms: None,
             },
             HarnessItem {
                 category: "mcp".into(), scope_id: "global".into(),
@@ -1249,6 +1254,7 @@ mod tests {
                 movable: false, deletable: false, locked: false,
                 effective: None,
                 mcp_config: Some(serde_json::json!({"command":"gh"})),
+                modified_ms: None,
             },
         ];
         let servers = vec!["github".to_string(), "github".to_string()];

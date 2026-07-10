@@ -55,6 +55,10 @@ export interface HarnessItem {
   /** Plan 04 — server config (command/args/url) for MCP items. Undefined
    *  for non-MCP items. Used by `mcpCheckPolicy` to render badges. */
   mcpConfig?: unknown;
+  /** Last-modified time (ms since the UNIX epoch) of the underlying file,
+   *  when known. Populated for session items so the Sessions list sorts
+   *  newest-first; omitted for other categories. */
+  modifiedMs?: number;
 }
 export interface ScanResult {
   harnessId: string; categories: Category[]; scopes: Scope[];

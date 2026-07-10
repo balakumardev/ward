@@ -487,6 +487,7 @@ sandbox_mode = \"read-only\"
             locked: false,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         }
     }
 
@@ -609,6 +610,7 @@ sandbox_mode = \"read-only\"
             path: skill_dir.display().to_string(),
             movable: false, deletable: true, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         };
         let info = CodexOps.delete_item(&ctx, &item, &[]).unwrap();
         assert_eq!(info.kind, "file");
@@ -632,6 +634,7 @@ sandbox_mode = \"read-only\"
             path: mem.display().to_string(),
             movable: false, deletable: true, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         };
         let info = CodexOps.delete_item(&ctx, &item, &[]).unwrap();
         assert!(!mem.exists());

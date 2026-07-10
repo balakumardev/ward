@@ -81,6 +81,23 @@ function makeApi(convo: Conversation = CONVO): SessionsApi {
   };
 }
 
+test('sessions list is ordered newest-first by modifiedMs', () => {
+  const scan = {
+    harness: 'claude',
+    items: [
+      { category: 'session', scopeId: 'p', name: 'oldest', path: '/x/a.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 100 },
+      { category: 'session', scopeId: 'p', name: 'newest', path: '/x/b.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 300 },
+      { category: 'session', scopeId: 'p', name: 'middle', path: '/x/c.jsonl',
+        movable: false, deletable: false, locked: true, modifiedMs: 200 },
+    ],
+  } as unknown as ScanResult;
+  const { getAllByTestId } = render(() => <Sessions scan={scan} api={makeApi()} />);
+  const order = getAllByTestId('sessions-row').map((r) => r.getAttribute('data-path'));
+  expect(order).toEqual(['/x/b.jsonl', '/x/c.jsonl', '/x/a.jsonl']);
+});
+
 test('renders tool-call, tool-result, and thinking blocks with their real text', async () => {
   const { getByTestId, findByTestId } = render(() => (
     <Sessions scan={SCAN} api={makeApi()} />

@@ -279,6 +279,7 @@ mod tests {
             locked: false,
             effective: None,
             mcp_config: Some(cfg),
+            modified_ms: None,
         }
     }
 

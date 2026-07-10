@@ -815,6 +815,7 @@ mod tests {
             locked: false,
             effective: None,
             mcp_config: None,
+            modified_ms: None,
         }
     }
 

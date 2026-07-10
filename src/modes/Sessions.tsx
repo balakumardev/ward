@@ -178,7 +178,12 @@ export function Sessions(props: { scan: ScanResult; api: SessionsApi }) {
   // surfaced via `bundle` from the scan but we show them collapsed
   // here — only the parent session is meaningful for browsing.
   const sessionItems = createMemo<HarnessItem[]>(() =>
-    props.scan.items.filter((i) => i.category === 'session')
+    props.scan.items
+      .filter((i) => i.category === 'session')
+      // Newest-first across every project scope. `.filter` already returned a
+      // fresh array, so sorting it in place does not mutate the scan result.
+      // Sessions without a known mtime sort last (fall back to 0).
+      .sort((a, b) => (b.modifiedMs ?? 0) - (a.modifiedMs ?? 0))
   );
 
   const [selectedPath, setSelectedPath] = createSignal<string>(sessionItems()[0]?.path ?? '');

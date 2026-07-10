@@ -272,6 +272,7 @@ fn scan_config(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
                 path: cfg_path.display().to_string(),
                 movable: false, deletable: false, locked: false,
                 effective: None, mcp_config: None,
+                modified_ms: None,
             });
             let _ = bytes;
         }
@@ -352,6 +353,7 @@ fn push_config_file(items: &mut Vec<HarnessItem>, scope: &Scope,
         path: path.display().to_string(),
         movable: false, deletable: false, locked: true,
         effective: None, mcp_config: None,
+        modified_ms: None,
     });
 }
 
@@ -368,6 +370,7 @@ fn build_config_toml_item(scope: &Scope, path: &Path) -> Option<HarnessItem> {
         path: path.display().to_string(),
         movable: false, deletable: false, locked: true,
         effective: None, mcp_config: None,
+        modified_ms: None,
     })
 }
 
@@ -408,6 +411,7 @@ fn scan_memories(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: path.display().to_string(),
             movable: false, deletable: true, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -468,6 +472,7 @@ fn scan_skills(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
                 path: skill_dir.display().to_string(),
                 movable: false, deletable: true, locked: false,
                 effective: None, mcp_config: None,
+                modified_ms: None,
             });
             let last = items.last_mut().unwrap();
             last.description = markdown_description(&content);
@@ -536,6 +541,7 @@ fn scan_mcp_servers(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
                 movable: false, deletable: true, locked: false,
                 effective: None,
                 mcp_config: Some(json),
+                modified_ms: None,
             }
         })
         .collect()
@@ -577,6 +583,7 @@ fn scan_profiles(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
                 path: cfg_path.display().to_string(),
                 movable: false, deletable: false, locked: false,
                 effective: None, mcp_config: None,
+                modified_ms: None,
             }
         })
         .collect()
@@ -603,6 +610,7 @@ fn scan_rules(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: path.display().to_string(),
             movable: false, deletable: true, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -658,6 +666,7 @@ fn scan_plugins(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: plugin_dir.display().to_string(),
             movable: false, deletable: false, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -712,6 +721,7 @@ fn scan_sessions(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: index_path.display().to_string(),
             movable: false, deletable: false, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     let entries = match std::fs::read_dir(&root) { Ok(e) => e, Err(_) => return items };
@@ -737,6 +747,7 @@ fn scan_sessions(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: path.display().to_string(),
             movable: false, deletable: false, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -767,6 +778,7 @@ fn scan_history(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
         path: path.display().to_string(),
         movable: false, deletable: false, locked: false,
         effective: None, mcp_config: None,
+        modified_ms: None,
     }]
 }
 
@@ -790,6 +802,7 @@ fn scan_shell_snapshots(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: path.display().to_string(),
             movable: false, deletable: false, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
@@ -834,6 +847,7 @@ fn scan_runtime(scope: &Scope, ctx: &Ctx) -> Vec<HarnessItem> {
             path: path.display().to_string(),
             movable: false, deletable: false, locked: false,
             effective: None, mcp_config: None,
+            modified_ms: None,
         });
     }
     items
