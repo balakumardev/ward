@@ -47,13 +47,16 @@ export interface PluginsApi {
   cliAvailable?: () => Promise<boolean>;
 }
 
-/** Install / add scopes accepted by `claude plugin … --scope <scope>`
- *  (see `plugins/cli.rs`). */
-const SCOPES = [
-  { id: 'user', label: 'User · ~/.claude' },
-  { id: 'project', label: 'Project · .claude' },
-  { id: 'local', label: 'Local · .claude/settings.local.json' },
-] as const;
+/** Plan 28 — every plugin action is fixed to USER scope (`~/.claude`). The
+ *  CLI's `--scope project|local` is cwd-relative, but Ward's Plugins mode has no
+ *  project/cwd context (a Finder-launched app runs with cwd `/`), and
+ *  enable/disable + the scan only ever read/write the user `settings.json`, so
+ *  project/local actions would target the wrong place. Project/local support is
+ *  a documented follow-up (needs a project picker + `current_dir` + per-scope
+ *  settings read/write); the Rust arg builders already accept a scope string, so
+ *  it lands without churn. */
+const PLUGIN_SCOPE = 'user';
+const PLUGIN_SCOPE_LABEL = 'User · ~/.claude';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
@@ -119,14 +122,14 @@ type Tab = 'discover' | 'installed';
 /** The tabbed mode body: a Discover ↔ Installed tab bar over a shared scan
  *  resource. Discover browses/installs from marketplaces; Installed manages the
  *  plugins already on disk (enable/disable · uninstall · update). Both share the
- *  scope picker, CLI-absent banner, toast, and in-app confirm modal. */
+ *  CLI-absent banner, toast, and in-app confirm modal, and every mutating action
+ *  runs at the fixed user scope (see `PLUGIN_SCOPE`). */
 function PluginsBody(props: { api: PluginsApi }) {
   const [scanRes, { mutate, refetch }] = createResource(() => props.api.scan());
 
   const [tab, setTab] = createSignal<Tab>('discover');
   const [search, setSearch] = createSignal('');
   const [mpFilter, setMpFilter] = createSignal('all');
-  const [scope, setScope] = createSignal<string>('user');
   const [addSrc, setAddSrc] = createSignal('');
   const [toast, setToast] = createSignal<string | null>(null);
   // Set alongside the toast only after an enable/disable flip; drives the
@@ -139,7 +142,6 @@ function PluginsBody(props: { api: PluginsApi }) {
   // (pre-load) as available so the toolbar isn't briefly disabled on first paint.
   const cliAvailable = () => scanRes()?.cliAvailable ?? true;
   const marketplaces = () => scanRes()?.marketplaces ?? [];
-  const scopeLabel = (id: string) => SCOPES.find((s) => s.id === id)?.label ?? id;
 
   const filtered = createMemo<PluginEntry[]>(() => {
     const s = scanRes();
@@ -230,14 +232,14 @@ function PluginsBody(props: { api: PluginsApi }) {
     const ok = await askConfirm({
       testid: 'plugin-install-confirm',
       title: 'Install plugin',
-      message: `Install ${p.displayName} (${p.name}@${p.marketplace}) into ${scopeLabel(scope())}?`,
+      message: `Install ${p.displayName} (${p.name}@${p.marketplace}) into ${PLUGIN_SCOPE_LABEL}?`,
       confirmLabel: 'Install',
       tone: 'info',
     });
     if (!ok) return;
     setBusy(true);
     try {
-      const fresh = await props.api.install(p.name, p.marketplace, scope());
+      const fresh = await props.api.install(p.name, p.marketplace, PLUGIN_SCOPE);
       mutate(fresh);
       notify('Installed — restart Claude Code or run /reload-plugins to apply.');
     } catch (e) {
@@ -254,14 +256,14 @@ function PluginsBody(props: { api: PluginsApi }) {
     const ok = await askConfirm({
       testid: 'plugin-add-confirm',
       title: 'Add marketplace',
-      message: `Add marketplace source "${src}" (${scopeLabel(scope())})? Ward will run \`claude plugin marketplace add\`.`,
+      message: `Add marketplace source "${src}" (${PLUGIN_SCOPE_LABEL})? Ward will run \`claude plugin marketplace add\`.`,
       confirmLabel: 'Add',
       tone: 'info',
     });
     if (!ok) return;
     setBusy(true);
     try {
-      const fresh = await props.api.marketplaceAdd(src, scope());
+      const fresh = await props.api.marketplaceAdd(src, PLUGIN_SCOPE);
       mutate(fresh);
       setAddSrc('');
       notify(`Added marketplace source "${src}".`);
@@ -317,21 +319,20 @@ function PluginsBody(props: { api: PluginsApi }) {
   }
 
   // Uninstall shells out to `claude`, so it's CLI-gated and confirmed in-app
-  // (WKWebView's confirm() is a no-op). It targets the plugin's own on-disk
-  // scope, falling back to the toolbar scope for any entry missing one.
+  // (WKWebView's confirm() is a no-op). Always targets the fixed user scope
+  // (see `PLUGIN_SCOPE`) — Ward's Plugins mode has no project/cwd context.
   async function requestUninstall(p: PluginEntry) {
-    const sc = p.scope ?? scope();
     const ok = await askConfirm({
       testid: 'plugin-uninstall-confirm',
       title: 'Uninstall plugin',
-      message: `Uninstall ${p.displayName} (${p.name}@${p.marketplace}) from ${scopeLabel(sc)}? Ward will run \`claude plugin uninstall\`.`,
+      message: `Uninstall ${p.displayName} (${p.name}@${p.marketplace}) from ${PLUGIN_SCOPE_LABEL}? Ward will run \`claude plugin uninstall\`.`,
       confirmLabel: 'Uninstall',
       tone: 'danger',
     });
     if (!ok) return;
     setBusy(true);
     try {
-      const fresh = await props.api.uninstall(p.name, sc);
+      const fresh = await props.api.uninstall(p.name, PLUGIN_SCOPE);
       mutate(fresh);
       notify(`Uninstalled ${p.displayName} — restart Claude Code or run /reload-plugins to apply.`);
     } catch (e) {
@@ -358,12 +359,15 @@ function PluginsBody(props: { api: PluginsApi }) {
 
   return (
     <div class="plugins-mode" data-testid="plugins-mode">
+      {/* Only the active tabpanel is mounted, so the tabs carry NO
+          `aria-controls` (it would dangle at an id that isn't in the DOM). The
+          a11y link runs the other way instead: each panel's `aria-labelledby`
+          points back at its always-present tab button. */}
       <div class="plg-tabs" data-testid="plugins-tabs" role="tablist" aria-label="Plugins views">
         <button
           type="button"
           role="tab"
           id="plg-tab-discover"
-          aria-controls="plg-panel-discover"
           class="plg-tab"
           classList={{ active: tab() === 'discover' }}
           data-testid="plugins-tab-discover"
@@ -376,7 +380,6 @@ function PluginsBody(props: { api: PluginsApi }) {
           type="button"
           role="tab"
           id="plg-tab-installed"
-          aria-controls="plg-panel-installed"
           class="plg-tab"
           classList={{ active: tab() === 'installed' }}
           data-testid="plugins-tab-installed"
@@ -421,17 +424,6 @@ function PluginsBody(props: { api: PluginsApi }) {
                 <For each={marketplaces()}>{(m) => <option value={m.name}>{m.name}</option>}</For>
               </select>
             </label>
-            <label class="plg-field">
-              <span class="plg-field-label">Install scope</span>
-              <select
-                class="plg-select"
-                data-testid="plugins-scope-pick"
-                value={scope()}
-                onChange={(e) => setScope(e.currentTarget.value)}
-              >
-                <For each={SCOPES}>{(s) => <option value={s.id}>{s.label}</option>}</For>
-              </select>
-            </label>
             <label class="plg-field plg-field-grow">
               <span class="plg-field-label">Search</span>
               <input
@@ -462,6 +454,9 @@ function PluginsBody(props: { api: PluginsApi }) {
               Add marketplace
             </button>
           </form>
+          <p class="plg-scope-note" data-testid="plugins-scope-note">
+            Install, add, and uninstall are managed at user scope · <code>~/.claude</code>
+          </p>
         </header>
 
         <div class="plg-body">
@@ -633,10 +628,10 @@ function PluginsBody(props: { api: PluginsApi }) {
                             class="plg-inst-btn"
                             data-testid="plugin-update"
                             disabled={!cliAvailable() || busy()}
-                            title={cliAvailable() ? 'Update this marketplace from source' : 'Requires the Claude Code CLI on PATH'}
+                            title={cliAvailable() ? `Update the whole ${p.marketplace} marketplace from source (refreshes every plugin in it, not just this one)` : 'Requires the Claude Code CLI on PATH'}
                             onClick={() => requestUpdate(p)}
                           >
-                            Update
+                            Update marketplace
                           </button>
                           <button
                             type="button"

@@ -132,6 +132,17 @@ test('install opens in-app confirm modal then calls pluginsInstall', async () =>
   expect(toast.textContent).toMatch(/restart Claude Code|reload-plugins/i);
 });
 
+test('no scope picker is shown; a fixed user-scope note is present instead', async () => {
+  // Fix 1: project/local scopes are cwd-relative and meaningless for a
+  // Finder-launched app (cwd `/`), so the picker is removed and every action is
+  // fixed to user scope — a subtle caption says so.
+  const { findByTestId, queryByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={makeApi()} />);
+  await findByTestId('plugins-discover');
+  expect(queryByTestId('plugins-scope-pick')).toBeNull();
+  const note = await findByTestId('plugins-scope-note');
+  expect(note.textContent).toMatch(/user scope|~\/\.claude/i);
+});
+
 test('cli-absent banner shows when cliAvailable is false and disables Install', async () => {
   const api = makeApi({}, makeScan({ cliAvailable: false }));
   const { findByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
@@ -245,7 +256,35 @@ test('uninstall opens confirm modal then calls pluginsUninstall', async () => {
 
   fireEvent.click(getByTestId('plugin-confirm-ok'));
   await waitFor(() => expect(api.uninstall).toHaveBeenCalledTimes(1));
-  // Uninstall targets the plugin's own on-disk scope (fixture: 'user').
+  // Uninstall is fixed to user scope (Ward's Plugins mode has no project/cwd context).
+  expect((api.uninstall as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['code-formatter', 'user']);
+});
+
+test('uninstall stays fixed to user scope even when the on-disk scope differs', async () => {
+  // The Fix-1 behaviour: Ward's Plugins mode has no project/cwd context, so
+  // uninstall must ALWAYS target user scope — never the plugin's on-disk scope
+  // (which could be project/local from an install done outside Ward). This
+  // guards against a regression back to the old `p.scope ?? scope()` path.
+  const scan = makeScan({
+    plugins: [
+      {
+        kind: 'plugin', name: 'code-formatter', marketplace: 'claude-plugins-official',
+        displayName: 'Code Formatter', description: 'fmt.', version: '2.1.0',
+        source: { source: 'github', repo: 'anthropics/x' }, tags: [],
+        installed: true, enabled: true, scope: 'project',
+      },
+    ],
+  });
+  const api = makeApi({}, scan);
+  const { findByTestId, getByTestId } = render(() => <Plugins scan={makeHostScan(true)} api={api} />);
+  await openInstalled(findByTestId, getByTestId);
+
+  fireEvent.click(await findByTestId('plugin-uninstall'));
+  await findByTestId('plugin-uninstall-confirm');
+  fireEvent.click(getByTestId('plugin-confirm-ok'));
+
+  await waitFor(() => expect(api.uninstall).toHaveBeenCalledTimes(1));
+  // 'user', NOT the on-disk 'project'.
   expect((api.uninstall as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(['code-formatter', 'user']);
 });
 

@@ -167,6 +167,17 @@
 .plg-add-btn:active:not(:disabled) { transform: translateY(1px); }
 .plg-add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* User-scope note — plugin actions are fixed to ~/.claude (no project/local). */
+.plg-scope-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+.plg-scope-note code {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
 /* ── CLI-absent banner ── */
 .plg-cli-banner {
   display: flex;
