@@ -254,6 +254,72 @@ mod tests {
         );
     }
 
+    /// The curated catalog (Task 3) must be internally valid, cover the full
+    /// documented key set (≥100 defs), and match the docs on a set of anchor
+    /// keys spanning every value type and both target files.
+    #[test]
+    fn catalog_is_comprehensive_and_valid() {
+        let cat = load_catalog();
+        assert!(
+            validate_catalog(&cat).is_ok(),
+            "bundled catalog must validate: {:?}",
+            validate_catalog(&cat)
+        );
+        assert!(
+            cat.defs.len() >= 100,
+            "catalog must cover the full documented key set (≥100 defs); got {}",
+            cat.defs.len()
+        );
+
+        let by_key = |k: &str| -> &SettingDef {
+            cat.defs
+                .iter()
+                .find(|d| d.key == k)
+                .unwrap_or_else(|| panic!("catalog is missing the '{k}' def"))
+        };
+
+        // Every category a def uses must appear in the category rail.
+        let cats: std::collections::HashSet<&str> =
+            cat.categories.iter().map(String::as_str).collect();
+        for d in &cat.defs {
+            assert!(
+                cats.contains(d.category.as_str()),
+                "def '{}' uses category '{}' not listed in `categories`",
+                d.key,
+                d.category
+            );
+        }
+
+        // number + documented default.
+        let cleanup = by_key("cleanupPeriodDays");
+        assert_eq!(cleanup.value_type, "number");
+        assert_eq!(cleanup.default, Some(json!(30)));
+
+        // enum with the documented value set.
+        let theme = by_key("theme");
+        assert_eq!(theme.value_type, "enum");
+        assert!(theme.enum_values.iter().any(|v| v == "dark"));
+        assert!(theme.enum_values.iter().any(|v| v == "light"));
+
+        // object with the permissions editor.
+        let perms = by_key("permissions");
+        assert_eq!(perms.value_type, "object");
+        assert_eq!(perms.editor.as_deref(), Some("permissions"));
+
+        // object with the hooks editor.
+        let hooks = by_key("hooks");
+        assert_eq!(hooks.value_type, "object");
+        assert_eq!(hooks.editor.as_deref(), Some("hooks"));
+
+        // ~/.claude.json global-config class routes to claudeJson.
+        assert_eq!(by_key("autoConnectIde").target_file, "claudeJson");
+
+        // managed-only keys are flagged and scoped to managed.
+        let allowed_mcp = by_key("allowedMcpServers");
+        assert!(allowed_mcp.managed_only);
+        assert_eq!(allowed_mcp.scopes, vec!["managed".to_string()]);
+    }
+
     #[test]
     fn validate_catalog_rejects_dupe_keys() {
         let cat = SettingsCatalog {
