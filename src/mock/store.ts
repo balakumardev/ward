@@ -14,7 +14,7 @@ import type {
   ScanResultSec, BaselineDiff, BudgetBreakdown, Conversation, CostBreakdown,
   DistillResult, BackupStatus, ExportReport, CommitInfo, PushResult, GitLogEntry,
   McpConfig, EnvVar, MarketEntry, MarketPage, BuiltConfig, InstallResult, InstallTarget,
-  SkillPreview,
+  SkillPreview, PluginScan, PluginEntry, MarketplaceRef,
 } from '../api';
 import {
   codexScan, securityScan, budgetFor, conversationFor, costFor, distillFor, initialBackupStatus,
@@ -23,6 +23,7 @@ import {
   MARKET_ENTRIES,
   MARKET_SKILLS,
   MARKET_SKILL_BODIES,
+  PLUGIN_SCAN,
 } from './fixtures';
 
 /** A RestoreInfo carrying an opaque handle to the mock's undo closure. The UI
@@ -132,11 +133,17 @@ export class MockStore {
   // Plan 16 — live usage opt-in. Defaults on in the mock so dev:mock shows the
   // live Claude gauges immediately (the real app starts opted-out).
   private liveEnabled = true;
+  // Plan 28 — Plugins mode. Cloned from the fixture so enable/install/uninstall
+  // and marketplace-add mutate real in-memory state (the next scan reflects it).
+  private pluginMarketplaces: MarketplaceRef[];
+  private pluginEntries: PluginEntry[];
 
   constructor() {
     this.claude = JSON.parse(scanClaudeRaw) as ScanResult;
     this.codex = clone(codexScan);
     this.backup = initialBackupStatus();
+    this.pluginMarketplaces = clone(PLUGIN_SCAN.marketplaces);
+    this.pluginEntries = clone(PLUGIN_SCAN.plugins);
   }
 
   private scanFor(harness: string): ScanResult {
@@ -495,5 +502,90 @@ export class MockStore {
 
   nativeUpdateStatus(): void {
     // no-op in the mock (native badge/tooltip has no browser surface)
+  }
+
+  // ── Plugins (Plan 28) ──
+  /** Fresh snapshot (new object + array/entry identity) so Solid re-renders
+   *  after every plugin mutation. The mock CLI is always "available". */
+  pluginScan(): PluginScan {
+    return {
+      marketplaces: this.pluginMarketplaces.map(clone),
+      plugins: this.pluginEntries.map(clone),
+      cliAvailable: true,
+    };
+  }
+
+  pluginsCliAvailable(): boolean {
+    return true;
+  }
+
+  private locatePlugin(pluginKey: string): number {
+    return this.pluginEntries.findIndex((p) => `${p.name}@${p.marketplace}` === pluginKey);
+  }
+
+  /** Surgical enable/disable flip on the matching entry (mirrors the real
+   *  single-key `enabledPlugins[...]` write). Undo restores the prior flag. */
+  setPluginEnabled(pluginKey: string, enabled: boolean): MockRestore {
+    const path = '~/.claude/settings.json';
+    const idx = this.locatePlugin(pluginKey);
+    if (idx < 0) return { kind: 'plugin-enable', originalPath: path, __undoId: '' };
+    const prev = this.pluginEntries[idx].enabled;
+    this.pluginEntries[idx] = { ...this.pluginEntries[idx], enabled };
+    const undoId = this.newUndo(() => {
+      const j = this.locatePlugin(pluginKey);
+      if (j >= 0) this.pluginEntries[j] = { ...this.pluginEntries[j], enabled: prev };
+    });
+    return { kind: 'plugin-enable', originalPath: path, __undoId: undoId };
+  }
+
+  /** Install a plugin at `scope`: mark an existing catalog entry installed +
+   *  enabled, or append a fresh entry when it's not in the catalog. Returns a
+   *  fresh scan (mirrors the CLI-backed command re-scanning after install). */
+  installPlugin(plugin: string, marketplace: string, scope: string): PluginScan {
+    const idx = this.pluginEntries.findIndex((p) => p.name === plugin && p.marketplace === marketplace);
+    if (idx >= 0) {
+      this.pluginEntries[idx] = { ...this.pluginEntries[idx], installed: true, enabled: true, scope };
+    } else {
+      const src = this.pluginMarketplaces.find((m) => m.name === marketplace)?.source ?? { source: 'github', repo: marketplace };
+      this.pluginEntries.push({
+        kind: 'plugin', name: plugin, marketplace, displayName: plugin,
+        description: '', source: src, tags: [], installed: true, enabled: true, scope,
+      });
+    }
+    return this.pluginScan();
+  }
+
+  /** Uninstall a plugin (by bare name or `name@marketplace` key): mark it
+   *  not-installed + disabled. Returns a fresh scan. `scope` is accepted for
+   *  parity with the real command but not needed to locate the mock entry. */
+  uninstallPlugin(plugin: string, _scope: string): PluginScan {
+    const idx = this.pluginEntries.findIndex(
+      (p) => p.installed && (p.name === plugin || `${p.name}@${p.marketplace}` === plugin),
+    );
+    if (idx >= 0) {
+      this.pluginEntries[idx] = { ...this.pluginEntries[idx], installed: false, enabled: false, scope: undefined };
+    }
+    return this.pluginScan();
+  }
+
+  /** Add a marketplace derived from `src` (a `owner/repo`, URL, or path) if
+   *  not already known, then return a fresh scan. */
+  marketplaceAddPlugin(src: string, _scope: string): PluginScan {
+    const name = src.split('/').pop()?.trim() || src.trim();
+    if (name && !this.pluginMarketplaces.some((m) => m.name === name)) {
+      this.pluginMarketplaces.push({
+        name,
+        source: { source: 'github', repo: src },
+        installLocation: `~/.claude/plugins/marketplaces/${name}`,
+        lastUpdated: new Date().toISOString(),
+      });
+    }
+    return this.pluginScan();
+  }
+
+  /** Update one (`name`) or every (`undefined`) marketplace. A no-op mutation
+   *  in the mock — just returns a fresh scan. */
+  marketplaceUpdatePlugins(_name?: string): PluginScan {
+    return this.pluginScan();
   }
 }

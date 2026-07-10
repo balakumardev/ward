@@ -157,3 +157,70 @@ describe('MockStore marketplace', () => {
     expect(results[0].error).toContain('unpinned');
   });
 });
+
+describe('MockStore plugins', () => {
+  it('pluginScan reports the seeded marketplaces + a mix of plugin states', () => {
+    const s = new MockStore();
+    const scan = s.pluginScan();
+    expect(scan.cliAvailable).toBe(true);
+    expect(s.pluginsCliAvailable()).toBe(true);
+    expect(scan.marketplaces.length).toBeGreaterThanOrEqual(2);
+    expect(scan.plugins.length).toBeGreaterThanOrEqual(3);
+    // The mix the fixture guarantees: an enabled+installed, a disabled+installed,
+    // a not-installed, and an uncatalogued (no componentCounts) entry.
+    expect(scan.plugins.some((p) => p.installed && p.enabled)).toBe(true);
+    expect(scan.plugins.some((p) => p.installed && !p.enabled)).toBe(true);
+    expect(scan.plugins.some((p) => !p.installed)).toBe(true);
+    expect(scan.plugins.some((p) => p.componentCounts === undefined)).toBe(true);
+    expect(scan.plugins.some((p) => (p.componentCounts?.skills ?? 0) > 0)).toBe(true);
+  });
+
+  it('setPluginEnabled flips the entry and undo restores it', () => {
+    const s = new MockStore();
+    const key = 'code-formatter@claude-plugins-official';
+    const before = s.pluginScan().plugins.find((p) => `${p.name}@${p.marketplace}` === key)!;
+    expect(before.enabled).toBe(true);
+    const r = s.setPluginEnabled(key, false);
+    expect(r.kind).toBe('plugin-enable');
+    expect(s.pluginScan().plugins.find((p) => `${p.name}@${p.marketplace}` === key)!.enabled).toBe(false);
+    s.restore({ ...r });
+    expect(s.pluginScan().plugins.find((p) => `${p.name}@${p.marketplace}` === key)!.enabled).toBe(true);
+  });
+
+  it('installPlugin marks a catalog-only entry installed + enabled', () => {
+    const s = new MockStore();
+    const target = s.pluginScan().plugins.find((p) => !p.installed)!;
+    const scan = s.installPlugin(target.name, target.marketplace, 'user');
+    const after = scan.plugins.find((p) => p.name === target.name && p.marketplace === target.marketplace)!;
+    expect(after.installed).toBe(true);
+    expect(after.enabled).toBe(true);
+    expect(after.scope).toBe('user');
+  });
+
+  it('uninstallPlugin marks an installed entry not-installed + disabled', () => {
+    const s = new MockStore();
+    const scan = s.uninstallPlugin('code-formatter', 'user');
+    const after = scan.plugins.find((p) => p.name === 'code-formatter')!;
+    expect(after.installed).toBe(false);
+    expect(after.enabled).toBe(false);
+  });
+
+  it('marketplaceAddPlugin adds a new marketplace derived from the src', () => {
+    const s = new MockStore();
+    const before = s.pluginScan().marketplaces.length;
+    const scan = s.marketplaceAddPlugin('owner/new-market', 'user');
+    expect(scan.marketplaces.length).toBe(before + 1);
+    expect(scan.marketplaces.some((m) => m.name === 'new-market')).toBe(true);
+    // Idempotent — adding the same src again does not duplicate.
+    const again = s.marketplaceAddPlugin('owner/new-market', 'user');
+    expect(again.marketplaces.length).toBe(before + 1);
+  });
+
+  it('marketplaceUpdatePlugins returns a fresh scan without mutating state', () => {
+    const s = new MockStore();
+    const before = s.pluginScan();
+    const after = s.marketplaceUpdatePlugins();
+    expect(after.plugins.length).toBe(before.plugins.length);
+    expect(after.marketplaces.length).toBe(before.marketplaces.length);
+  });
+});

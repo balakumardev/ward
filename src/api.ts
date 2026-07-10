@@ -69,7 +69,7 @@ export interface ScanResult {
 }
 export interface Destination { scopeId: string; label: string; kind: string; }
 export interface RestoreInfo {
-  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert' | 'skill-create';
+  kind: 'file' | 'mcp-entry' | 'mcp-disabled' | 'mcp-policy' | 'mcp-upsert' | 'skill-create' | 'plugin-enable';
   originalPath: string;
   currentPath?: string | null;
   backupBytes?: number[] | null;
@@ -451,6 +451,64 @@ export interface SkillPreview {
   body: string;
 }
 
+// ── Plan 28 — Plugins mode ──────────────────────────────────────────────
+
+/** Per-kind component tallies a plugin ships (mirrors the Rust
+ *  `ComponentCounts` — each field is the length of the catalog's
+ *  corresponding `components` array). */
+export interface ComponentCounts {
+  commands: number;
+  agents: number;
+  skills: number;
+  hooks: number;
+  mcpServers: number;
+  lspServers: number;
+}
+
+/** A single plugin as Ward presents it (mirrors the Rust `PluginEntry`) —
+ *  an installed record merged with catalog metadata when available.
+ *  `installed`/`enabled` reflect on-disk state; the token / component /
+ *  `uniqueInstalls` fields are catalog-only and stay `undefined` for
+ *  plugins Ward has no catalog entry for. `source` is the opaque source
+ *  blob (e.g. `{source, repo}` for github). */
+export interface PluginEntry {
+  kind: string; // always "plugin"
+  name: string;
+  marketplace: string;
+  displayName: string;
+  description: string;
+  version?: string;
+  source: unknown;
+  author?: string;
+  category?: string;
+  tags: string[];
+  installed: boolean;
+  enabled: boolean;
+  scope?: string;
+  uniqueInstalls?: number;
+  alwaysOnTokens?: number;
+  onInvokeTokens?: number;
+  componentCounts?: ComponentCounts;
+}
+
+/** A marketplace Claude Code knows about (mirrors the Rust
+ *  `MarketplaceRef`, from `known_marketplaces.json`). `source` is opaque. */
+export interface MarketplaceRef {
+  name: string;
+  source: unknown;
+  installLocation?: string;
+  lastUpdated?: string;
+}
+
+/** Full result of a plugins scan (mirrors the Rust `PluginScan`) — the
+ *  marketplaces Claude Code knows, the merged plugin list, and whether the
+ *  `claude` CLI is available (gates enable/disable/install actions). */
+export interface PluginScan {
+  marketplaces: MarketplaceRef[];
+  plugins: PluginEntry[];
+  cliAvailable: boolean;
+}
+
 export const api = {
   scan: (harness: string) => invokeOrThrow<ScanResult>('scan', { harness }),
   readFileContent: (path: string) => invokeOrThrow<string>('read_file_content', { path }),
@@ -551,4 +609,22 @@ export const api = {
   autostartSet: (enabled: boolean) => invokeOrThrow<void>('autostart_set', { enabled }),
   nativeUpdateStatus: (critical: number, lastScanAt?: string) =>
     invokeOrThrow<void>('native_update_status', { critical, lastScanAt }),
+
+  // Plan 28 — Plugins mode. `pluginsScan` reads three on-disk Claude Code
+  // files (no network); the enable/install/uninstall/marketplace commands
+  // mutate on-disk state (enable is a surgical single-key flip returning a
+  // `plugin-enable` RestoreInfo for Undo; the CLI-backed ones return a fresh
+  // scan so the UI reflects the new state in one round-trip).
+  pluginsScan: () => invokeOrThrow<PluginScan>('plugins_scan'),
+  pluginsCliAvailable: () => invokeOrThrow<boolean>('plugins_cli_available'),
+  pluginsSetEnabled: (pluginKey: string, enabled: boolean) =>
+    invokeOrThrow<RestoreInfo>('plugins_set_enabled', { pluginKey, enabled }),
+  pluginsInstall: (plugin: string, marketplace: string, scope: string) =>
+    invokeOrThrow<PluginScan>('plugins_install', { plugin, marketplace, scope }),
+  pluginsUninstall: (plugin: string, scope: string) =>
+    invokeOrThrow<PluginScan>('plugins_uninstall', { plugin, scope }),
+  pluginsMarketplaceAdd: (src: string, scope: string) =>
+    invokeOrThrow<PluginScan>('plugins_marketplace_add', { src, scope }),
+  pluginsMarketplaceUpdate: (name?: string) =>
+    invokeOrThrow<PluginScan>('plugins_marketplace_update', { name }),
 };

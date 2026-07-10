@@ -12,7 +12,7 @@
 import type {
   ScanResult, ScanResultSec, Finding, ServerSummary, DupFinding, BaselineDiff,
   BudgetBreakdown, Conversation, CostBreakdown, DistillResult, BackupStatus,
-  UsageSnapshot, MarketEntry,
+  UsageSnapshot, MarketEntry, PluginScan,
 } from '../api';
 
 // ── Codex harness scan ────────────────────────────────────────────────────
@@ -452,4 +452,76 @@ export const MARKET_SKILL_BODIES: Record<string, string> = {
     '# Systematic debugging\n\n' +
     'Reproduce, isolate, and confirm the root cause before proposing or\n' +
     'applying any fix.\n',
+};
+
+// ── Plugins mode (Plan 28) ────────────────────────────────────────────────
+// Synthetic PluginScan backing the dev:mock Plugins UI. Two marketplaces and
+// a deliberate mix of states so every UI branch is exercisable in the browser:
+//   - code-formatter  → installed + ENABLED, full catalog metadata
+//   - test-runner     → installed + DISABLED (installed-but-off)
+//   - orphan-tool     → installed + enabled, but UNCATALOGUED (no tokens /
+//                       components / uniqueInstalls — the None passthrough)
+//   - security-scanner→ NOT installed (catalog-only / discoverable)
+//   - doc-writer      → NOT installed (catalog-only / discoverable)
+// Values mirror the shapes in src-tauri/src/plugins/fixtures/*.json.
+const OFFICIAL_SOURCE = { source: 'github', repo: 'anthropics/claude-plugins-official' };
+const SIDE_SOURCE = { source: 'github', repo: 'community/side-marketplace' };
+
+export const PLUGIN_SCAN: PluginScan = {
+  marketplaces: [
+    {
+      name: 'claude-plugins-official',
+      source: OFFICIAL_SOURCE,
+      installLocation: '~/.claude/plugins/marketplaces/claude-plugins-official',
+      lastUpdated: '2026-06-01T00:00:00.000Z',
+    },
+    {
+      name: 'side-marketplace',
+      source: SIDE_SOURCE,
+      installLocation: '~/.claude/plugins/marketplaces/side-marketplace',
+      lastUpdated: '2026-05-12T00:00:00.000Z',
+    },
+  ],
+  plugins: [
+    {
+      kind: 'plugin', name: 'code-formatter', marketplace: 'claude-plugins-official',
+      displayName: 'Code Formatter', description: 'Opinionated multi-language formatter with a shared style guide.',
+      version: '2.1.0', source: OFFICIAL_SOURCE, author: 'Anthropic', category: 'Productivity',
+      tags: ['formatting', 'lint'], installed: true, enabled: true, scope: 'user',
+      uniqueInstalls: 682, alwaysOnTokens: 1005, onInvokeTokens: 15353,
+      componentCounts: { commands: 1, agents: 0, skills: 2, hooks: 0, mcpServers: 1, lspServers: 0 },
+    },
+    {
+      kind: 'plugin', name: 'test-runner', marketplace: 'claude-plugins-official',
+      displayName: 'Test Runner', description: 'Run and triage your test suite from inside Claude Code.',
+      version: '1.4.2', source: OFFICIAL_SOURCE, author: 'Anthropic', category: 'Testing',
+      tags: ['testing', 'ci'], installed: true, enabled: false, scope: 'user',
+      uniqueInstalls: 415, alwaysOnTokens: 820, onInvokeTokens: 9210,
+      componentCounts: { commands: 3, agents: 1, skills: 0, hooks: 2, mcpServers: 0, lspServers: 0 },
+    },
+    {
+      kind: 'plugin', name: 'orphan-tool', marketplace: 'side-marketplace',
+      displayName: 'Orphan Tool', description: 'A community plugin Ward has no catalog entry for.',
+      version: '0.3.0', source: SIDE_SOURCE,
+      tags: [], installed: true, enabled: true, scope: 'user',
+      // Uncatalogued → token / component / uniqueInstalls fields omitted.
+    },
+    {
+      kind: 'plugin', name: 'security-scanner', marketplace: 'claude-plugins-official',
+      displayName: 'Security Scanner', description: 'Scan configs and MCP servers for risky patterns.',
+      version: '3.0.1', source: OFFICIAL_SOURCE, author: 'Anthropic', category: 'Security',
+      tags: ['security', 'audit'], installed: false, enabled: false,
+      uniqueInstalls: 1290, alwaysOnTokens: 1420, onInvokeTokens: 20110,
+      componentCounts: { commands: 2, agents: 1, skills: 1, hooks: 1, mcpServers: 1, lspServers: 0 },
+    },
+    {
+      kind: 'plugin', name: 'doc-writer', marketplace: 'claude-plugins-official',
+      displayName: 'Doc Writer', description: 'Generate and maintain project documentation.',
+      version: '1.0.0', source: OFFICIAL_SOURCE, author: 'Anthropic', category: 'Docs',
+      tags: ['docs', 'writing'], installed: false, enabled: false,
+      uniqueInstalls: 233, alwaysOnTokens: 640, onInvokeTokens: 7800,
+      componentCounts: { commands: 2, agents: 0, skills: 3, hooks: 0, mcpServers: 0, lspServers: 0 },
+    },
+  ],
+  cliAvailable: true,
 };

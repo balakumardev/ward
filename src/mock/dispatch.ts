@@ -82,6 +82,15 @@ export async function mockInvoke(cmd: string, args: Args = {}): Promise<unknown>
     case 'autostart_set': store.autostartSet(!!args.enabled); return null;
     case 'native_update_status': store.nativeUpdateStatus(); return null;
 
+    // ── Plugins (Plan 28) ──
+    case 'plugins_scan': await delay(140); return store.pluginScan();
+    case 'plugins_cli_available': return store.pluginsCliAvailable();
+    case 'plugins_set_enabled': await delay(40); return store.setPluginEnabled(args.pluginKey, !!args.enabled);
+    case 'plugins_install': await delay(220); return store.installPlugin(args.plugin, args.marketplace, args.scope ?? 'user');
+    case 'plugins_uninstall': await delay(220); return store.uninstallPlugin(args.plugin, args.scope ?? 'user');
+    case 'plugins_marketplace_add': await delay(180); return store.marketplaceAddPlugin(args.src, args.scope ?? 'user');
+    case 'plugins_marketplace_update': await delay(180); return store.marketplaceUpdatePlugins(args.name);
+
     default:
       throw new Error(`[ward-mock] unhandled command: ${cmd}`);
   }
