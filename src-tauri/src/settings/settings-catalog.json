@@ -1,0 +1,75 @@
+{
+  "_comment": [
+    "Ward settings catalog — hand-curated metadata for Claude Code settings keys.",
+    "This is a MINIMAL VALID STUB (Plan 29, Task 2); Task 3 REPLACES it with the",
+    "full documented key set. It is compiled into the binary via include_str! and",
+    "deserialized into settings::SettingsCatalog, so unknown keys like this",
+    "_comment are ignored on parse.",
+    "",
+    "Top-level shape: { categories: string[], defs: SettingDef[] }.",
+    "",
+    "Each record in `defs` is a SettingDef:",
+    "  key         (string, required)  the settings key, e.g. \"theme\" or \"permissions\"",
+    "  label       (string, required)  short human title",
+    "  description (string, required)  one to two sentences on what it does",
+    "  category    (string, required)  grouping label; should appear in `categories`",
+    "  valueType   (string, required)  one of bool|enum|number|string|array|object",
+    "  default     (any,    optional)  documented default value; omit when none",
+    "  enumValues  (string[], enum)    allowed values; REQUIRED when valueType==enum",
+    "  targetFile  (string, required)  \"settings.json\" (default) or \"claudeJson\" (~/.claude.json)",
+    "  scopes      (string[], optional) writable scopes, subset of user|project|local",
+    "  managedOnly (bool,   optional)  true when only settable via managed-settings.json",
+    "  minVersion  (string, optional)  first Claude Code version supporting the key",
+    "  docsUrl     (string, optional)  link to the documenting page",
+    "  editor      (string, object)    REQUIRED when valueType==object; one of",
+    "                                  permissions|hooks|env|sandbox|statusLine|json"
+  ],
+  "categories": ["General", "Appearance", "Permissions"],
+  "defs": [
+    {
+      "key": "includeCoAuthoredBy",
+      "label": "Include co-authored-by trailer",
+      "description": "Add the `Co-authored-by: Claude` trailer to git commits and pull requests Claude Code creates.",
+      "category": "General",
+      "valueType": "bool",
+      "default": true,
+      "targetFile": "settings.json",
+      "scopes": ["user", "project", "local"],
+      "docsUrl": "https://code.claude.com/docs/en/settings"
+    },
+    {
+      "key": "theme",
+      "label": "Theme",
+      "description": "Colour theme for the Claude Code terminal UI.",
+      "category": "Appearance",
+      "valueType": "enum",
+      "default": "dark",
+      "enumValues": ["dark", "light", "dark-daltonized", "light-daltonized", "dark-ansi", "light-ansi"],
+      "targetFile": "settings.json",
+      "scopes": ["user", "project", "local"],
+      "docsUrl": "https://code.claude.com/docs/en/settings"
+    },
+    {
+      "key": "cleanupPeriodDays",
+      "label": "Chat retention (days)",
+      "description": "How many days Claude Code locally retains chat transcripts before cleaning them up.",
+      "category": "General",
+      "valueType": "number",
+      "default": 30,
+      "targetFile": "settings.json",
+      "scopes": ["user", "project", "local"],
+      "docsUrl": "https://code.claude.com/docs/en/settings"
+    },
+    {
+      "key": "permissions",
+      "label": "Permissions",
+      "description": "Tool and Bash permission rules — allow / ask / deny lists, default mode, and additional working directories.",
+      "category": "Permissions",
+      "valueType": "object",
+      "editor": "permissions",
+      "targetFile": "settings.json",
+      "scopes": ["user", "project", "local"],
+      "docsUrl": "https://code.claude.com/docs/en/settings"
+    }
+  ]
+}

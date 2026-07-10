@@ -12,6 +12,7 @@ pub mod native;
 pub mod plugins;
 pub mod security;
 pub mod sessions;
+pub mod settings;
 pub mod tokenizer;
 pub mod usage;
 
