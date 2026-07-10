@@ -295,7 +295,10 @@ export function Organizer(props: {
     setSelected(itemKey(item));
     setShowMoveMenu(false);
     setDirty(false);
-    setPreviewMode(false);
+    // Markdown files open in rendered Preview by default; non-markdown items
+    // ignore previewMode (their detail branch has no preview). Click the
+    // preview (or the Edit toggle) to switch a markdown note into the editor.
+    setPreviewMode(isMarkdownItem(item));
     setStatusMsg('');
     setDestinations([]);
     if (item.category === 'mcp') {
@@ -838,6 +841,15 @@ export function Organizer(props: {
             // actually persist an upsert. Otherwise MCP falls back to a
             // read-only pane (see the keyed <Show> fallback below).
             const showMcpForm = () => isMcp() && mcpEditable();
+            // Click-to-edit: a ref to the raw editor so clicking the rendered
+            // preview drops into Edit and focuses the textarea. Locked items
+            // (e.g. CLAUDE.md) stay in Preview — there is nothing to edit.
+            let editorRef: HTMLTextAreaElement | undefined;
+            const enterEdit = () => {
+              if (item().locked) return;
+              setPreviewMode(false);
+              queueMicrotask(() => editorRef?.focus());
+            };
             return (
               <div class="rise" style={{ display: 'flex', 'flex-direction': 'column', height: '100%', 'min-height': 0 }}>
                 <div class="detail-head">
@@ -912,6 +924,7 @@ export function Organizer(props: {
                         when={md() && previewMode()}
                         fallback={
                           <textarea
+                            ref={(el) => (editorRef = el)}
                             class="editor-area"
                             data-testid="detail-editor"
                             spellcheck={false}
@@ -922,7 +935,19 @@ export function Organizer(props: {
                           />
                         }
                       >
-                        <div class="preview" innerHTML={renderMarkdown(detail())} />
+                        <div
+                          class="preview"
+                          data-testid="detail-preview"
+                          classList={{ editable: !item().locked }}
+                          title={item().locked ? undefined : 'Click to edit'}
+                          onClick={(e) => {
+                            // Links inside the rendered markdown keep working;
+                            // any other click on an editable note jumps to Edit.
+                            if ((e.target as HTMLElement).closest('a')) return;
+                            enterEdit();
+                          }}
+                          innerHTML={renderMarkdown(detail())}
+                        />
                       </Show>
                     </div>
                   }>

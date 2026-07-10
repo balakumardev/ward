@@ -245,6 +245,9 @@ test('editor textarea edits and saves via api.saveFile', async () => {
   ));
   const rows = getAllByTestId('item-row');
   fireEvent.click(rows[0]);
+  // Markdown items now open in Preview; click into the preview to reach the editor.
+  await waitFor(() => expect(getByTestId('detail-preview')).toBeTruthy());
+  fireEvent.click(getByTestId('detail-preview'));
   await waitFor(() => expect(getByTestId('detail-editor')).toBeTruthy());
   const editor = getByTestId('detail-editor') as HTMLTextAreaElement;
   expect(editor.value).toBe('original');
@@ -667,6 +670,61 @@ it('dismisses the Add Skill pane when a different item is selected', async () =>
   fireEvent.click(screen.getByText('alpha'));
   await waitFor(() => expect(screen.queryByTestId('skill-add-form')).toBeNull());
   expect(screen.queryByText('Add Skill')).toBeNull();
+});
+
+// ── Markdown items: rendered Preview by default, click-to-edit ──
+
+it('opens markdown items in rendered Preview by default', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'skill', scopeId: 'global', name: 'brainstorming', path: '/g/SKILL.md',
+        movable: true, deletable: true, locked: false },
+    ],
+  });
+  render(() => (
+    <Organizer scan={scan} loadFile={async () => '# Heading\n\nbody text'} api={fakeApi} />
+  ));
+  fireEvent.click(screen.getByText('brainstorming'));
+  const preview = await screen.findByTestId('detail-preview');
+  expect(preview.querySelector('h1')?.textContent).toBe('Heading');
+  // The raw editor is not mounted until the user asks to edit.
+  expect(screen.queryByTestId('detail-editor')).not.toBeInTheDocument();
+});
+
+it('clicking the markdown preview switches to Edit mode', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'skill', scopeId: 'global', name: 'brainstorming', path: '/g/SKILL.md',
+        movable: true, deletable: true, locked: false },
+    ],
+  });
+  render(() => (
+    <Organizer scan={scan} loadFile={async () => 'hello world'} api={fakeApi} />
+  ));
+  fireEvent.click(screen.getByText('brainstorming'));
+  fireEvent.click(await screen.findByTestId('detail-preview'));
+  const editor = await screen.findByTestId('detail-editor') as HTMLTextAreaElement;
+  expect(editor.value).toBe('hello world');
+  expect(screen.queryByTestId('detail-preview')).not.toBeInTheDocument();
+});
+
+it('keeps a locked markdown item in Preview (no click-to-edit)', async () => {
+  const scan = makeScan({
+    items: [
+      { category: 'memory', scopeId: 'global', name: 'CLAUDE.md', path: '/Users/x/.claude/CLAUDE.md',
+        movable: false, deletable: false, locked: true },
+    ],
+  });
+  render(() => (
+    <Organizer scan={scan} loadFile={async () => '# Root memory'} api={fakeApi} />
+  ));
+  fireEvent.click(screen.getByText('CLAUDE.md'));
+  const preview = await screen.findByTestId('detail-preview');
+  fireEvent.click(preview);
+  await Promise.resolve();
+  // Locked → the click must NOT drop into the editor.
+  expect(screen.queryByTestId('detail-editor')).not.toBeInTheDocument();
+  expect(screen.getByTestId('detail-preview')).toBeInTheDocument();
 });
 
 // ── Plan 18 review-fix 1: gate the editable form on capabilities.mcpEditable ──
