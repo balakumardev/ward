@@ -537,6 +537,10 @@ export function Organizer(props: {
     setSelected('');
     setSelectedKeys(new Set<string>());
     setStatusMsg('');
+    // Symmetry with startAddSkill (which clears addingMcp): make sure the other
+    // add-pane flag is off so the two add views can never both be active
+    // (addingSkill wins the detail <Show> chain).
+    setAddingSkill(false);
     setAddingMcp(true);
   }
 
