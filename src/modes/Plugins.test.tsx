@@ -59,7 +59,7 @@ function makeApi(over: Partial<PluginsApi> = {}, scan = makeScan()): PluginsApi 
 const CAPS = {
   contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true,
   sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true,
-  pluginsManageable: true,
+  pluginsManageable: true, settingsEditable: true,
 };
 
 function makeHostScan(pluginsManageable: boolean): ScanResult {

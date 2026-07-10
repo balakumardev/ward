@@ -20,6 +20,8 @@ pub enum WardError {
     Registry(String),
     #[error("plugin error: {0}")]
     Plugin(String),
+    #[error("settings error: {0}")]
+    Settings(String),
     #[error("invalid input: {0}")]
     InvalidInput(String),
     #[error(transparent)]
@@ -40,6 +42,7 @@ enum ErrorKind {
     Live(String),
     Registry(String),
     Plugin(String),
+    Settings(String),
     InvalidInput(String),
     Io(String),
 }
@@ -61,6 +64,7 @@ impl serde::Serialize for WardError {
             WardError::Live(_) => ErrorKind::Live(message),
             WardError::Registry(_) => ErrorKind::Registry(message),
             WardError::Plugin(_) => ErrorKind::Plugin(message),
+            WardError::Settings(_) => ErrorKind::Settings(message),
             WardError::InvalidInput(_) => ErrorKind::InvalidInput(message),
             WardError::Io(_) => ErrorKind::Io(message),
         };
@@ -108,5 +112,12 @@ mod tests {
         let e = WardError::Plugin("claude CLI not found".into());
         let s = serde_json::to_string(&e).unwrap();
         assert_eq!(s, r#"{"kind":"plugin","message":"plugin error: claude CLI not found"}"#);
+    }
+
+    #[test]
+    fn settings_error_serializes_camel_case() {
+        let e = WardError::Settings("x".into());
+        let s = serde_json::to_string(&e).unwrap();
+        assert_eq!(s, r#"{"kind":"settings","message":"settings error: x"}"#);
     }
 }

@@ -68,7 +68,7 @@ const SCAN: ScanResult = {
   capabilities: {
     contextBudget: true, mcpControls: true, mcpPolicy: true, mcpSecurity: true,
     sessions: true, effective: true, backup: true, mcpEditable: true, skillCreatable: true,
-    pluginsManageable: true,
+    pluginsManageable: true, settingsEditable: true,
   },
 };
 

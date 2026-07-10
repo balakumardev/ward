@@ -131,6 +131,9 @@ impl Harness for CodexAdapter {
             // Plan 28: Codex has no plugin system, so the Plugins mode is
             // inapplicable.
             plugins_manageable: false,
+            // Plan 29: Codex has no editable settings surface yet, so the
+            // Settings mode is read-only/inapplicable.
+            settings_editable: false,
         }
     }
 

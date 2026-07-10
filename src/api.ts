@@ -46,6 +46,10 @@ export interface Capabilities {
   /** Plan 28 — true when this harness exposes a manageable plugin surface,
    *  gating the Plugins mode. Claude true; Codex false (no plugin system). */
   pluginsManageable: boolean;
+  /** Plan 29 — true when this harness exposes an editable settings surface,
+   *  gating the Settings mode. Claude true; Codex false until its settings
+   *  write path lands. */
+  settingsEditable: boolean;
 }
 export interface Category { id: string; label: string; count: number; }
 export interface Scope { id: string; kind: string; label: string; root: string; }

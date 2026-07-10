@@ -25,6 +25,11 @@ pub struct Capabilities {
     /// `true`; Codex `false` (no plugin system). Serializes as
     /// `pluginsManageable`.
     pub plugins_manageable: bool,
+    /// Plan 29 — true when this harness exposes an editable settings surface
+    /// (the Settings mode can read/write the harness's settings file). Claude
+    /// `true`; Codex `false` until its settings write path lands. Serializes as
+    /// `settingsEditable`.
+    pub settings_editable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
