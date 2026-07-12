@@ -537,6 +537,15 @@ export interface SettingDef {
   minVersion?: string;
   docsUrl?: string;
   editor?: string;
+  /** For `valueType === 'number'`: documented validation bounds (present only
+   *  where the docs state one). The editor applies `min`/`max`/`step` as HTML
+   *  input attributes and, on commit, rounds when `integer` and clamps into
+   *  `[min, max]` before writing — so Ward never persists a value Claude Code's
+   *  own startup validation would reject. */
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
 }
 
 /** A catalog def joined with its live state (mirrors the Rust `SettingRow`):

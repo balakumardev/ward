@@ -62,6 +62,25 @@ pub struct SettingDef {
     /// from the wire form when absent (non-object types).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editor: Option<String>,
+    /// For `value_type == "number"`: the minimum valid value, when the docs
+    /// document one (e.g. `cleanupPeriodDays` minimum 1). The UI applies it as
+    /// the input's `min` bound and clamps out-of-range edits before writing.
+    /// Serializes as `min`; omitted when absent (the number is unconstrained).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// For `value_type == "number"`: the maximum valid value, when documented
+    /// (e.g. a `0-1` probability). Serializes as `max`; omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// For `value_type == "number"`: the input step, when documented. Serializes
+    /// as `step`; omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    /// For `value_type == "number"`: true when only whole numbers are valid, so
+    /// the UI rounds fractional edits before writing. Serializes as `integer`;
+    /// omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integer: Option<bool>,
 }
 
 /// A catalog def paired with its current effective value on this machine. The
@@ -172,6 +191,10 @@ mod tests {
             min_version: None,
             docs_url: None,
             editor: None,
+            min: None,
+            max: None,
+            step: None,
+            integer: None,
         }
     }
 
@@ -191,6 +214,12 @@ mod tests {
             min_version: None,
             docs_url: Some("https://code.claude.com/docs/en/settings".into()),
             editor: None,
+            // Numeric bounds: min + integer set, max + step left None (to assert
+            // both the camelCase-safe serialize AND the skip-when-None behavior).
+            min: Some(1.0),
+            max: None,
+            step: None,
+            integer: Some(true),
         };
         let s = serde_json::to_string(&d).unwrap();
         // camelCase renames land on the wire.
@@ -204,9 +233,14 @@ mod tests {
             "targetFile present: {s}"
         );
         assert!(s.contains("\"managedOnly\":false"), "managedOnly present: {s}");
+        // The set numeric-bound fields serialize (already camelCase-safe names).
+        assert!(s.contains("\"min\":1.0"), "min present: {s}");
+        assert!(s.contains("\"integer\":true"), "integer present: {s}");
         // `None` optionals are omitted.
         assert!(!s.contains("editor"), "None editor omitted: {s}");
         assert!(!s.contains("minVersion"), "None minVersion omitted: {s}");
+        assert!(!s.contains("\"max\""), "None max omitted: {s}");
+        assert!(!s.contains("\"step\""), "None step omitted: {s}");
         // Round-trips byte-for-value.
         let back: SettingDef = serde_json::from_str(&s).unwrap();
         assert_eq!(d, back);
@@ -323,6 +357,46 @@ mod tests {
         let allowed_mcp = by_key("allowedMcpServers");
         assert!(allowed_mcp.managed_only);
         assert_eq!(allowed_mcp.scopes, vec!["managed".to_string()]);
+    }
+
+    /// Numeric defs carry validation bounds ONLY where the doc prose documents
+    /// one — never invented. `cleanupPeriodDays` documents "minimum 1; setting 0
+    /// fails validation" and counts whole days; `feedbackSurveyRate` documents a
+    /// "Probability (0-1)". The two skill-listing numbers document no explicit
+    /// numeric range, so they stay unconstrained.
+    #[test]
+    fn catalog_number_defs_carry_only_documented_bounds() {
+        let cat = load_catalog();
+        let by_key = |k: &str| -> &SettingDef {
+            cat.defs
+                .iter()
+                .find(|d| d.key == k)
+                .unwrap_or_else(|| panic!("catalog is missing the '{k}' def"))
+        };
+
+        // "minimum 1 (setting 0 fails validation)" + whole days → min 1, integer, step 1.
+        let cleanup = by_key("cleanupPeriodDays");
+        assert_eq!(cleanup.value_type, "number");
+        assert_eq!(cleanup.min, Some(1.0));
+        assert_eq!(cleanup.integer, Some(true));
+        assert_eq!(cleanup.step, Some(1.0));
+
+        // "Probability (0-1)" → min 0, max 1, fractional (no integer/step).
+        let rate = by_key("feedbackSurveyRate");
+        assert_eq!(rate.value_type, "number");
+        assert_eq!(rate.min, Some(0.0));
+        assert_eq!(rate.max, Some(1.0));
+        assert_eq!(rate.integer, None);
+
+        // No explicit documented numeric range → left unconstrained (not invented).
+        for k in ["skillListingBudgetFraction", "skillListingMaxDescChars"] {
+            let d = by_key(k);
+            assert_eq!(d.value_type, "number");
+            assert_eq!(d.min, None, "{k} min must be unset");
+            assert_eq!(d.max, None, "{k} max must be unset");
+            assert_eq!(d.step, None, "{k} step must be unset");
+            assert_eq!(d.integer, None, "{k} integer must be unset");
+        }
     }
 
     #[test]

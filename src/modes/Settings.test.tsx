@@ -39,6 +39,7 @@ function makeCatalog(): SettingRow[] {
         key: 'cleanupPeriodDays', label: 'Chat retention (days)',
         description: 'How many days to retain chat transcripts before cleanup.',
         category: 'Privacy', valueType: 'number', default: 30,
+        min: 1, step: 1, integer: true,
         enumValues: [], targetFile: 'settings.json', scopes, managedOnly: false,
       },
       effective: 45, sourceScope: 'project', isSet: true,
@@ -250,6 +251,43 @@ test('changing an enum calls set with the selected value', async () => {
   await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
   expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
     'user', 'theme', 'settings.json', 'light',
+  ]);
+});
+
+test('number editor surfaces documented bounds and clamps a below-min value before saving', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'cleanupPeriodDays'));
+  const input = row.querySelector('[data-testid="setting-number"]') as HTMLInputElement;
+  // The def's documented bounds are applied as HTML input attributes.
+  expect(input.getAttribute('min')).toBe('1');
+  expect(input.getAttribute('step')).toBe('1');
+
+  // Entering 0 (below the documented minimum of 1) is clamped up before the write,
+  // so Ward never persists a value Claude Code's own validation would reject.
+  fireEvent.change(input, { target: { value: '0' } });
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'cleanupPeriodDays', 'settings.json', 1,
+  ]);
+});
+
+test('number editor rounds a fractional value for an integer setting before saving', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+
+  const row = await waitFor(() => rowByKey(container, 'cleanupPeriodDays'));
+  const input = row.querySelector('[data-testid="setting-number"]') as HTMLInputElement;
+
+  // A fractional entry is rounded to a whole number (the def is integer-only); the
+  // rounded value is in range, so no clamping applies.
+  fireEvent.change(input, { target: { value: '2.7' } });
+  await waitFor(() => expect(api.set).toHaveBeenCalledTimes(1));
+  expect((api.set as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
+    'user', 'cleanupPeriodDays', 'settings.json', 3,
   ]);
 });
 
@@ -929,4 +967,29 @@ test('form editor modal does not close on backdrop click', async () => {
 
   expect(queryByTestId('setting-array-editor')).toBeTruthy();
   expect(api.set).not.toHaveBeenCalled();
+});
+
+// ── F2: external edits reflect live via a focus-gated catalog refetch ─────────
+
+test('regaining window focus refetches the catalog, but not while an editor modal is open', async () => {
+  const api = makeApi();
+  const { findByTestId, container } = render(() => <Settings scan={makeHostScan(true)} api={api} />);
+  await findByTestId('settings-mode');
+  // The catalog is read once on mount.
+  await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(1));
+
+  // A window focus re-reads the catalog so an external edit reflects without a remount.
+  window.dispatchEvent(new Event('focus'));
+  await waitFor(() => expect(api.catalog).toHaveBeenCalledTimes(2));
+
+  // Open an editor modal, then focus again: a mid-edit refetch would clobber the
+  // modal's once-seeded working state, so it must be suppressed.
+  const arrRow = rowByKey(container, 'enabledMcpjsonServers');
+  fireEvent.click(arrRow.querySelector('[data-testid="setting-edit"]') as HTMLButtonElement);
+  await findByTestId('setting-array-editor');
+  const callsWhileOpen = (api.catalog as ReturnType<typeof vi.fn>).mock.calls.length;
+  window.dispatchEvent(new Event('focus'));
+  // Let any (erroneous) refetch microtask settle before asserting nothing fired.
+  await new Promise((r) => setTimeout(r, 0));
+  expect((api.catalog as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsWhileOpen);
 });

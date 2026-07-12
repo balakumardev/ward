@@ -381,6 +381,9 @@
       "category": "Sessions",
       "valueType": "number",
       "default": 30,
+      "min": 1,
+      "step": 1,
+      "integer": true,
       "targetFile": "settings.json",
       "scopes": ["user", "project", "local"],
       "docsUrl": "https://code.claude.com/docs/en/settings"
@@ -646,6 +649,8 @@
       "description": "Probability (0-1) that the session quality survey appears when eligible. Set to 0 to suppress it entirely, or set CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY in env.",
       "category": "General",
       "valueType": "number",
+      "min": 0,
+      "max": 1,
       "targetFile": "settings.json",
       "scopes": ["user", "project", "local"],
       "docsUrl": "https://code.claude.com/docs/en/settings"

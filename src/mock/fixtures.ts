@@ -569,6 +569,7 @@ export const SETTINGS_CATALOG: SettingRow[] = [
       key: 'cleanupPeriodDays', label: 'Chat retention (days)',
       description: 'How many days to retain chat transcripts locally before cleanup.',
       category: 'Privacy', valueType: 'number', default: 30,
+      min: 1, step: 1, integer: true,
       enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
       managedOnly: false, docsUrl: DOCS,
     },
@@ -658,6 +659,20 @@ export const SETTINGS_CATALOG: SettingRow[] = [
       managedOnly: false, docsUrl: DOCS,
     },
     effective: { type: 'command', command: '~/bin/ward-statusline.sh', padding: 0 },
+    sourceScope: 'user', isSet: true,
+  },
+  // object (editor: json) — SET at user scope. The generic raw-JSON object editor;
+  // `attribution` is a real key with editor `json`, seeded here so the JSON editor
+  // is reachable in dev:mock (its 'General' category joins the rail automatically).
+  {
+    def: {
+      key: 'attribution', label: 'Attribution',
+      description: 'Customize attribution for git commits and pull requests (commit trailer, PR text, and the claude.ai session link).',
+      category: 'General', valueType: 'object', editor: 'json',
+      enumValues: [], targetFile: 'settings.json', scopes: COMMON_SCOPES,
+      managedOnly: false, docsUrl: DOCS,
+    },
+    effective: { commit: '', pr: '', sessionUrl: false },
     sourceScope: 'user', isSet: true,
   },
   // managedOnly — SET in managed settings (renders read-only, source `managed`).

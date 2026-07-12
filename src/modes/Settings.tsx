@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show } from 'solid-js';
 import type { EnvVarDef, RestoreInfo, SchemaDiff, ScanResult, SettingRow } from '../api';
 import '../styles/settings.css';
 
@@ -200,6 +200,20 @@ function SettingsBody(props: { api: SettingsApi }) {
   const [envSeedName, setEnvSeedName] = createSignal<string | null>(null);
 
   const rows = () => catalog() ?? [];
+
+  // External edits reflect live: if someone edits settings.json in another tool
+  // while this screen is open, re-read the catalog when the window regains focus
+  // (focus-gating mirrors the menu-bar popover's refresh precedent — no polling).
+  // Guard against refetching mid-edit: a refetch while an editor modal is open or
+  // a write is in flight would clobber the modal's once-seeded working state.
+  onMount(() => {
+    const onFocus = () => {
+      if (editorRow() !== null || busy()) return;
+      void refetch();
+    };
+    window.addEventListener('focus', onFocus);
+    onCleanup(() => window.removeEventListener('focus', onFocus));
+  });
 
   // Open the shared `env` object editor pre-seeded with `name` (from the env-var
   // discovery panel). Finds the catalog's env row (editor==='env'); no-op if the
@@ -591,14 +605,25 @@ function SettingEditor(props: {
             class="set-number"
             data-testid="setting-number"
             type="number"
+            min={def().min}
+            max={def().max}
+            step={def().step}
             disabled={disabled()}
             value={eff() === undefined || eff() === null ? '' : String(eff())}
             onChange={(e) => {
               const raw = e.currentTarget.value;
               // Blank clears back toward default via Reset, not an invalid NaN write.
               if (raw.trim() === '') return;
-              const n = Number(raw);
+              let n = Number(raw);
               if (Number.isNaN(n)) return;
+              // Sanitize on commit (not per-keystroke) so Ward never writes a value
+              // Claude Code's own validation would reject: whole-number settings are
+              // rounded, then the value is clamped into any documented [min, max].
+              if (def().integer) n = Math.round(n);
+              const lo = def().min;
+              const hi = def().max;
+              if (lo !== undefined && n < lo) n = lo;
+              if (hi !== undefined && n > hi) n = hi;
               props.onSet(props.row, n);
             }}
           />
